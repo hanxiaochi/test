@@ -8,10 +8,13 @@ const root = __dirname;
 const dataDir = path.join(root, "data");
 const port = process.env.PORT || 3100;
 
+app.disable("etag");
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use((req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
   next();
 });
 
@@ -10220,10 +10223,12 @@ function deleteGenericNode(req) {
 }
 
 app.get("/", (req, res) => {
-  res.sendFile(path.join(root, authCookie(req) ? "index.html" : "login.html"));
+  const fileName = authCookie(req) ? "index.html" : "login.html";
+  html(res, readText(path.join(root, fileName)));
 });
 
 app.get("/index", (req, res) => res.redirect("/"));
+app.get("/index.html", (req, res) => html(res, readText(path.join(root, "index.html"))));
 app.get("/main", (req, res) => html(res, dashboardHtml("综合工作台")));
 
 app.post("/dologin", (req, res) => {
@@ -11123,7 +11128,15 @@ app.all("*", (req, res, next) => {
   next();
 });
 
-app.use(express.static(root));
+app.use(express.static(root, {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
+}));
 
 app.use((req, res) => {
   if (req.accepts("json") && !req.accepts("html")) {
