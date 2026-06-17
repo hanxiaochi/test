@@ -1,6 +1,14 @@
 (function () {
-  var VERSION = "local-content-loader-20260618-4";
+  var VERSION = "local-content-loader-20260618-5";
+  var lastHref = "";
+  var activeSeq = 0;
   window.__ZWKJY_LOCAL_LOADER_VERSION__ = VERSION;
+
+  function normalizeHref(href) {
+    href = String(href || "main").trim();
+    href = href.replace(/^#\//, "").replace(/^\//, "");
+    return href || "main";
+  }
 
   function contentBox() {
     return document.querySelector(".lay-zw-content-page");
@@ -24,20 +32,36 @@
       .catch(function () {});
   }
 
-  function loadLocalPage(href) {
-    if (!href) href = "main";
+  function loadLocalPage(href, options) {
+    href = normalizeHref(href);
+    options = options || {};
+    var now = Date.now();
+    var currentText = (contentBox() && contentBox().innerText || "").trim();
+    if (!options.force && href === lastHref && currentText.length > 8) return;
+    lastHref = href;
+    var seq = ++activeSeq;
+
     loadWorkPosition(href);
     setContent('<div style="padding:16px;color:#64748b;">页面加载中...</div>');
-    var url = href + (href.indexOf("?") > -1 ? "&" : "?") + "_local_v=" + Date.now();
+    var url = href + (href.indexOf("?") > -1 ? "&" : "?") + "_local_v=" + now;
     fetch(url, { cache: "no-store" })
       .then(function (res) {
         if (!res.ok) throw new Error(String(res.status));
         return res.text();
       })
-      .then(function (html) { setContent(html); })
+      .then(function (html) {
+        if (seq !== activeSeq) return;
+        setContent(html);
+      })
       .catch(function (err) {
-        setContent('<div style="margin:12px;padding:16px;background:#fff;border:1px solid #fecaca;color:#b91c1c;">页面加载失败：' + href + "，状态：" + err.message + "</div>");
+        if (seq !== activeSeq) return;
+        setContent('<div style="margin:12px;padding:16px;background:#fff;border:1px solid #fecaca;color:#b91c1c;">页面加载失败：' + href + '，状态：' + err.message + '</div>');
       });
+  }
+
+  function hrefFromHash() {
+    var parts = location.href.split("#/");
+    return parts.length >= 2 ? normalizeHref(parts.pop()) : "main";
   }
 
   window.zwkjyLoadLocalPage = loadLocalPage;
@@ -45,24 +69,26 @@
   document.addEventListener("click", function (event) {
     var target = event.target && event.target.closest ? event.target.closest("[data-one-page]") : null;
     if (!target) return;
-    var href = target.getAttribute("data-one-page");
+    var href = normalizeHref(target.getAttribute("data-one-page"));
     if (!href || target.getAttribute("target") === "_blank") return;
     event.preventDefault();
     event.stopPropagation();
-    if (location.hash !== "#/" + href) location.hash = "/" + href;
-    loadLocalPage(href);
+    var nextHash = "#/" + href;
+    if (location.hash !== nextHash) {
+      location.hash = "/" + href;
+    } else {
+      loadLocalPage(href, { force: true });
+    }
   }, true);
 
   window.addEventListener("hashchange", function () {
-    var parts = location.href.split("#/");
-    if (parts.length >= 2) loadLocalPage(parts.pop());
+    loadLocalPage(hrefFromHash(), { force: true });
   });
 
   setTimeout(function () {
     var box = contentBox();
     if (box && box.innerText.trim().length < 8) {
-      var parts = location.href.split("#/");
-      loadLocalPage(parts.length >= 2 ? parts.pop() : "main");
+      loadLocalPage(hrefFromHash(), { force: true });
     }
-  }, 1200);
+  }, 600);
 })();

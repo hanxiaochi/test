@@ -5,6 +5,55 @@ function round(value, digits = 2) {
   return Number(n.toFixed(digits));
 }
 
+const defaultCalculationRules = {
+  moneyDigits: 2,
+  quantityDigits: 3,
+  priceDigits: 2,
+  includeBillMeasure: true,
+  includeMaterialAdjust: true,
+  includeMaterialArrival: false,
+  includeManualMeasure: true,
+  auditSupervisorRate: 99.5,
+  auditOwnerRate: 99,
+  auditFinalRate: 98.5
+};
+
+function calculationRules() {
+  const saved = db.calculationRules && typeof db.calculationRules === "object" ? db.calculationRules : {};
+  return {
+    ...defaultCalculationRules,
+    ...saved,
+    moneyDigits: Math.max(0, Math.min(6, Number(saved.moneyDigits ?? defaultCalculationRules.moneyDigits))),
+    quantityDigits: Math.max(0, Math.min(6, Number(saved.quantityDigits ?? defaultCalculationRules.quantityDigits))),
+    priceDigits: Math.max(0, Math.min(6, Number(saved.priceDigits ?? defaultCalculationRules.priceDigits))),
+    includeBillMeasure: saved.includeBillMeasure !== false,
+    includeMaterialAdjust: saved.includeMaterialAdjust !== false,
+    includeMaterialArrival: saved.includeMaterialArrival === true,
+    includeManualMeasure: saved.includeManualMeasure !== false,
+    auditSupervisorRate: Number(saved.auditSupervisorRate ?? defaultCalculationRules.auditSupervisorRate),
+    auditOwnerRate: Number(saved.auditOwnerRate ?? defaultCalculationRules.auditOwnerRate),
+    auditFinalRate: Number(saved.auditFinalRate ?? defaultCalculationRules.auditFinalRate)
+  };
+}
+
+function payableFormulaText(rules = calculationRules()) {
+  const parts = [];
+  if (rules.includeBillMeasure) parts.push("清单计量");
+  if (rules.includeMaterialAdjust) parts.push("材料补差");
+  if (rules.includeMaterialArrival) parts.push("材料到场");
+  if (rules.includeManualMeasure) parts.push("手动计量");
+  return parts.length ? parts.join(" + ") : "未启用应付构成";
+}
+
+function calculatePayable(parts, rules = calculationRules()) {
+  const total =
+    (rules.includeBillMeasure ? Number(parts.measuredMoney || parts.billMeasureMoney || 0) : 0) +
+    (rules.includeMaterialAdjust ? Number(parts.materialDiasMoney || parts.materialAdjustMoney || 0) : 0) +
+    (rules.includeMaterialArrival ? Number(parts.materialArrivalMoney || 0) : 0) +
+    (rules.includeManualMeasure ? Number(parts.manualMoney || parts.manualMeasureMoney || 0) : 0);
+  return round(total, rules.moneyDigits);
+}
+
 function table(data, req) {
   const rows = Array.isArray(data) ? data : [];
   const page = Math.max(Number((req.query && req.query.page) || (req.body && req.body.page) || 1), 1);
@@ -126,23 +175,28 @@ function billRows() {
 }
 
 function contractSummary() {
+  const rules = calculationRules();
   const rows = billRows();
   const contractSumMoney = round(rows.reduce((sum, item) => sum + item.contractMoney, 0));
   const varyMoney = round(variationRows().reduce((sum, item) => sum + item.varyMoney, 0));
   const finalMoney = round(rows.reduce((sum, item) => sum + item.finalMoney, 0));
   const measuredMoney = round(rows.reduce((sum, item) => sum + item.measuredMoney, 0));
   const materialDiasMoney = round(materialDiasRows().reduce((sum, item) => sum + item.adjustMoney, 0));
+  const materialArrivalMoney = round(materialArrivalRows().reduce((sum, item) => sum + item.money, 0));
   const manualMoney = round(manualMeasureRows().reduce((sum, item) => sum + item.measureMoney, 0));
-  const payableMoney = round(measuredMoney + materialDiasMoney + manualMoney);
+  const payableMoney = calculatePayable({ measuredMoney, materialDiasMoney, materialArrivalMoney, manualMoney }, rules);
   return {
     contractSumMoney,
     varyMoney,
     finalMoney,
     measuredMoney,
     materialDiasMoney,
+    materialArrivalMoney,
     manualMoney,
     payableMoney,
-    payRate: finalMoney ? round((payableMoney / finalMoney) * 100, 2) : 0
+    payRate: finalMoney ? round((payableMoney / finalMoney) * 100, 2) : 0,
+    payableFormula: payableFormulaText(rules),
+    calculationRules: rules
   };
 }
 
@@ -370,7 +424,9 @@ function billLedgerRows() {
 
 function reportProjectRows() {
   const summary = contractSummary();
+  const rules = calculationRules();
   const materialAdjustments = materialDiasRows();
+  const materialArrivals = materialArrivalRows();
   const manuals = manualMeasureRows();
   return db.sections.map((item) => {
     const sectionBills = billRows().filter((billItem) => billItem.sectionId === item.sectionId);
@@ -379,10 +435,13 @@ function reportProjectRows() {
     const materialDiasMoney = round(materialAdjustments
       .filter((row) => Number(row.sectionId) === Number(item.sectionId))
       .reduce((sum, row) => sum + Number(row.adjustMoney || 0), 0));
+    const materialArrivalMoney = round(materialArrivals
+      .filter((row) => Number(row.sectionId) === Number(item.sectionId))
+      .reduce((sum, row) => sum + Number(row.money || 0), 0));
     const manualMoney = round(manuals
       .filter((row) => Number(row.sectionId) === Number(item.sectionId))
       .reduce((sum, row) => sum + Number(row.measureMoney || 0), 0));
-    const totalPayMoney = round(measuredMoney + materialDiasMoney + manualMoney);
+    const totalPayMoney = calculatePayable({ measuredMoney, materialDiasMoney, materialArrivalMoney, manualMoney }, rules);
     return {
       sectionId: item.sectionId,
       sectionName: item.sectionName,
@@ -391,23 +450,27 @@ function reportProjectRows() {
       finalMoney,
       measureMoney: measuredMoney,
       materialDiasMoney,
+      materialArrivalMoney,
       manualMoney,
       currentPayMoney: measuredMoney,
       totalPayMoney,
       payRate: finalMoney ? round((totalPayMoney / finalMoney) * 100, 2) : 0,
-      projectTotalPayMoney: summary.payableMoney
+      projectTotalPayMoney: summary.payableMoney,
+      payableFormula: payableFormulaText(rules)
     };
   });
 }
 
 function auditMoneyRows() {
+  const rules = calculationRules();
   const buildAuditRow = (item, options = {}) => {
     const finishMoney = Number(options.finishMoney ?? item.finalMoney ?? item.finishContractMoney ?? item.measureMoney ?? item.adjustMoney ?? 0);
     const submitMoney = round(Number(options.submitMoney ?? item.measureMoney ?? item.adjustMoney ?? item.money ?? 0));
     const varyMoney = Number(options.varyMoney ?? item.varyMoney ?? 0);
     const varyFinishMoney = finishMoney ? round((submitMoney / finishMoney) * varyMoney) : 0;
-    const supervisorMoney = round(submitMoney * 0.995);
-    const ownerMoney = round(submitMoney * 0.99);
+    const supervisorMoney = round(submitMoney * (rules.auditSupervisorRate / 100));
+    const ownerMoney = round(submitMoney * (rules.auditOwnerRate / 100));
+    const finalMoney = round(submitMoney * (rules.auditFinalRate / 100));
     return {
       auditType: options.auditType || "清单计量",
       chapterNo: options.chapterNo || item.billNo || item.measureNo || "",
@@ -423,13 +486,13 @@ function auditMoneyRows() {
       usertask1: submitMoney,
       usertask1v: varyFinishMoney,
       usertask2: supervisorMoney,
-      usertask2v: round(varyFinishMoney * 0.995),
+      usertask2v: round(varyFinishMoney * (rules.auditSupervisorRate / 100)),
       usertask3: ownerMoney,
-      usertask3v: round(varyFinishMoney * 0.99),
+      usertask3v: round(varyFinishMoney * (rules.auditOwnerRate / 100)),
       submitMoney,
       engineerAuditMoney: supervisorMoney,
       supervisorAuditMoney: ownerMoney,
-      ownerAuditMoney: round(submitMoney * 0.985),
+      ownerAuditMoney: finalMoney,
       states: item.states || "",
       measureDate: item.measureDate || ""
     };
@@ -515,5 +578,8 @@ module.exports = {
   auditMoneyRows,
   documentRows,
   contractSummary,
+  calculationRules,
+  calculatePayable,
+  payableFormulaText,
   allMeasureDetails
 };

@@ -578,6 +578,31 @@ async function verifyCostReconciliationLoop() {
   assert.ok(calculatorPage.text.includes("/vary_measure/list") && calculatorPage.text.includes("/manualMeasure/detail_list"), "cost calculator page should load current business ledgers");
 }
 
+async function verifyCalculationRulesAdminLoop() {
+  const before = await requestJson("/api/admin/calculation_rules");
+  assert.strictEqual(before.json.code, 1, "calculation rules endpoint should succeed");
+  assert.ok(before.json.data.rules, "calculation rules endpoint should return rules");
+  assert.ok(before.json.data.summary.payableFormula, "calculation rules endpoint should expose payable formula");
+
+  const page = await requestText("/admin/calculation_rules_page");
+  assert.strictEqual(page.response.status, 200, "calculation rules admin page should load");
+  assert.ok(page.text.includes("计算规则管理后台"), "calculation rules admin page should show title");
+  assert.ok(page.text.includes("材料到场进入应付"), "calculation rules admin page should expose material arrival toggle");
+
+  const original = before.json.data.rules;
+  const originalPayable = before.json.data.summary.payableMoney;
+  const toggledRules = { ...original, includeMaterialArrival: !original.includeMaterialArrival };
+  try {
+    const toggled = await postJson("/api/admin/calculation_rules", toggledRules);
+    assert.strictEqual(toggled.json.code, 1, "calculation rules save should succeed");
+    assert.strictEqual(toggled.json.data.rules.includeMaterialArrival, toggledRules.includeMaterialArrival, "material arrival toggle should persist");
+    assert.notStrictEqual(toggled.json.data.summary.payableMoney, originalPayable, "material arrival toggle should affect payable money");
+    assert.ok(toggled.json.data.summary.payableFormula, "saved rules should update formula text");
+  } finally {
+    await postJson("/api/admin/calculation_rules", original);
+  }
+}
+
 async function verifyContractSurveyDashboardLoop() {
   const summary = engine.contractSummary();
   const api = await requestJson("/contract_survey/find_other_mation");
@@ -2844,6 +2869,7 @@ async function main() {
   await verifySecBillDashboardLoop();
   await verifyCostBaseDashboardLoop();
   await verifyCostReconciliationLoop();
+  await verifyCalculationRulesAdminLoop();
   await verifyContractSurveyDashboardLoop();
   await verifyVariationMeetingLoop();
   await verifyCrudLoop();

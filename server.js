@@ -844,11 +844,144 @@ function dashboardHtml(title = "工作台") {
   return `
     <div class="layui-fluid">
       <div class="layui-card">
-        <div class="layui-card-header">${title}</div>
+        <div class="layui-card-header" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>${title}</span>
+          <a class="layui-btn layui-btn-sm" href="/admin/calculation_rules_page">计算规则后台</a>
+        </div>
         <div class="layui-card-body">
           <div class="layui-row layui-col-space15">${cards}</div>
+          <div style="margin-top:12px;color:#64748b;">当前应付公式：${htmlEscape(summary.payableFormula || engine.payableFormulaText())}</div>
         </div>
       </div>
+    </div>`;
+}
+
+function boolFromBody(value, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  return ["1", "true", "on", "yes"].includes(String(value).toLowerCase());
+}
+
+function numberFromBody(value, fallback, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+
+function saveCalculationRules(body = {}) {
+  const current = engine.calculationRules();
+  const next = {
+    moneyDigits: numberFromBody(body.moneyDigits, current.moneyDigits, 0, 6),
+    quantityDigits: numberFromBody(body.quantityDigits, current.quantityDigits, 0, 6),
+    priceDigits: numberFromBody(body.priceDigits, current.priceDigits, 0, 6),
+    includeBillMeasure: boolFromBody(body.includeBillMeasure, false),
+    includeMaterialAdjust: boolFromBody(body.includeMaterialAdjust, false),
+    includeMaterialArrival: boolFromBody(body.includeMaterialArrival, false),
+    includeManualMeasure: boolFromBody(body.includeManualMeasure, false),
+    auditSupervisorRate: numberFromBody(body.auditSupervisorRate, current.auditSupervisorRate, 0, 100),
+    auditOwnerRate: numberFromBody(body.auditOwnerRate, current.auditOwnerRate, 0, 100),
+    auditFinalRate: numberFromBody(body.auditFinalRate, current.auditFinalRate, 0, 100)
+  };
+  engine.db.calculationRules = next;
+  return {
+    changed: 1,
+    rules: engine.calculationRules(),
+    summary: engine.contractSummary()
+  };
+}
+
+function checked(value) {
+  return value ? "checked" : "";
+}
+
+function calculationRulesPageHtml() {
+  const rules = engine.calculationRules();
+  const summary = engine.contractSummary();
+  const rows = [
+    ["合同金额", moneyText(summary.contractSumMoney)],
+    ["最终金额", moneyText(summary.finalMoney)],
+    ["清单计量", moneyText(summary.measuredMoney)],
+    ["材料补差", moneyText(summary.materialDiasMoney)],
+    ["材料到场", moneyText(summary.materialArrivalMoney)],
+    ["手动计量", moneyText(summary.manualMoney)],
+    ["应付金额", moneyText(summary.payableMoney)],
+    ["支付比例", percentText(summary.payRate)]
+  ].map(([label, value]) => `<tr><td>${label}</td><td>${value}</td></tr>`).join("");
+  return `
+    <div class="layui-fluid calc-admin">
+      <style>
+        .calc-admin { padding:16px; background:#f5f7fb; color:#172033; }
+        .calc-admin-shell { max-width:1180px; margin:0 auto; display:grid; grid-template-columns:minmax(0, 1.3fr) minmax(320px, .7fr); gap:14px; }
+        .calc-admin-panel { background:#fff; border:1px solid #dbe4f0; border-radius:6px; padding:16px; }
+        .calc-admin-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:14px; }
+        .calc-admin-head h2 { margin:0; font-size:20px; font-weight:600; }
+        .calc-admin-head p { margin:6px 0 0; color:#64748b; }
+        .calc-admin-grid { display:grid; grid-template-columns:repeat(3, minmax(160px, 1fr)); gap:12px; }
+        .calc-admin-field label { display:block; margin-bottom:6px; color:#475569; }
+        .calc-admin-field input[type="number"] { width:100%; height:34px; border:1px solid #cbd5e1; border-radius:4px; padding:0 8px; box-sizing:border-box; }
+        .calc-admin-checks { display:grid; grid-template-columns:repeat(2, minmax(180px, 1fr)); gap:10px; margin:12px 0; }
+        .calc-admin-checks label { display:flex; align-items:center; gap:8px; border:1px solid #dbe4f0; border-radius:4px; padding:10px; }
+        .calc-admin-formula { margin:12px 0; padding:10px 12px; background:#f8fafc; border:1px solid #dbe4f0; color:#0369a1; }
+        .calc-admin-actions { display:flex; gap:8px; align-items:center; margin-top:14px; }
+        .calc-admin-summary table { margin:0; }
+        @media (max-width: 900px) { .calc-admin-shell { grid-template-columns:1fr; } .calc-admin-grid, .calc-admin-checks { grid-template-columns:1fr; } }
+      </style>
+      <div class="calc-admin-shell">
+        <div class="calc-admin-panel">
+          <div class="calc-admin-head">
+            <div>
+              <h2>计算规则管理后台</h2>
+              <p>维护计量支付公式、小数位和审核比例；保存后项目汇总、合同段汇总和计算接口立即按新规则计算。</p>
+            </div>
+            <a class="layui-btn layui-btn-primary layui-btn-sm" href="/main">返回工作台</a>
+          </div>
+          <form id="calc-rules-form">
+            <div class="calc-admin-grid">
+              <div class="calc-admin-field"><label>金额小数位</label><input type="number" name="moneyDigits" min="0" max="6" value="${rules.moneyDigits}"></div>
+              <div class="calc-admin-field"><label>数量小数位</label><input type="number" name="quantityDigits" min="0" max="6" value="${rules.quantityDigits}"></div>
+              <div class="calc-admin-field"><label>单价小数位</label><input type="number" name="priceDigits" min="0" max="6" value="${rules.priceDigits}"></div>
+              <div class="calc-admin-field"><label>监理审核比例(%)</label><input type="number" step="0.01" name="auditSupervisorRate" value="${rules.auditSupervisorRate}"></div>
+              <div class="calc-admin-field"><label>业主审核比例(%)</label><input type="number" step="0.01" name="auditOwnerRate" value="${rules.auditOwnerRate}"></div>
+              <div class="calc-admin-field"><label>最终审定比例(%)</label><input type="number" step="0.01" name="auditFinalRate" value="${rules.auditFinalRate}"></div>
+            </div>
+            <div class="calc-admin-checks">
+              <label><input type="checkbox" name="includeBillMeasure" ${checked(rules.includeBillMeasure)}>清单计量进入应付</label>
+              <label><input type="checkbox" name="includeMaterialAdjust" ${checked(rules.includeMaterialAdjust)}>材料补差进入应付</label>
+              <label><input type="checkbox" name="includeMaterialArrival" ${checked(rules.includeMaterialArrival)}>材料到场进入应付</label>
+              <label><input type="checkbox" name="includeManualMeasure" ${checked(rules.includeManualMeasure)}>手动计量进入应付</label>
+            </div>
+            <div class="calc-admin-formula">当前公式：<strong>${htmlEscape(summary.payableFormula)}</strong></div>
+            <div class="calc-admin-actions">
+              <button type="button" class="layui-btn" id="save-calc-rules">保存规则</button>
+              <button type="button" class="layui-btn layui-btn-primary" onclick="location.reload()">刷新汇总</button>
+              <span id="calc-rules-msg" style="color:#64748b;"></span>
+            </div>
+          </form>
+        </div>
+        <div class="calc-admin-panel calc-admin-summary">
+          <h3 style="margin:0 0 10px;font-size:16px;">当前汇总影响</h3>
+          <table class="layui-table" lay-size="sm"><tbody>${rows}</tbody></table>
+        </div>
+      </div>
+      <script>
+        (function(){
+          var btn = document.getElementById('save-calc-rules');
+          var form = document.getElementById('calc-rules-form');
+          var msg = document.getElementById('calc-rules-msg');
+          btn.addEventListener('click', function(){
+            var data = {};
+            Array.prototype.forEach.call(form.querySelectorAll('input'), function(input){
+              data[input.name] = input.type === 'checkbox' ? input.checked : input.value;
+            });
+            fetch('/api/admin/calculation_rules', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) })
+              .then(function(res){ return res.json(); })
+              .then(function(result){
+                msg.textContent = result && result.code === 1 ? '已保存，正在刷新...' : '保存失败';
+                setTimeout(function(){ location.reload(); }, 500);
+              })
+              .catch(function(){ msg.textContent = '保存失败'; });
+          });
+        })();
+      </script>
     </div>`;
 }
 
@@ -6291,14 +6424,20 @@ function costReconciliationData() {
     acc.finalMoney += Number(row.finalMoney || 0);
     acc.measuredMoney += Number(row.measureMoney || row.currentPayMoney || 0);
     acc.materialDiasMoney += Number(row.materialDiasMoney || 0);
+    acc.materialArrivalMoney += Number(row.materialArrivalMoney || 0);
     acc.manualMoney += Number(row.manualMoney || 0);
     acc.totalPayMoney += Number(row.totalPayMoney || 0);
     return acc;
-  }, { contractMoney: 0, finalMoney: 0, measuredMoney: 0, materialDiasMoney: 0, manualMoney: 0, totalPayMoney: 0 });
+  }, { contractMoney: 0, finalMoney: 0, measuredMoney: 0, materialDiasMoney: 0, materialArrivalMoney: 0, manualMoney: 0, totalPayMoney: 0 });
   Object.keys(sectionTotals).forEach((key) => { sectionTotals[key] = round2(sectionTotals[key]); });
 
   const expectedFinal = round2(summary.contractSumMoney + summary.varyMoney);
-  const expectedPayable = round2(summary.measuredMoney + summary.materialDiasMoney + summary.manualMoney);
+  const expectedPayable = round2(engine.calculatePayable({
+    measuredMoney: summary.measuredMoney,
+    materialDiasMoney: summary.materialDiasMoney,
+    materialArrivalMoney,
+    manualMoney: summary.manualMoney
+  }));
   const auditSubmit = round2(auditRows.reduce((sum, row) => sum + Number(row.usertask1 || row.submitMoney || 0), 0));
   const auditSupervisor = round2(auditRows.reduce((sum, row) => sum + Number(row.usertask2 || row.engineerAuditMoney || 0), 0));
   const auditOwner = round2(auditRows.reduce((sum, row) => sum + Number(row.usertask3 || row.supervisorAuditMoney || 0), 0));
@@ -9751,11 +9890,17 @@ function buildGatherSnapshot(gatherId = 0) {
   const materialArrivalMoney = materialArrivals.reduce((sum, row) => sum + Number(row.money || 0), 0);
   const manualMoney = manuals.reduce((sum, row) => sum + Number(row.measureMoney || 0), 0);
   const varyMoney = variations.reduce((sum, row) => sum + Number(row.varyMoney || 0), 0);
-  const payableMoney = measureMoney + materialAdjustMoney + manualMoney;
+  const rules = engine.calculationRules();
+  const payableMoney = engine.calculatePayable({
+    measuredMoney: measureMoney,
+    materialAdjustMoney,
+    materialArrivalMoney,
+    manualMoney
+  }, rules);
   const auditSubmitMoney = payableMoney;
-  const auditSupervisorMoney = payableMoney * 0.995;
-  const auditOwnerMoney = payableMoney * 0.99;
-  const auditFinalMoney = payableMoney * 0.985;
+  const auditSupervisorMoney = payableMoney * (rules.auditSupervisorRate / 100);
+  const auditOwnerMoney = payableMoney * (rules.auditOwnerRate / 100);
+  const auditFinalMoney = payableMoney * (rules.auditFinalRate / 100);
   return {
     gatherId: selectedGatherId,
     gatherNo: gather.gatherNo || gather.periodDesc || "",
@@ -9778,7 +9923,8 @@ function buildGatherSnapshot(gatherId = 0) {
     auditDeductionMoney: Number((auditSubmitMoney - auditFinalMoney).toFixed(2)),
     contractMoney: summary.contractSumMoney,
     finalMoney: summary.finalMoney,
-    payRate: summary.finalMoney ? Number(((payableMoney / summary.finalMoney) * 100).toFixed(2)) : 0
+    payRate: summary.finalMoney ? Number(((payableMoney / summary.finalMoney) * 100).toFixed(2)) : 0,
+    payableFormula: engine.payableFormulaText(rules)
   };
 }
 
@@ -10289,6 +10435,8 @@ app.get("/position/chose_page", (req, res) => {
 
 app.get("/main", (req, res) => html(res, dashboardHtml("工作台")));
 app.get("/sbr/header_content", (req, res) => html(res, dashboardHtml("模块首页")));
+app.get("/admin/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml()));
+app.get("/system/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml()));
 app.get("/sbr/sbr_com/:id", (req, res) => html(res, contentForId(req.params.id)));
 app.all("/sbr/sbr_com", (req, res) => html(res, contentForId(req.body.leftId || req.query.leftId || "")));
 
@@ -10313,6 +10461,11 @@ app.all("/workPosition/getValue", (req, res) => {
 });
 
 app.get("/api/cost/summary", (req, res) => operationOk(res, engine.dashboard()));
+app.get("/api/admin/calculation_rules", (req, res) => operationOk(res, {
+  rules: engine.calculationRules(),
+  summary: engine.contractSummary()
+}));
+app.post("/api/admin/calculation_rules", (req, res) => mutate(res, () => saveCalculationRules(req.body)));
 app.get("/api/cost/bills", (req, res) => table(res, req, engine.billRows()));
 app.get("/api/cost/measures", (req, res) => table(res, req, engine.measureRows()));
 app.get("/api/cost/ledger", (req, res) => table(res, req, engine.billLedgerRows()));
@@ -10455,7 +10608,13 @@ app.post("/api/cost/calculate", (req, res) => {
   const materialArrivalMoney = round(sum(materialArrivalDetails, (row) => row.arrivalMoney));
   const manualMoney = round(sum(manualDetails, (row) => row.measureMoney));
   const finalMoney = round(contractMoney + variationMoney);
-  const payableMoney = round(measuredMoney + materialAdjustMoney + manualMoney);
+  const rules = engine.calculationRules();
+  const payableMoney = engine.calculatePayable({
+    measuredMoney,
+    materialAdjustMoney,
+    materialArrivalMoney,
+    manualMoney
+  }, rules);
   operationOk(res, {
     contractMoney,
     measuredMoney,
@@ -10466,6 +10625,8 @@ app.post("/api/cost/calculate", (req, res) => {
     finalMoney,
     payableMoney,
     payRate: finalMoney ? round((payableMoney / finalMoney) * 100) : 0,
+    payableFormula: engine.payableFormulaText(rules),
+    calculationRules: rules,
     details: {
       bills: billDetails,
       measures,
