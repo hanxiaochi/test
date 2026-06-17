@@ -10224,6 +10224,7 @@ app.get("/", (req, res) => {
 });
 
 app.get("/index", (req, res) => res.redirect("/"));
+app.get("/main", (req, res) => html(res, dashboardHtml("综合工作台")));
 
 app.post("/dologin", (req, res) => {
   if (req.body.user_account === "ys1" && req.body.password === "000000") {

@@ -228,14 +228,14 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
 			oWebControl.JS_DestroyWnd();
 		}catch(e){
 		}
-//                var locationHref = window.location.href;
-//                var urlArr = locationHref.split("#/");
-//                if (urlArr.length >= 2) {
-//                    var href = urlArr.pop();
-//                    zwInit.initConten(href);
-//                    //zwInit.initPageTitle(href);
-//                }
-            	zwInit.init({});
+                var locationHref = window.location.href;
+                var urlArr = locationHref.split("#/");
+                if (urlArr.length >= 2) {
+                    var href = urlArr.pop();
+                    zwInit.initConten(href);
+                } else {
+                    zwInit.initConten("main");
+                }
             };
         };
 		/**
@@ -263,7 +263,7 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
                     $(container).html(data);
                 },
                 error: function (xhr, textstatus, thrown) {
-                   // return zwInit.msg_error('Status:' + xhr.status + '，' + xhr.statusText + '，请稍后再试！'); 
+                   $(container).html('<div style="margin:12px;padding:16px;background:#fff;border:1px solid #fecaca;color:#b91c1c;">页面加载失败：' + href + '，状态：' + xhr.status + '</div>');
                 }
             });
         };
