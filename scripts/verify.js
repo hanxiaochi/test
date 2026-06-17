@@ -2825,7 +2825,8 @@ async function verifyOriginalMenuUrlAliasesLoop() {
     ["/oaDataNode/get_data_manage_page?type=2", "资料"],
     ["/syzl/page", "试验资料"],
     ["/projectInformationNode/page/0", "资料"],
-    ["/projectInformationParam/page", "资料"]
+    ["/projectInformationParam/page", "资料"],
+    ["/admin/calculation_rules_page", "计算规则管理后台"]
   ];
   for (const [url, expected] of pages) {
     const page = await requestText(url);
@@ -2835,12 +2836,19 @@ async function verifyOriginalMenuUrlAliasesLoop() {
   }
 
   const menuIds = [
+    ["46", "data-gather-dashboard"],
+    ["47", "清单计量管理看板"],
+    ["48", "材料补差计量管理看板"],
+    ["49", "材料到场计量管理看板"],
+    ["50", "手动计量管理看板"],
     ["355", "sysGather/edit_gatherData_page"],
     ["376", "sub-item-ledger-table"],
     ["377", "export_project_measure_pay"],
     ["378", "varyMeasurePay/export_vary_measure_pay"],
     ["411", "oaDataNode/downLoadZipFile"],
-    ["568", "试验资料"]
+    ["568", "试验资料"],
+    ["9001", "计算规则管理后台"],
+    ["9002", "计算规则管理后台"]
   ];
   for (const [id, expected] of menuIds) {
     const page = await requestText(`/sbr/sbr_com/${id}`);
@@ -2848,6 +2856,13 @@ async function verifyOriginalMenuUrlAliasesLoop() {
     assert.ok(page.text.includes(expected), `legacy menu id ${id} should render dynamic local page`);
     assert.ok(!page.text.includes('"status":404'), `legacy menu id ${id} should not use cached 404`);
   }
+
+  const header = await requestJson("/menu/header_menu?href=sbr/sbr_com/9002");
+  assert.ok(header.json.data.some((row) => Number(row.id) === 9000 && row.title === "系统设置"), "header menu should include system settings");
+  assert.strictEqual(Number(header.json.other.id), 9000, "calculation rules menu should select system settings top menu");
+  const systemMenu = await requestJson("/menu/left_menu?parentId=9000");
+  const systemMenuText = JSON.stringify(systemMenu.json.data);
+  assert.ok(systemMenuText.includes("计算规则后台") && systemMenuText.includes("admin/calculation_rules_page"), "system settings left menu should expose calculation rules admin");
 }
 
 async function main() {

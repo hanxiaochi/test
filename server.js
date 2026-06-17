@@ -801,6 +801,25 @@ function allLeaves(items, out = []) {
 }
 
 const topMenuRaw = readJson(path.join(dataDir, "api_menu_utf8.json"), { data: [] }).data || [];
+topMenuRaw.push({
+  appImageUrl: "",
+  appPageUrl: "",
+  controllerDes: "",
+  flagFlow: 1,
+  isShow: 1,
+  menuIcon: "layui-icon layui-icon-set",
+  parentId: 0,
+  refreshType: 1,
+  resourceCode: "9900",
+  resourceDes: "本地系统设置",
+  resourceId: 9000,
+  resourceLevel: 0,
+  resourceName: "系统设置",
+  resourceNo: "root",
+  resourceUrl: "",
+  sysBusinessResources: "",
+  sysIdentityResources: ""
+});
 const topMenu = topMenuRaw.map((item) => ({
   id: item.resourceId,
   title: item.resourceName,
@@ -815,6 +834,47 @@ for (const item of topMenuRaw) {
   const raw = readJson(path.join(dataDir, `api_left_${item.resourceId}.json`), { data: [] }).data || [];
   leftMenus.set(String(item.resourceId), raw);
 }
+leftMenus.set("9000", [
+  {
+    appImageUrl: "",
+    appPageUrl: "",
+    controllerDes: "",
+    flagFlow: 1,
+    isShow: 1,
+    menuIcon: "layui-icon layui-icon-set",
+    parentId: 9000,
+    refreshType: 1,
+    resourceCode: "990001",
+    resourceDes: "工程造价计算规则",
+    resourceId: 9001,
+    resourceLevel: 0,
+    resourceName: "计算规则管理",
+    resourceNo: "root",
+    resourceUrl: "",
+    sysBusinessResources: [
+      {
+        appImageUrl: "",
+        appPageUrl: "",
+        controllerDes: "",
+        flagFlow: 1,
+        isShow: 1,
+        menuIcon: "layui-icon layui-icon-form",
+        parentId: 9001,
+        refreshType: 1,
+        resourceCode: "99000101",
+        resourceDes: "修改计量支付公式、小数位和审核比例",
+        resourceId: 9002,
+        resourceLevel: 1,
+        resourceName: "计算规则后台",
+        resourceNo: "model",
+        resourceUrl: "admin/calculation_rules_page",
+        sysBusinessResources: [],
+        sysIdentityResources: ""
+      }
+    ],
+    sysIdentityResources: ""
+  }
+]);
 
 const leavesById = new Map();
 for (const raw of leftMenus.values()) {
@@ -986,6 +1046,11 @@ function calculationRulesPageHtml() {
 }
 
 function contentForId(id) {
+  if (String(id) === "46") return dataGatherDashboardHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "47") return billMeasureDashboardHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "48") return materialDiasManagementDashboardHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "49") return materialArrivalManagementDashboardHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "50") return manualMeasureManagementDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "63") return reportManagerDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "64") return reportExportProjectPageHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "355") return sysGatherDashboardHtml({ query: {}, body: {}, params: {} });
@@ -1006,6 +1071,7 @@ function contentForId(id) {
   if (String(id) === "698") return dataGatherDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "699") return auditMoneyDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "700") return variationPaymentDashboardHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "9001" || String(id) === "9002") return calculationRulesPageHtml();
   if (String(id) === "6998") return reportManagerDashboardHtml({ query: {}, body: {}, params: {} });
   const file = path.join(dataDir, "content", `page_content_${id}.html`);
   const htmlText = readText(file, "");
