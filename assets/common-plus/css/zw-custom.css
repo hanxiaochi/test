@@ -51,3 +51,31 @@
 .lay-zw-content-page{
 	height:calc(100% - 30px);
 }
+
+/* Local shell pages are injected into this single content pane. The original
+   fixed-height rule can collapse under the captured layout, hiding valid HTML. */
+.layui-layout-admin .layui-body,
+.zwsoft-mini .layui-layout-admin .layui-body,
+.layui-zw-max-body .layui-body{
+	position:fixed !important;
+	top:50px !important;
+	left:200px !important;
+	right:0 !important;
+	bottom:0 !important;
+	width:auto !important;
+	height:auto !important;
+	overflow:auto !important;
+	padding-bottom:24px !important;
+}
+.lay-zw-content-page{
+	display:block !important;
+	position:relative !important;
+	z-index:1 !important;
+	height:auto !important;
+	min-height:calc(100vh - 98px);
+	overflow:visible !important;
+	visibility:visible !important;
+	opacity:1 !important;
+	transform:none !important;
+	padding:0 5px 24px;
+}

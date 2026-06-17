@@ -223,6 +223,9 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
          * 监听hash地址变化
          */
         this.listen = function () {
+            if (window.zwkjyLoadLocalPage) {
+                return;
+            }
             window.onhashchange = function (hash) {
 	try{
 			oWebControl.JS_DestroyWnd();
@@ -245,6 +248,10 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
          * @param isHash
          */
         this.initConten = function (href, isHash) {
+            if (window.zwkjyLoadLocalPage) {
+                window.zwkjyLoadLocalPage(href, { force: true });
+                return;
+            }
             var container = '.lay-zw-content-page';
             $.ajax({
     			url : workPositionUrl,
