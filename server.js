@@ -811,10 +811,10 @@ topMenuRaw.push({
   parentId: 0,
   refreshType: 1,
   resourceCode: "9900",
-  resourceDes: "本地系统设置",
+  resourceDes: "本地后台管理",
   resourceId: 9000,
   resourceLevel: 0,
-  resourceName: "系统设置",
+  resourceName: "后台管理",
   resourceNo: "root",
   resourceUrl: "",
   sysBusinessResources: "",
@@ -835,6 +835,25 @@ for (const item of topMenuRaw) {
   leftMenus.set(String(item.resourceId), raw);
 }
 leftMenus.set("9000", [
+  {
+    appImageUrl: "",
+    appPageUrl: "",
+    controllerDes: "",
+    flagFlow: 1,
+    isShow: 1,
+    menuIcon: "layui-icon layui-icon-console",
+    parentId: 9000,
+    refreshType: 1,
+    resourceCode: "990000",
+    resourceDes: "本地工程造价后台首页",
+    resourceId: 9003,
+    resourceLevel: 0,
+    resourceName: "后台首页",
+    resourceNo: "model",
+    resourceUrl: "admin/dashboard_page",
+    sysBusinessResources: [],
+    sysIdentityResources: ""
+  },
   {
     appImageUrl: "",
     appPageUrl: "",
@@ -1045,15 +1064,680 @@ function calculationRulesPageHtml() {
     </div>`;
 }
 
+function coreSectionOptions(selectedId, label = "全部合同段") {
+  return [`<option value="">${htmlEscape(label)}</option>`]
+    .concat(engine.db.sections.map((section) => {
+      const id = Number(section.sectionId || section.id || 0);
+      const selected = selectedId && id === Number(selectedId) ? " selected" : "";
+      return `<option value="${id}"${selected}>${htmlEscape(section.sectionName || section.name || "")}</option>`;
+    }))
+    .join("");
+}
+
+function corePeriodOptions(selectedId, label = "全部工期") {
+  return [`<option value="">${htmlEscape(label)}</option>`]
+    .concat(engine.db.measurePeriods.map((period) => {
+      const id = Number(period.gatherId || period.id || 0);
+      const selected = selectedId && id === Number(selectedId) ? " selected" : "";
+      return `<option value="${id}"${selected}>${htmlEscape(period.periodDesc || period.gatherNo || `第 ${id} 期`)}</option>`;
+    }))
+    .join("");
+}
+
+function coreStateOptions(rows, selectedState, label = "全部状态") {
+  const states = Array.from(new Set((rows || []).map((row) => String(row.states || row.gatherState || "").trim()).filter(Boolean)));
+  return [`<option value="">${htmlEscape(label)}</option>`]
+    .concat(states.map((state) => `<option value="${htmlEscape(state)}"${state === selectedState ? " selected" : ""}>${htmlEscape(state)}</option>`))
+    .join("");
+}
+
+function coreCardsHtml(cards) {
+  return cards.map(([label, value, hint]) => `
+    <div class="core-card">
+      <span>${htmlEscape(label)}</span>
+      <strong>${htmlEscape(value)}</strong>
+      <small>${htmlEscape(hint || "")}</small>
+    </div>`).join("");
+}
+
+function corePageStyle(accent = "#0f766e") {
+  return `
+    <style>
+      .core-page { padding:16px; background:#f4f7fb; color:#172033; min-height:100%; }
+      .core-shell { max-width:1400px; margin:0 auto; }
+      .core-head { display:flex; justify-content:space-between; align-items:flex-end; gap:16px; margin-bottom:14px; }
+      .core-head h2 { margin:0; font-size:22px; font-weight:600; }
+      .core-head p { margin:6px 0 0; color:#64748b; }
+      .core-tools, .core-filters { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+      .core-tools a, .core-tools button, .core-filters button { white-space:nowrap; }
+      .core-tools select, .core-filters select, .core-filters input, .core-form input, .core-form select, .core-form textarea {
+        height:32px; border:1px solid #cbd5e1; border-radius:4px; padding:0 8px; background:#fff; box-sizing:border-box;
+      }
+      .core-form textarea { height:70px; padding:8px; resize:vertical; }
+      .core-cards { display:grid; grid-template-columns:repeat(6, minmax(130px, 1fr)); gap:10px; margin-bottom:12px; }
+      .core-card { background:#fff; border:1px solid #dbe4f0; border-radius:6px; padding:13px 14px; min-height:88px; }
+      .core-card span, .core-card small { display:block; color:#64748b; font-size:12px; }
+      .core-card strong { display:block; margin:8px 0; color:${accent}; font-size:20px; }
+      .core-panel { background:#fff; border:1px solid #dbe4f0; border-radius:6px; padding:14px; overflow:auto; margin-bottom:12px; }
+      .core-panel h3 { margin:0 0 10px; font-size:16px; font-weight:600; }
+      .core-panel table { margin:0; min-width:960px; }
+      .core-grid { display:grid; grid-template-columns:minmax(0, 1.45fr) minmax(340px, .55fr); gap:12px; }
+      .core-actions a, .core-actions button { display:inline-block; margin:0 7px 4px 0; color:#1d4ed8; cursor:pointer; background:transparent; border:0; padding:0; }
+      .core-state { display:inline-block; min-width:54px; text-align:center; color:#075985; background:#e0f2fe; border:1px solid #bae6fd; border-radius:4px; padding:2px 6px; }
+      .core-empty { text-align:center; color:#94a3b8; padding:24px; }
+      .core-left { text-align:left; }
+      .core-form { display:grid; gap:10px; }
+      .core-form label { display:grid; gap:5px; color:#475569; }
+      .core-form .core-form-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+      .core-form button { width:max-content; }
+      .core-note { color:#64748b; line-height:1.7; }
+      @media (max-width:1100px) {
+        .core-cards { grid-template-columns:repeat(3, 1fr); }
+        .core-grid { grid-template-columns:1fr; }
+        .core-head { align-items:flex-start; flex-direction:column; }
+      }
+      @media (max-width:640px) {
+        .core-cards { grid-template-columns:1fr 1fr; }
+        .core-form .core-form-row { grid-template-columns:1fr; }
+      }
+    </style>`;
+}
+
+function coreInteractionScript(rootSelector = ".core-page") {
+  return `
+    <script>
+      (function(){
+        var root = document.querySelector('${rootSelector}') || document;
+        if (window.layui && layui.form) layui.form.render();
+        function reloadContent() {
+          if (window.zwkjyReloadCurrentContent) window.zwkjyReloadCurrentContent();
+          else location.reload();
+        }
+        function post(url, data) {
+          return fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data || {})
+          }).then(function(res){ return res.json(); });
+        }
+        Array.prototype.forEach.call(root.querySelectorAll('[data-filter-form]'), function(form) {
+          function go() {
+            var params = new URLSearchParams(new FormData(form)).toString();
+            location.href = form.getAttribute('data-filter-form') + (params ? '?' + params : '');
+          }
+          form.addEventListener('submit', function(event){ event.preventDefault(); go(); });
+          Array.prototype.forEach.call(form.querySelectorAll('select'), function(select){ select.addEventListener('change', go); });
+        });
+        Array.prototype.forEach.call(root.querySelectorAll('[data-post]'), function(link) {
+          link.addEventListener('click', function(event) {
+            event.preventDefault();
+            var id = link.getAttribute('data-id') || '';
+            var payload = {};
+            if (id) {
+              payload.ids = id;
+              payload.gatherId = id;
+              payload.measureId = id;
+              payload.billMeasureId = id;
+              payload.billMeasureIds = id;
+              payload.diasId = id;
+              payload.meterialDiasMeasureId = id;
+              payload.meterialDiasMeasureIds = id;
+              payload.arrivalId = id;
+              payload.meterialInMeasureId = id;
+              payload.meterialInMeasureIds = id;
+              payload.manualId = id;
+              payload.manualMeasureId = id;
+              payload.manualMeasureIds = id;
+            }
+            var extra = link.getAttribute('data-extra');
+            if (extra) {
+              try { Object.assign(payload, JSON.parse(extra)); } catch (error) {}
+            }
+            post(link.getAttribute('data-post'), payload).then(function(result){
+              if (window.layer) layer.msg(result && (result.msg || (result.code === 1 ? '处理完成' : '处理失败')) || '处理完成');
+              setTimeout(reloadContent, 350);
+            }).catch(function(){
+              if (window.layer) layer.msg('处理失败');
+            });
+          });
+        });
+        Array.prototype.forEach.call(root.querySelectorAll('[data-submit-form]'), function(button) {
+          button.addEventListener('click', function() {
+            var form = button.closest('form');
+            var data = {};
+            Array.prototype.forEach.call(form.querySelectorAll('[name]'), function(el) {
+              data[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+            });
+            post(form.getAttribute('data-save-form'), data).then(function(result){
+              if (window.layer) layer.msg(result && (result.msg || (result.code === 1 ? '保存成功' : '保存失败')) || '保存成功');
+              setTimeout(reloadContent, 450);
+            }).catch(function(){
+              if (window.layer) layer.msg('保存失败');
+            });
+          });
+        });
+      })();
+    </script>`;
+}
+
+function adminDashboardHtml() {
+  const summary = engine.contractSummary();
+  const rules = engine.calculationRules();
+  const cards = coreCardsHtml([
+    ["合同金额", moneyText(summary.contractSumMoney), "清单合同金额合计"],
+    ["最终金额", moneyText(summary.finalMoney), "含变更后的控制金额"],
+    ["清单计量", moneyText(summary.measuredMoney), "累计清单计量金额"],
+    ["材料补差", moneyText(summary.materialDiasMoney), "材料价差应付"],
+    ["手动计量", moneyText(summary.manualMoney), "现场签证/零星工程"],
+    ["当前应付", moneyText(summary.payableMoney), summary.payableFormula]
+  ]);
+  const entries = [
+    ["工期管理", "/sysGather/gatherData_page/0", "维护计量期次、采集本期数据、锁定/启用工期"],
+    ["清单计量", "/bill_measure/page", "计量单列表、明细、上报、审核、归档"],
+    ["材料补差计量", "/meterialdiasmeasure/meterialdiasmeasurePage", "按材料价差计算补差金额"],
+    ["材料到场计量", "/meterialInMeasure/meterialInMeasureList", "材料进场数量和金额跟踪"],
+    ["手动计量", "/manualMeasure/manualMeasureList/0", "现场签证、零星工程和补充计量"],
+    ["造价计算器", "/costBase/calculator_page", "清单、变更、材料、手动计量组合试算"],
+    ["造价联动校核", "/costBase/reconciliation_page", "合同、计量、支付、审核链条校核"],
+    ["BOQ校验", "/costBase/boq_validation_page", "清单数量、单价、金额一致性检查"],
+    ["计算规则后台", "/admin/calculation_rules_page", "修改应付构成、小数位和审核比例"]
+  ].map(([name, href, desc]) => `
+    <tr>
+      <td>${htmlEscape(name)}</td>
+      <td class="core-left">${htmlEscape(desc)}</td>
+      <td><a class="layui-btn layui-btn-xs" href="${href}">打开</a></td>
+    </tr>`).join("");
+  return `
+    <div class="core-page" data-core-page="admin-dashboard">
+      ${corePageStyle("#0f766e")}
+      <div class="core-shell">
+        <div class="core-head">
+          <div>
+            <h2>后台管理</h2>
+            <p>集中维护计算规则、基础数据和各类计量计算入口。</p>
+          </div>
+          <div class="core-tools">
+            <a class="layui-btn layui-btn-sm" href="/admin/calculation_rules_page">计算规则后台</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/costBase/calculator_page">造价计算器</a>
+          </div>
+        </div>
+        <div class="core-cards">${cards}</div>
+        <div class="core-grid">
+          <div class="core-panel">
+            <h3>后台功能入口</h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>模块</th><th>功能</th><th>操作</th></tr></thead>
+              <tbody>${entries}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>当前计算规则</h3>
+            <div class="core-note">
+              应付公式：${htmlEscape(summary.payableFormula)}<br>
+              金额小数位：${rules.moneyDigits}，数量小数位：${rules.quantityDigits}，单价小数位：${rules.priceDigits}<br>
+              监理审核比例：${rules.auditSupervisorRate}%<br>
+              业主审核比例：${rules.auditOwnerRate}%<br>
+              最终审定比例：${rules.auditFinalRate}%
+            </div>
+          </div>
+        </div>
+      </div>
+      ${coreInteractionScript('[data-core-page="admin-dashboard"]')}
+    </div>`;
+}
+
+function sysGatherManagementPageHtml(req) {
+  const rows = gatherRows();
+  const snapshots = ensureGatherSnapshots();
+  const latestByGather = new Map(snapshots.map((snapshot) => [Number(snapshot.gatherId || 0), snapshot]));
+  const locked = rows.filter((row) => Number(row.gatherStateCode ?? row.gatherState ?? 1) === 0 || String(row.states || "").includes("锁")).length;
+  const collected = rows.filter((row) => latestByGather.has(Number(row.gatherId || row.id)) || row.collectTime).length;
+  const totalPayable = rows.reduce((sum, row) => sum + Number(row.collectMoney || row.payableMoney || 0), 0);
+  const body = rows.map((row) => {
+    const id = Number(row.gatherId || row.id || 0);
+    const snapshot = latestByGather.get(id) || {};
+    const stateText = Number(row.gatherStateCode ?? row.gatherState ?? 1) === 0 ? "锁定" : cleanBusinessText(row.states || row.gatherState || "启用", "启用");
+    return `
+      <tr>
+        <td>${htmlEscape(row.gatherNo || row.periodDesc || "")}</td>
+        <td>${htmlEscape(row.periodDesc || row.gatherShow || "")}</td>
+        <td>${htmlEscape(row.startDate || row.gatherStartDate || "")}</td>
+        <td>${htmlEscape(row.endDate || row.gatherEndDate || "")}</td>
+        <td>${moneyText(row.collectMoney || snapshot.payableMoney || 0)}</td>
+        <td>${moneyText(snapshot.auditFinalMoney || row.auditFinalMoney || 0)}</td>
+        <td>${htmlEscape(String(row.collectTime || snapshot.collectTime || "").slice(0, 19).replace("T", " "))}</td>
+        <td><span class="core-state">${htmlEscape(stateText)}</span></td>
+        <td class="core-actions">
+          <a href="/sysGather/edit_gatherData_page?gatherId=${id}">编辑</a>
+          <a href="/dataGather/gather_dashboard_page?gatherId=${id}">汇总</a>
+          <a data-post="/dataGather/data_collect_gather" data-id="${id}">采集</a>
+          <a data-post="/dataGather/data_check_gather" data-id="${id}">校核</a>
+          <a data-post="/sysGather/update_gather_state" data-id="${id}" data-extra='${htmlEscape(JSON.stringify({ gatherState: 0 }))}'>锁定</a>
+          <a data-post="/sysGather/update_gather_state" data-id="${id}" data-extra='${htmlEscape(JSON.stringify({ gatherState: 1 }))}'>启用</a>
+          <a data-post="/sysGather/del_gather" data-id="${id}">删除</a>
+        </td>
+      </tr>`;
+  }).join("");
+  return `
+    <div class="core-page" data-core-page="sys-gather-management">
+      ${corePageStyle("#0f766e")}
+      <div class="core-shell">
+        <div class="core-head">
+          <div><h2>工期管理</h2><p>维护计量期次，采集各计量模块数据，并完成本期校核、锁定和汇总。</p></div>
+          <div class="core-tools">
+            <a class="layui-btn layui-btn-sm" href="/sysGather/edit_gatherData_page">新增工期</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/sysGather/dashboard_page">工期汇总看板</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/dataGather/gather_dashboard_page">数据采集看板</a>
+          </div>
+        </div>
+        <div class="core-cards">${coreCardsHtml([
+          ["工期数量", rows.length, "全部计量期次"],
+          ["已采集", collected, "已有采集快照或采集时间"],
+          ["锁定工期", locked, "禁止继续调整"],
+          ["启用工期", Math.max(0, rows.length - locked), "可继续计量"],
+          ["采集应付", moneyText(totalPayable), "所有期次采集金额"],
+          ["采集快照", snapshots.length, "本地汇总记录"]
+        ])}</div>
+        <div class="core-grid">
+          <div class="core-panel">
+            <h3>工期台账</h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>工期编号</th><th>工期说明</th><th>开始日期</th><th>结束日期</th><th>采集应付</th><th>最终审定</th><th>最近采集</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>${body || `<tr><td colspan="9" class="core-empty">暂无工期数据</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>快速新增工期</h3>
+            <form class="core-form" data-save-form="/sysGather/save_gather">
+              <label>工期编号<input name="gatherNo" value="第 ${rows.length + 1} 期"></label>
+              <label>工期说明<input name="periodDesc" value="第 ${rows.length + 1} 期计量"></label>
+              <div class="core-form-row">
+                <label>开始日期<input name="startDate" value="${today()}"></label>
+                <label>结束日期<input name="endDate" value="${today()}"></label>
+              </div>
+              <label>状态<select name="gatherStateCode"><option value="1">启用</option><option value="0">锁定</option></select></label>
+              <label>备注<textarea name="remark">本地新增计量期次</textarea></label>
+              <button type="button" class="layui-btn layui-btn-sm" data-submit-form>保存工期</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      ${coreInteractionScript('[data-core-page="sys-gather-management"]')}
+    </div>`;
+}
+
+function billMeasureManagementPageHtml(req) {
+  const sectionId = Number(req.query.sectionId || req.body.sectionId || 0);
+  const periodId = Number(req.query.periodId || req.body.periodId || req.query.gatherId || req.body.gatherId || 0);
+  const selectedState = String(req.query.state || req.body.state || "");
+  const allRows = engine.measureRows();
+  const rows = filteredBillMeasureRows(req);
+  const totalMoney = rows.reduce((sum, row) => sum + Number(row.measureMoney || row.money || 0), 0);
+  const totalDetails = rows.reduce((sum, row) => sum + Number(row.detailCount || measureDetailRowsFor(row.billMeasureId || row.measureId).length || 0), 0);
+  const body = rows.map((row) => {
+    const id = Number(row.billMeasureId || row.measureId || 0);
+    return `
+      <tr>
+        <td>${htmlEscape(row.measureNo || "")}</td>
+        <td>${htmlEscape(row.sectionName || "")}</td>
+        <td>${htmlEscape(row.periodDesc || row.gatherNo || "")}</td>
+        <td>${htmlEscape(row.measureDate || "")}</td>
+        <td>${htmlEscape(row.drawNo || "")}</td>
+        <td>${htmlEscape(row.pegNo || "")}</td>
+        <td class="core-left">${htmlEscape(row.position || "")}</td>
+        <td>${Number(row.detailCount || measureDetailRowsFor(id).length || 0)}</td>
+        <td>${moneyText(row.measureMoney || row.money || 0)}</td>
+        <td><span class="core-state">${htmlEscape(row.states || "")}</span></td>
+        <td class="core-actions">
+          <a href="/bill_measure/edit_page?billMeasureId=${id}">编辑</a>
+          <a href="/bill_measure/add_measure_page?billMeasureId=${id}">明细</a>
+          <a href="/bill_measure/copy_page?billMeasureId=${id}">复制</a>
+          <a data-post="/bill_measure/up_order" data-id="${id}">上报</a>
+          <a data-post="/bill_measure/agree_order" data-id="${id}">审核</a>
+          <a data-post="/bill_measure/archive_measure" data-id="${id}">归档</a>
+          <a href="/bill_measure/return_order_page?billMeasureId=${id}">退回</a>
+          <a href="/bill_measure/render_order_page?billMeasureIds=${id}">打印</a>
+          <a data-post="/bill_measure/delete" data-id="${id}">删除</a>
+        </td>
+      </tr>`;
+  }).join("");
+  return `
+    <div class="core-page" data-core-page="bill-measure-management">
+      ${corePageStyle("#0369a1")}
+      <div class="core-shell">
+        <div class="core-head">
+          <div><h2>清单计量管理</h2><p>管理清单计量单、计量明细、流程上报、审核、归档和打印。</p></div>
+          <div class="core-tools">
+            <a class="layui-btn layui-btn-sm" href="/bill_measure/add_page">新增计量单</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/bill_measure/dashboard_page">清单计量看板</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/import_measure/dashboard_page">计量导入</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/bill_measure/export_bill_measure?sectionId=${encodeURIComponent(sectionId || "")}&periodId=${encodeURIComponent(periodId || "")}&state=${encodeURIComponent(selectedState)}">导出Excel</a>
+          </div>
+        </div>
+        <form class="core-filters core-panel" data-filter-form="/bill_measure/page">
+          <select name="sectionId">${coreSectionOptions(sectionId)}</select>
+          <select name="periodId">${corePeriodOptions(periodId)}</select>
+          <select name="state">${coreStateOptions(allRows, selectedState)}</select>
+          <button type="submit" class="layui-btn layui-btn-sm">筛选</button>
+        </form>
+        <div class="core-cards">${coreCardsHtml([
+          ["计量单数", rows.length, "当前筛选结果"],
+          ["明细条目", totalDetails, "清单计量明细"],
+          ["计量金额", moneyText(totalMoney), "清单计量应付金额"],
+          ["平均单额", rows.length ? moneyText(totalMoney / rows.length) : "0.00", "计量金额 / 计量单"],
+          ["审核中", rows.filter((row) => String(row.states || "").includes("审核")).length, "流程处理中"],
+          ["已归档", rows.filter((row) => String(row.states || "").includes("归档")).length, "归档计量单"]
+        ])}</div>
+        <div class="core-grid">
+          <div class="core-panel">
+            <h3>清单计量台账</h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>计量单号</th><th>合同段</th><th>工期</th><th>日期</th><th>图号</th><th>桩号</th><th>部位</th><th>明细</th><th>金额</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>${body || `<tr><td colspan="11" class="core-empty">暂无清单计量数据</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>快速新增计量单</h3>
+            <form class="core-form" data-save-form="/bill_measure/save_measure">
+              <label>计量单号<input name="measureNo" value="JL-LOCAL-${String((engine.db.measures || []).length + 1).padStart(3, "0")}"></label>
+              <label>合同段<select name="sectionId">${sectionOptions(sectionId || ((engine.db.sections[0] || {}).sectionId))}</select></label>
+              <label>工期<select name="periodId">${measurePeriodOptions(periodId || ((engine.db.measurePeriods[0] || {}).gatherId))}</select></label>
+              <div class="core-form-row">
+                <label>计量日期<input name="measureDate" value="${today()}"></label>
+                <label>图号<input name="drawNo" value=""></label>
+              </div>
+              <div class="core-form-row">
+                <label>桩号<input name="pegNo" value=""></label>
+                <label>质检单<input name="certifyNo" value=""></label>
+              </div>
+              <label>计量部位<input name="position" value="现场计量部位"></label>
+              <button type="button" class="layui-btn layui-btn-sm" data-submit-form>保存计量单</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      ${coreInteractionScript('[data-core-page="bill-measure-management"]')}
+    </div>`;
+}
+
+function materialDiasManagementPageHtml(req) {
+  const sectionId = Number(req.query.sectionId || req.body.sectionId || 0);
+  const selectedState = String(req.query.state || req.body.state || "");
+  const allRows = engine.materialDiasRows().filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId);
+  const rows = filteredMaterialDiasRows(req);
+  const totalMoney = rows.reduce((sum, row) => sum + Number(row.adjustMoney || row.money || 0), 0);
+  const totalQty = rows.reduce((sum, row) => sum + Number(row.measureNum || row.quantity || 0), 0);
+  const body = rows.map((row) => {
+    const id = Number(row.meterialDiasMeasureId || row.diasId || row.id || 0);
+    return `
+      <tr>
+        <td>${htmlEscape(row.measureNo || "")}</td>
+        <td>${htmlEscape(row.sectionName || "")}</td>
+        <td>${htmlEscape(row.materialNo || "")}</td>
+        <td class="core-left">${htmlEscape(row.materialName || row.secMaterialName || "")}</td>
+        <td>${htmlEscape(row.measureUnit || row.unit || "")}</td>
+        <td>${Number(row.measureNum || row.quantity || 0)}</td>
+        <td>${moneyText(row.basePrice)}</td>
+        <td>${moneyText(row.currentPrice)}</td>
+        <td>${moneyText(row.priceDiff)}</td>
+        <td>${moneyText(row.adjustMoney || row.money || 0)}</td>
+        <td>${htmlEscape(row.measureDate || row.diffYearMonth || "")}</td>
+        <td><span class="core-state">${htmlEscape(row.states || "")}</span></td>
+        <td class="core-actions">
+          <a href="/meterialdiasmeasure/detail_page?diasId=${id}">详情</a>
+          <a href="/meterialdiasmeasure/edit_meterial_dias_measure_page?diasId=${id}">编辑</a>
+          <a data-post="/meterialdiasmeasure/up_order" data-id="${id}">上报</a>
+          <a data-post="/meterialdiasmeasure/agree_order" data-id="${id}">审核</a>
+          <a data-post="/meterialdiasmeasure/archive" data-id="${id}">归档</a>
+          <a href="/meterialdiasmeasure/return_order_page?diasId=${id}">退回</a>
+          <a href="/meterialdiasmeasure/track_meterial_dias_reasoure_page?measureType=meterialdiasmeasure&ids=${id}&businessId=${id}">追踪</a>
+          <a data-post="/meterialdiasmeasure/delete" data-id="${id}">删除</a>
+        </td>
+      </tr>`;
+  }).join("");
+  return `
+    <div class="core-page" data-core-page="material-dias-management">
+      ${corePageStyle("#b45309")}
+      <div class="core-shell">
+        <div class="core-head">
+          <div><h2>材料补差计量管理</h2><p>按材料基准价、当前价和计量数量计算材料价差补偿。</p></div>
+          <div class="core-tools">
+            <a class="layui-btn layui-btn-sm" href="/meterialdiasmeasure/edit_meterial_dias_measure_page">新增补差</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/meterialdiasmeasure/dashboard_page">补差看板</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/meterialdiasmeasure/export_meterial_dias_measure?sectionId=${encodeURIComponent(sectionId || "")}&state=${encodeURIComponent(selectedState)}">导出Excel</a>
+          </div>
+        </div>
+        <form class="core-filters core-panel" data-filter-form="/meterialdiasmeasure/meterialdiasmeasurePage">
+          <select name="sectionId">${coreSectionOptions(sectionId)}</select>
+          <select name="state">${coreStateOptions(allRows, selectedState)}</select>
+          <button type="submit" class="layui-btn layui-btn-sm">筛选</button>
+        </form>
+        <div class="core-cards">${coreCardsHtml([
+          ["补差批次", rows.length, "当前筛选记录"],
+          ["材料种类", new Set(rows.map((row) => row.materialNo || row.materialId)).size, "按材料去重"],
+          ["补差数量", Number(totalQty.toFixed(3)), "计量数量合计"],
+          ["补差金额", moneyText(totalMoney), "数量 x 价差"],
+          ["审核中", rows.filter((row) => String(row.states || "").includes("审核")).length, "流程处理中"],
+          ["已归档", rows.filter((row) => String(row.states || "").includes("归档")).length, "归档批次"]
+        ])}</div>
+        <div class="core-grid">
+          <div class="core-panel">
+            <h3>材料补差台账</h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>单号</th><th>合同段</th><th>材料编号</th><th>材料名称</th><th>单位</th><th>数量</th><th>基准价</th><th>当前价</th><th>价差</th><th>补差金额</th><th>日期</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>${body || `<tr><td colspan="13" class="core-empty">暂无材料补差数据</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>快速新增补差</h3>
+            <form class="core-form" data-save-form="/meterialdiasmeasure/save_detail">
+              <label>补差单号<input name="measureNo" value="BC-LOCAL-${String((engine.db.materialAdjustments || []).length + 1).padStart(3, "0")}"></label>
+              <label>合同段<select name="sectionId">${sectionOptions(sectionId || ((engine.db.sections[0] || {}).sectionId))}</select></label>
+              <label>材料<select name="materialId">${materialOptions(firstMaterialId())}</select></label>
+              <div class="core-form-row">
+                <label>补差数量<input name="quantity" value="1"></label>
+                <label>计量日期<input name="measureDate" value="${today()}"></label>
+              </div>
+              <label>供应单位<input name="provider" value=""></label>
+              <label>审批编号<input name="approveNo" value=""></label>
+              <button type="button" class="layui-btn layui-btn-sm" data-submit-form>保存补差</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      ${coreInteractionScript('[data-core-page="material-dias-management"]')}
+    </div>`;
+}
+
+function materialArrivalManagementPageHtml(req) {
+  const sectionId = Number(req.query.sectionId || req.body.sectionId || 0);
+  const selectedState = String(req.query.state || req.body.state || "");
+  const allRows = engine.materialArrivalRows().filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId);
+  const rows = filteredMaterialArrivalRows(req);
+  const totalMoney = rows.reduce((sum, row) => sum + Number(row.money || 0), 0);
+  const totalQty = rows.reduce((sum, row) => sum + Number(row.measureNum || row.quantity || 0), 0);
+  const body = rows.map((row) => {
+    const id = Number(row.meterialInMeasureId || row.arrivalId || row.id || 0);
+    return `
+      <tr>
+        <td>${htmlEscape(row.measureNo || "")}</td>
+        <td>${htmlEscape(row.sectionName || "")}</td>
+        <td>${htmlEscape(row.certifyNo || row.approveNo || "")}</td>
+        <td>${htmlEscape(row.materialNo || "")}</td>
+        <td class="core-left">${htmlEscape(row.materialName || "")}</td>
+        <td>${htmlEscape(row.measureUnit || row.unit || "")}</td>
+        <td>${Number(row.measureNum || row.quantity || 0)}</td>
+        <td>${moneyText(row.price || row.measurePrice || 0)}</td>
+        <td>${moneyText(row.money || 0)}</td>
+        <td>${htmlEscape(row.measureDate || "")}</td>
+        <td><span class="core-state">${htmlEscape(row.states || "")}</span></td>
+        <td class="core-actions">
+          <a href="/meterialInMeasure/detail_page?arrivalId=${id}">详情</a>
+          <a href="/meterialInMeasure/form_page?arrivalId=${id}">编辑</a>
+          <a data-post="/meterialInMeasure/up_order" data-id="${id}">上报</a>
+          <a data-post="/meterialInMeasure/update_measure_state" data-id="${id}">确认</a>
+          <a data-post="/meterialInMeasure/archive" data-id="${id}">归档</a>
+          <a href="/meterialInMeasure/return_order_page?arrivalId=${id}">退回</a>
+          <a href="/meterialInMeasure/record_page?measureType=meterialinmeasure&ids=${id}&businessId=${id}">追踪</a>
+          <a data-post="/meterialInMeasure/delete" data-id="${id}">删除</a>
+        </td>
+      </tr>`;
+  }).join("");
+  return `
+    <div class="core-page" data-core-page="material-arrival-management">
+      ${corePageStyle("#0f766e")}
+      <div class="core-shell">
+        <div class="core-head">
+          <div><h2>材料到场计量管理</h2><p>记录材料进场凭证、数量、单价和到场金额，支撑材料跟踪与支付核对。</p></div>
+          <div class="core-tools">
+            <a class="layui-btn layui-btn-sm" href="/meterialInMeasure/add_page">新增到场</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/meterialInMeasure/dashboard_page">到场看板</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/meterialInMeasure/export_meterial_in_measure?sectionId=${encodeURIComponent(sectionId || "")}&state=${encodeURIComponent(selectedState)}">导出Excel</a>
+          </div>
+        </div>
+        <form class="core-filters core-panel" data-filter-form="/meterialInMeasure/meterialInMeasureList">
+          <select name="sectionId">${coreSectionOptions(sectionId)}</select>
+          <select name="state">${coreStateOptions(allRows, selectedState)}</select>
+          <button type="submit" class="layui-btn layui-btn-sm">筛选</button>
+        </form>
+        <div class="core-cards">${coreCardsHtml([
+          ["到场批次", rows.length, "当前筛选记录"],
+          ["材料种类", new Set(rows.map((row) => row.materialNo || row.materialId)).size, "按材料去重"],
+          ["到场数量", Number(totalQty.toFixed(3)), "进场数量合计"],
+          ["到场金额", moneyText(totalMoney), "数量 x 单价"],
+          ["处理中", rows.filter((row) => String(row.states || "").includes("审核") || String(row.states || "").includes("更新")).length, "流程处理中"],
+          ["已归档", rows.filter((row) => String(row.states || "").includes("归档")).length, "归档批次"]
+        ])}</div>
+        <div class="core-grid">
+          <div class="core-panel">
+            <h3>材料到场台账</h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>到场单号</th><th>合同段</th><th>凭证</th><th>材料编号</th><th>材料名称</th><th>单位</th><th>数量</th><th>单价</th><th>金额</th><th>日期</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>${body || `<tr><td colspan="12" class="core-empty">暂无材料到场数据</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>快速新增到场</h3>
+            <form class="core-form" data-save-form="/meterialInMeasure/save_detail">
+              <label>到场单号<input name="measureNo" value="DC-LOCAL-${String((engine.db.materialArrivals || []).length + 1).padStart(3, "0")}"></label>
+              <label>进场凭证<input name="certifyNo" value=""></label>
+              <label>合同段<select name="sectionId">${sectionOptions(sectionId || ((engine.db.sections[0] || {}).sectionId))}</select></label>
+              <label>材料<select name="materialId">${materialOptions(firstMaterialId())}</select></label>
+              <div class="core-form-row">
+                <label>进场数量<input name="quantity" value="1"></label>
+                <label>进场日期<input name="measureDate" value="${today()}"></label>
+              </div>
+              <label>供应单位<input name="provider" value=""></label>
+              <label>验收编号<input name="approveNo" value=""></label>
+              <button type="button" class="layui-btn layui-btn-sm" data-submit-form>保存到场</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      ${coreInteractionScript('[data-core-page="material-arrival-management"]')}
+    </div>`;
+}
+
+function manualMeasureManagementPageHtml(req) {
+  const sectionId = Number(req.query.sectionId || req.body.sectionId || 0);
+  const selectedState = String(req.query.state || req.body.state || "");
+  const allRows = engine.manualMeasureRows().filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId);
+  const rows = filteredManualMeasureRows(req);
+  const totalMoney = rows.reduce((sum, row) => sum + Number(row.measureMoney || row.money || 0), 0);
+  const totalQty = rows.reduce((sum, row) => sum + Number(row.measureNum || 0), 0);
+  const body = rows.map((row) => {
+    const id = Number(row.manualId || row.manualMeasureId || row.id || 0);
+    return `
+      <tr>
+        <td>${htmlEscape(row.measureNo || "")}</td>
+        <td>${htmlEscape(row.sectionName || "")}</td>
+        <td>${htmlEscape(row.billNo || "")}</td>
+        <td class="core-left">${htmlEscape(row.billName || "")}</td>
+        <td>${htmlEscape(row.measureUnit || "")}</td>
+        <td>${Number(row.measureNum || 0)}</td>
+        <td>${moneyText(row.price || 0)}</td>
+        <td>${moneyText(row.measureMoney || row.money || 0)}</td>
+        <td>${htmlEscape(row.measureDate || "")}</td>
+        <td>${htmlEscape(row.position || "")}</td>
+        <td><span class="core-state">${htmlEscape(row.states || "")}</span></td>
+        <td class="core-actions">
+          <a href="/manualMeasure/manualMeasure_edit_page?manualId=${id}">编辑</a>
+          <a data-post="/manualMeasure/up_order" data-id="${id}">上报</a>
+          <a data-post="/manualMeasure/update_measure_state" data-id="${id}">确认</a>
+          <a data-post="/manualMeasure/archive" data-id="${id}">归档</a>
+          <a href="/manualMeasure/return_order_page?manualId=${id}">退回</a>
+          <a href="/manualMeasure/record_page?measureType=manualmeasure&ids=${id}&businessId=${id}">追踪</a>
+          <a data-post="/manualMeasure/delete" data-id="${id}">删除</a>
+        </td>
+      </tr>`;
+  }).join("");
+  return `
+    <div class="core-page" data-core-page="manual-measure-management">
+      ${corePageStyle("#7c3aed")}
+      <div class="core-shell">
+        <div class="core-head">
+          <div><h2>手动计量管理</h2><p>维护现场签证、零星工程和补充计量，直接参与应付金额计算。</p></div>
+          <div class="core-tools">
+            <a class="layui-btn layui-btn-sm" href="/manualMeasure/manualMeasure_edit_page">新增手动计量</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/manualMeasure/dashboard_page">手动计量看板</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/manualMeasure/export_manual_measure?sectionId=${encodeURIComponent(sectionId || "")}&state=${encodeURIComponent(selectedState)}">导出Excel</a>
+          </div>
+        </div>
+        <form class="core-filters core-panel" data-filter-form="/manualMeasure/manualMeasureList/0">
+          <select name="sectionId">${coreSectionOptions(sectionId)}</select>
+          <select name="state">${coreStateOptions(allRows, selectedState)}</select>
+          <button type="submit" class="layui-btn layui-btn-sm">筛选</button>
+        </form>
+        <div class="core-cards">${coreCardsHtml([
+          ["计量单数", rows.length, "当前筛选记录"],
+          ["清单项数", new Set(rows.map((row) => row.billNo || row.billName || row.manualId)).size, "按清单去重"],
+          ["计量数量", Number(totalQty.toFixed(3)), "数量合计"],
+          ["计量金额", moneyText(totalMoney), "数量 x 单价"],
+          ["处理中", rows.filter((row) => String(row.states || "").includes("审核") || String(row.states || "").includes("更新")).length, "流程处理中"],
+          ["已归档", rows.filter((row) => String(row.states || "").includes("归档")).length, "归档单据"]
+        ])}</div>
+        <div class="core-grid">
+          <div class="core-panel">
+            <h3>手动计量台账</h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>计量单号</th><th>合同段</th><th>清单编号</th><th>清单名称</th><th>单位</th><th>数量</th><th>单价</th><th>金额</th><th>日期</th><th>部位</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>${body || `<tr><td colspan="12" class="core-empty">暂无手动计量数据</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>快速新增手动计量</h3>
+            <form class="core-form" data-save-form="/manualMeasure/save_measure">
+              <label>计量单号<input name="measureNo" value="SD-LOCAL-${String((engine.db.manualMeasures || []).length + 1).padStart(3, "0")}"></label>
+              <label>合同段<select name="sectionId">${sectionOptions(sectionId || ((engine.db.sections[0] || {}).sectionId))}</select></label>
+              <div class="core-form-row">
+                <label>清单编号<input name="billNo" value="SD-${String((engine.db.manualMeasures || []).length + 1).padStart(3, "0")}"></label>
+                <label>单位<input name="measureUnit" value="项"></label>
+              </div>
+              <label>清单名称<input name="billName" value="现场签证工程"></label>
+              <div class="core-form-row">
+                <label>数量<input name="measureNum" value="1"></label>
+                <label>单价<input name="price" value="1000"></label>
+              </div>
+              <label>计量日期<input name="measureDate" value="${today()}"></label>
+              <label>施工部位<input name="position" value="现场部位"></label>
+              <button type="button" class="layui-btn layui-btn-sm" data-submit-form>保存手动计量</button>
+            </form>
+          </div>
+        </div>
+      </div>
+      ${coreInteractionScript('[data-core-page="manual-measure-management"]')}
+    </div>`;
+}
+
 function contentForId(id) {
   if (String(id) === "46") return dataGatherDashboardHtml({ query: {}, body: {}, params: {} });
-  if (String(id) === "47") return billMeasureDashboardHtml({ query: {}, body: {}, params: {} });
-  if (String(id) === "48") return materialDiasManagementDashboardHtml({ query: {}, body: {}, params: {} });
-  if (String(id) === "49") return materialArrivalManagementDashboardHtml({ query: {}, body: {}, params: {} });
-  if (String(id) === "50") return manualMeasureManagementDashboardHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "47") return billMeasureManagementPageHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "48") return materialDiasManagementPageHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "49") return materialArrivalManagementPageHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "50") return manualMeasureManagementPageHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "63") return reportManagerDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "64") return reportExportProjectPageHtml({ query: {}, body: {}, params: {} });
-  if (String(id) === "355") return sysGatherDashboardHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "355") return sysGatherManagementPageHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "376") return subItemLedgerHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "377") return reportDetailHtml();
   if (String(id) === "378") return variationPaymentDashboardHtml({ query: {}, body: {}, params: {} });
@@ -1064,14 +1748,15 @@ function contentForId(id) {
   if (String(id) === "691") return variationManagementDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "692") return billMeasureDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "693") return importMeasureDashboardHtml({ query: {}, body: {}, params: {} });
-  if (String(id) === "694") return materialArrivalManagementDashboardHtml({ query: {}, body: {}, params: {} });
-  if (String(id) === "695") return materialDiasManagementDashboardHtml({ query: {}, body: {}, params: {} });
-  if (String(id) === "696") return manualMeasureManagementDashboardHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "694") return materialArrivalDashboardHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "695") return materialDiasDashboardHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "696") return manualMeasureDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "697") return sysGatherDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "698") return dataGatherDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "699") return auditMoneyDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "700") return variationPaymentDashboardHtml({ query: {}, body: {}, params: {} });
-  if (String(id) === "9001" || String(id) === "9002") return calculationRulesPageHtml();
+  if (String(id) === "9001" || String(id) === "9003") return adminDashboardHtml();
+  if (String(id) === "9002") return calculationRulesPageHtml();
   if (String(id) === "6998") return reportManagerDashboardHtml({ query: {}, body: {}, params: {} });
   const file = path.join(dataDir, "content", `page_content_${id}.html`);
   const htmlText = readText(file, "");
@@ -1624,13 +2309,13 @@ function costBaseDashboardHtml(req) {
           <div><h2>基础造价资料</h2><p>汇总合同清单、章节金额、材料基础价格和清单范本，作为计量支付和变更计算的基础库。</p></div>
           <div class="base-actions">
             <select onchange="location.href='/costBase/dashboard_page?sectionId='+this.value">${sectionOptionsHtml}</select>
-            <button class="layui-btn layui-btn-sm layui-btn-normal" onclick="location.href='/costBase/reconciliation_page'">造价联动校核</button>
-            <button class="layui-btn layui-btn-sm layui-btn-primary" onclick="location.href='/costBase/boq_validation_page'">BOQ校验</button>
-            <button class="layui-btn layui-btn-sm layui-btn-warm" onclick="location.href='/costBase/5d_model_page'">5D成本模型</button>
-            <button class="layui-btn layui-btn-sm layui-btn-primary" onclick="location.href='/costBase/unit_price_analysis_page'">综合单价分析</button>
-            <button class="layui-btn layui-btn-sm" onclick="location.href='/costBase/calculator_page'">造价计算器</button>
-            <button class="layui-btn layui-btn-sm" onclick="location.href='/secBill/export_sec_bill'">导出清单</button>
-            <button class="layui-btn layui-btn-sm layui-btn-primary" onclick="location.href='/secMateria/export_sec_materia'">导出材料</button>
+            <a class="layui-btn layui-btn-sm layui-btn-normal" href="/costBase/reconciliation_page">造价联动校核</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/costBase/boq_validation_page">BOQ校验</a>
+            <a class="layui-btn layui-btn-sm layui-btn-warm" href="/costBase/5d_model_page">5D成本模型</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/costBase/unit_price_analysis_page">综合单价分析</a>
+            <a class="layui-btn layui-btn-sm" href="/costBase/calculator_page">造价计算器</a>
+            <a class="layui-btn layui-btn-sm" href="/secBill/export_sec_bill">导出清单</a>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/secMateria/export_sec_materia">导出材料</a>
           </div>
         </div>
         <div class="base-cards">${cards}</div>
@@ -10501,6 +11186,8 @@ app.get("/position/chose_page", (req, res) => {
 
 app.get("/main", (req, res) => html(res, dashboardHtml("工作台")));
 app.get("/sbr/header_content", (req, res) => html(res, dashboardHtml("模块首页")));
+app.get("/admin/dashboard_page", (req, res) => html(res, adminDashboardHtml()));
+app.get("/system/dashboard_page", (req, res) => html(res, adminDashboardHtml()));
 app.get("/admin/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml()));
 app.get("/system/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml()));
 app.get("/sbr/sbr_com/:id", (req, res) => html(res, contentForId(req.params.id)));
@@ -10882,7 +11569,7 @@ app.all("/secProjectPlan/update_plan", (req, res) => mutate(res, () => {
 }));
 app.all("/sysGather/get_gather_data_list", (req, res) => table(res, req, gatherRows()));
 app.all("/sysGather/dashboard_page", (req, res) => html(res, sysGatherDashboardHtml(req)));
-app.all("/sysGather/gatherData_page/:projectId?", (req, res) => html(res, sysGatherDashboardHtml(req)));
+app.all("/sysGather/gatherData_page/:projectId?", (req, res) => html(res, sysGatherManagementPageHtml(req)));
 app.all("/sysGather/update_gather_state", (req, res) => mutate(res, () => {
   const ids = idsFrom(req, "gatherId");
   const nextState = req.body.gatherState ?? req.query.gatherState ?? req.body.state ?? req.query.state ?? 1;
@@ -10943,7 +11630,7 @@ app.all("/dataGather/data_refresh_gather", (req, res) => operationOk(res, refres
 app.all("/dataGather/gather_dashboard_page", (req, res) => html(res, dataGatherDashboardHtml(req)));
 app.all("/main_controller/mainReturnSectionFlag", (req, res) => operationOk(res, { sectionType: 0, isSuperSection: 0, sectionId: 101 }));
 app.all("/bill_measure/dashboard_page", (req, res) => html(res, billMeasureDashboardHtml(req)));
-app.all("/bill_measure/page", (req, res) => html(res, billMeasureDashboardHtml(req)));
+app.all("/bill_measure/page", (req, res) => html(res, billMeasureManagementPageHtml(req)));
 app.all("/bill_measure/list", (req, res) => table(res, req, engine.measureRows()));
 app.all("/bill_measure/list/:typeCode", (req, res) => table(res, req, engine.measureRows()));
 app.all("/bill_measure/export_bill_measure", (req, res) => exportCsvOrTicket(req, res, "bill-measure-export.csv", filteredBillMeasureRows(req), "url"));
@@ -10984,8 +11671,8 @@ app.all("/import_measure/dashboard_page", (req, res) => html(res, importMeasureD
 app.all("/import_measure/get_attachment_list", (req, res) => table(res, req, importAttachmentRows()));
 app.all("/import_measure/get_measure_by_att", (req, res) => table(res, req, importMeasurePreviewRows(queryNumber(req, "attId") || queryNumber(req, "attachmentId"))));
 app.all("/meterialdiasmeasure/meterial_dias_measure_list", (req, res) => table(res, req, engine.materialDiasRows()));
-app.all("/meterialdiasmeasure/dashboard_page", (req, res) => html(res, materialDiasManagementDashboardHtml(req)));
-app.all("/meterialdiasmeasure/meterialdiasmeasurePage", (req, res) => html(res, materialDiasManagementDashboardHtml(req)));
+app.all("/meterialdiasmeasure/dashboard_page", (req, res) => html(res, materialDiasDashboardHtml(req)));
+app.all("/meterialdiasmeasure/meterialdiasmeasurePage", (req, res) => html(res, materialDiasManagementPageHtml(req)));
 app.all("/meterialdiasmeasure/export_meterial_dias_measure", (req, res) => exportCsvOrTicket(req, res, "material-dias-measure-export.csv", filteredMaterialDiasRows(req), "url"));
 app.all("/meterialdiasmeasure/export_material_dias_measure", (req, res) => exportCsvOrTicket(req, res, "material-dias-measure-export.csv", filteredMaterialDiasRows(req), "url"));
 app.all("/meterialdiasmeasure/detail_page", (req, res) => html(res, materialDiasDetailHtml(req)));
@@ -11004,8 +11691,8 @@ app.all("/meterialdiasmeasure/del_meterial_dias_measure", (req, res) => mutate(r
 app.all("/meterialdiasmeasure/delete/:id?", (req, res) => mutate(res, () => ({ changed: removeRows(engine.db.materialAdjustments, "diasId", idsFromAny(req, ["diasId", "mdmIds", "meterialMeasureId", "meterialDiasMeasureId", "meterialDiasMeasureIds"])) })));
 app.all("/meterialdiasmeasure/delete_meterial_dias_measure/:id?", (req, res) => mutate(res, () => ({ changed: removeRows(engine.db.materialAdjustments, "diasId", idsFromAny(req, ["diasId", "mdmIds", "meterialMeasureId", "meterialDiasMeasureId", "meterialDiasMeasureIds"])) })));
 app.all("/meterialInMeasure/meterial_in_measure_list", (req, res) => table(res, req, engine.materialArrivalRows()));
-app.all("/meterialInMeasure/dashboard_page", (req, res) => html(res, materialArrivalManagementDashboardHtml(req)));
-app.all("/meterialInMeasure/meterialInMeasureList", (req, res) => html(res, materialArrivalManagementDashboardHtml(req)));
+app.all("/meterialInMeasure/dashboard_page", (req, res) => html(res, materialArrivalDashboardHtml(req)));
+app.all("/meterialInMeasure/meterialInMeasureList", (req, res) => html(res, materialArrivalManagementPageHtml(req)));
 app.all("/meterialInMeasure/export_meterial_in_measure", (req, res) => exportCsvOrTicket(req, res, "material-arrival-measure-export.csv", filteredMaterialArrivalRows(req), "url"));
 app.all("/meterialInMeasure/export_material_in_measure", (req, res) => exportCsvOrTicket(req, res, "material-arrival-measure-export.csv", filteredMaterialArrivalRows(req), "url"));
 app.all("/meterialInMeasure/detail_page", (req, res) => html(res, materialArrivalDetailHtml(req)));
@@ -11024,8 +11711,8 @@ app.all("/meterialInMeasure/update_measure_state", (req, res) => mutate(res, () 
 app.all("/meterialInMeasure/archive", (req, res) => mutate(res, () => ({ changed: setState(engine.db.materialArrivals, "arrivalId", idsFromAny(req, ["arrivalId", "meterialInMeasureId", "meterialInMeasureIds"]), "已归档") })));
 app.all("/meterialInMeasure/delete/:id?", (req, res) => mutate(res, () => ({ changed: removeRows(engine.db.materialArrivals, "arrivalId", idsFromAny(req, ["arrivalId", "meterialInMeasureId", "meterialInMeasureIds"])) })));
 app.all("/manualMeasure/detail_list", (req, res) => table(res, req, engine.manualMeasureRows()));
-app.all("/manualMeasure/dashboard_page", (req, res) => html(res, manualMeasureManagementDashboardHtml(req)));
-app.all("/manualMeasure/manualMeasureList/:projectId?", (req, res) => html(res, manualMeasureManagementDashboardHtml(req)));
+app.all("/manualMeasure/dashboard_page", (req, res) => html(res, manualMeasureDashboardHtml(req)));
+app.all("/manualMeasure/manualMeasureList/:projectId?", (req, res) => html(res, manualMeasureManagementPageHtml(req)));
 app.all("/manualMeasure/export_manual_measure", (req, res) => exportCsvOrTicket(req, res, "manual-measure-export.csv", filteredManualMeasureRows(req), "url"));
 app.all("/manualMeasure/detail_columns", (req, res) => operationOk(res, [
   [

@@ -958,9 +958,9 @@ async function verifyMaterialArrivalManagementDashboardLoop() {
     await postJson("/meterialInMeasure/update_measure_state", { arrivalId });
     assert.strictEqual(json.data.row.money, 8760, "material arrival should calculate quantity times current price");
 
-    const page = await requestText("/meterialInMeasure/dashboard_page?sectionId=101");
-    assert.ok(page.text.includes("材料到场计量管理看板"), "material arrival dashboard should show management title");
-    assert.ok(page.text.includes("DC-ARRIVAL-DASH") && page.text.includes("/meterialInMeasure/record_page"), "material arrival dashboard should include core panels");
+    const page = await requestText("/meterialInMeasure/meterialInMeasureList?sectionId=101");
+    assert.ok(page.text.includes("材料到场计量管理"), "material arrival management page should show title");
+    assert.ok(page.text.includes("DC-ARRIVAL-DASH") && page.text.includes("/meterialInMeasure/record_page"), "material arrival management page should include core panels");
     assert.ok(page.text.includes("DC-ARRIVAL-DASH"), "material arrival dashboard should include saved arrival");
     assert.ok(page.text.includes("CL-001") && page.text.includes("8,760.00"), "material arrival dashboard should include computed material amount");
     assert.ok(page.text.includes(`/meterialInMeasure/detail_page?arrivalId=${arrivalId}`), "material arrival dashboard should link detail page");
@@ -974,7 +974,7 @@ async function verifyMaterialArrivalManagementDashboardLoop() {
     assert.ok(editPage.text.includes("material-arrival-form"), "material arrival edit page should render form");
     assert.ok(editPage.text.includes("验证材料供应商") && editPage.text.includes("YS-ARRIVAL-001") && editPage.text.includes("已更新"), "material arrival edit page should echo provider, approval number and state");
 
-    const filtered = await requestText("/meterialInMeasure/dashboard_page?sectionId=101&state=已更新");
+    const filtered = await requestText("/meterialInMeasure/meterialInMeasureList?sectionId=101&state=已更新");
     assert.ok(filtered.text.includes("DC-ARRIVAL-DASH") && filtered.text.includes("已更新"), "material arrival dashboard should filter updated state");
 
     const menu = await requestJson("/menu/left_menu?parentId=2");
@@ -982,7 +982,7 @@ async function verifyMaterialArrivalManagementDashboardLoop() {
     assert.ok(flatMenu.includes("材料到场计量管理看板") && flatMenu.includes("meterialInMeasure/dashboard_page"), "material arrival dashboard should be reachable from left menu");
 
     const menuPage = await requestText("/sbr/sbr_com/694");
-    assert.ok(menuPage.text.includes("材料到场计量管理看板"), "material arrival dashboard should render through menu content route");
+    assert.ok(menuPage.text.includes("material-arrival-dashboard"), "material arrival dashboard should render through menu content route");
   } finally {
     await postJson(`/meterialInMeasure/delete/${arrivalId}`, { ids: String(arrivalId) });
   }
@@ -1030,9 +1030,9 @@ async function verifyMaterialDiasManagementDashboardLoop() {
     await postJson("/meterialdiasmeasure/agree_order", { diasId });
     assert.strictEqual(json.data.row.adjustMoney, 560, "material dias should calculate quantity times price difference");
 
-    const page = await requestText("/meterialdiasmeasure/dashboard_page?sectionId=101");
-    assert.ok(page.text.includes("材料补差计量管理看板"), "material dias dashboard should show management title");
-    assert.ok(page.text.includes("BC-DIAS-DASH") && page.text.includes("/meterialdiasmeasure/track_meterial_dias_reasoure_page"), "material dias dashboard should include core panels");
+    const page = await requestText("/meterialdiasmeasure/meterialdiasmeasurePage?sectionId=101");
+    assert.ok(page.text.includes("材料补差计量管理"), "material dias management page should show title");
+    assert.ok(page.text.includes("BC-DIAS-DASH") && page.text.includes("/meterialdiasmeasure/track_meterial_dias_reasoure_page"), "material dias management page should include core panels");
     assert.ok(page.text.includes("BC-DIAS-DASH"), "material dias dashboard should include saved adjustment");
     assert.ok(page.text.includes("CL-001") && page.text.includes("560.00"), "material dias dashboard should include computed adjustment amount");
     assert.ok(page.text.includes(`/meterialdiasmeasure/detail_page?diasId=${diasId}`), "material dias dashboard should link detail page");
@@ -1040,14 +1040,14 @@ async function verifyMaterialDiasManagementDashboardLoop() {
     assert.ok(page.text.includes("/meterialdiasmeasure/up_order") && page.text.includes("/meterialdiasmeasure/agree_order"), "material dias dashboard should expose workflow actions");
     assert.ok(page.text.includes("/meterialdiasmeasure/archive") && page.text.includes("/meterialdiasmeasure/track_meterial_dias_reasoure_page"), "material dias dashboard should expose archive and track actions");
     assert.ok(page.text.includes("/meterialdiasmeasure/export_meterial_dias_measure"), "material dias dashboard should expose export action");
-    const detailArea = page.text.slice(page.text.indexOf("补差明细"));
+    const detailArea = page.text.slice(page.text.indexOf("BC-DIAS-DASH"));
     assert.ok(detailArea.includes("TJ-01"), "material dias dashboard should show selected section rows");
     assert.ok(!detailArea.includes("<td>TJ-02"), "material dias dashboard section filter should exclude other section rows");
     const editPage = await requestText(`/meterialdiasmeasure/edit_meterial_dias_measure_page?diasId=${diasId}`);
     assert.ok(editPage.text.includes("material-dias-form"), "material dias edit page should render form");
     assert.ok(editPage.text.includes("验证补差供应商") && editPage.text.includes("YS-DIAS-001") && editPage.text.includes("已审核"), "material dias edit page should echo provider, approval number and state");
 
-    const filtered = await requestText("/meterialdiasmeasure/dashboard_page?sectionId=101&state=已审核");
+    const filtered = await requestText("/meterialdiasmeasure/meterialdiasmeasurePage?sectionId=101&state=已审核");
     assert.ok(filtered.text.includes("BC-DIAS-DASH") && filtered.text.includes("已审核"), "material dias dashboard should filter approved state");
 
     const menu = await requestJson("/menu/left_menu?parentId=2");
@@ -1055,7 +1055,7 @@ async function verifyMaterialDiasManagementDashboardLoop() {
     assert.ok(flatMenu.includes("材料补差计量管理看板") && flatMenu.includes("meterialdiasmeasure/dashboard_page"), "material dias dashboard should be reachable from left menu");
 
     const menuPage = await requestText("/sbr/sbr_com/695");
-    assert.ok(menuPage.text.includes("材料补差计量管理看板"), "material dias dashboard should render through menu content route");
+    assert.ok(menuPage.text.includes("material-dias-dashboard"), "material dias dashboard should render through menu content route");
   } finally {
     await postJson(`/meterialdiasmeasure/delete/${diasId}`, { ids: String(diasId) });
   }
@@ -1107,9 +1107,9 @@ async function verifyManualMeasureManagementDashboardLoop() {
     await postJson("/manualMeasure/update_measure_state", { manualId });
     assert.strictEqual(json.data.row.measureMoney, 4140, "manual measure should calculate quantity times price");
 
-    const page = await requestText("/manualMeasure/dashboard_page?sectionId=101");
-    assert.ok(page.text.includes("手动计量管理看板"), "manual measure dashboard should show management title");
-    assert.ok(page.text.includes("SD-MANUAL-DASH") && page.text.includes("/manualMeasure/record_page"), "manual measure dashboard should include core panels");
+    const page = await requestText("/manualMeasure/manualMeasureList/0?sectionId=101");
+    assert.ok(page.text.includes("手动计量管理"), "manual measure management page should show title");
+    assert.ok(page.text.includes("SD-MANUAL-DASH") && page.text.includes("/manualMeasure/record_page"), "manual measure management page should include core panels");
     assert.ok(page.text.includes("SD-MANUAL-DASH"), "manual measure dashboard should include saved manual measure");
     assert.ok(page.text.includes("现场签证排水沟") && page.text.includes("4,140.00"), "manual measure dashboard should include computed manual amount");
     assert.ok(page.text.includes(`/manualMeasure/manualMeasure_edit_page?manualId=${manualId}`), "manual measure dashboard should link edit page");
@@ -1122,7 +1122,7 @@ async function verifyManualMeasureManagementDashboardLoop() {
     assert.ok(editPage.text.includes("manual-measure-form"), "manual measure edit page should render form");
     assert.ok(editPage.text.includes("SD-YJ-001") && editPage.text.includes("K1+200 排水沟") && editPage.text.includes("现场签证依据完整") && editPage.text.includes("已更新"), "manual measure edit page should echo evidence, position, remark and state");
 
-    const filtered = await requestText("/manualMeasure/dashboard_page?sectionId=101&state=已更新");
+    const filtered = await requestText("/manualMeasure/manualMeasureList/0?sectionId=101&state=已更新");
     assert.ok(filtered.text.includes("SD-MANUAL-DASH") && filtered.text.includes("已更新"), "manual measure dashboard should filter updated state");
 
     const menu = await requestJson("/menu/left_menu?parentId=2");
@@ -1130,7 +1130,7 @@ async function verifyManualMeasureManagementDashboardLoop() {
     assert.ok(flatMenu.includes("手动计量管理看板") && flatMenu.includes("manualMeasure/dashboard_page"), "manual measure dashboard should be reachable from left menu");
 
     const menuPage = await requestText("/sbr/sbr_com/696");
-    assert.ok(menuPage.text.includes("手动计量管理看板"), "manual measure dashboard should render through menu content route");
+    assert.ok(menuPage.text.includes("manual-measure-dashboard"), "manual measure dashboard should render through menu content route");
   } finally {
     await postJson(`/manualMeasure/delete/${manualId}`, { ids: String(manualId) });
   }
@@ -2808,10 +2808,10 @@ async function verifyOriginalMenuUrlAliasesLoop() {
     ["/secMateria/sec_materia_page", "材料"],
     ["/billAnalyzeNode/designBillList_page", "分部分项"],
     ["/sysGather/gatherData_page/0", "工期"],
-    ["/bill_measure/page", "清单计量管理看板"],
-    ["/meterialdiasmeasure/meterialdiasmeasurePage", "材料补差计量管理看板"],
-    ["/meterialInMeasure/meterialInMeasureList", "材料到场计量管理看板"],
-    ["/manualMeasure/manualMeasureList/0", "手动计量管理看板"],
+    ["/bill_measure/page", "清单计量管理"],
+    ["/meterialdiasmeasure/meterialdiasmeasurePage", "材料补差计量管理"],
+    ["/meterialInMeasure/meterialInMeasureList", "材料到场计量管理"],
+    ["/manualMeasure/manualMeasureList/0", "手动计量管理"],
     ["/reportManager/report_project_page/0?bdCode=MEASUREREOPORT", "计量支付报表中心"],
     ["/reportManager/export_report_project_page/0?bdCode=MEASUREREOPORT", "计量报表导出页面"],
     ["/engineering_contact_bill/page", "工程技术联系单"],
@@ -2826,6 +2826,7 @@ async function verifyOriginalMenuUrlAliasesLoop() {
     ["/syzl/page", "试验资料"],
     ["/projectInformationNode/page/0", "资料"],
     ["/projectInformationParam/page", "资料"],
+    ["/admin/dashboard_page", "后台管理"],
     ["/admin/calculation_rules_page", "计算规则管理后台"]
   ];
   for (const [url, expected] of pages) {
@@ -2837,17 +2838,17 @@ async function verifyOriginalMenuUrlAliasesLoop() {
 
   const menuIds = [
     ["46", "data-gather-dashboard"],
-    ["47", "清单计量管理看板"],
-    ["48", "材料补差计量管理看板"],
-    ["49", "材料到场计量管理看板"],
-    ["50", "手动计量管理看板"],
-    ["355", "sysGather/edit_gatherData_page"],
+    ["47", "清单计量管理"],
+    ["48", "材料补差计量管理"],
+    ["49", "材料到场计量管理"],
+    ["50", "手动计量管理"],
+    ["355", "工期管理"],
     ["376", "sub-item-ledger-table"],
     ["377", "export_project_measure_pay"],
     ["378", "varyMeasurePay/export_vary_measure_pay"],
     ["411", "oaDataNode/downLoadZipFile"],
     ["568", "试验资料"],
-    ["9001", "计算规则管理后台"],
+    ["9001", "后台管理"],
     ["9002", "计算规则管理后台"]
   ];
   for (const [id, expected] of menuIds) {
@@ -2858,11 +2859,12 @@ async function verifyOriginalMenuUrlAliasesLoop() {
   }
 
   const header = await requestJson("/menu/header_menu?href=sbr/sbr_com/9002");
-  assert.ok(header.json.data.some((row) => Number(row.id) === 9000 && row.title === "系统设置"), "header menu should include system settings");
-  assert.strictEqual(Number(header.json.other.id), 9000, "calculation rules menu should select system settings top menu");
+  assert.ok(header.json.data.some((row) => Number(row.id) === 9000 && row.title === "后台管理"), "header menu should include backend management");
+  assert.strictEqual(Number(header.json.other.id), 9000, "calculation rules menu should select backend management top menu");
   const systemMenu = await requestJson("/menu/left_menu?parentId=9000");
   const systemMenuText = JSON.stringify(systemMenu.json.data);
-  assert.ok(systemMenuText.includes("计算规则后台") && systemMenuText.includes("admin/calculation_rules_page"), "system settings left menu should expose calculation rules admin");
+  assert.ok(systemMenuText.includes("后台首页") && systemMenuText.includes("admin/dashboard_page"), "backend menu should expose backend dashboard");
+  assert.ok(systemMenuText.includes("计算规则后台") && systemMenuText.includes("admin/calculation_rules_page"), "backend menu should expose calculation rules admin");
 }
 
 async function main() {
