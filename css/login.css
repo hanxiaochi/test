@@ -1,0 +1,338 @@
+* {
+	margin: 0;
+	padding: 0;
+}
+
+body {
+	width: 100%;
+	height: auto;
+	/* background: url(../img/login/bg1.png) no-repeat #3D8DBC; */
+	background-color:#3D8DBC;
+}
+
+.logoFont {
+	/*系统名称的样式效果*/
+	font-family: "微软雅黑";
+	color: #FFFFFF;
+	font-weight: 100;
+	margin-left: -1.5%;
+	font-size: 25px;
+}
+
+.logoFontOne {
+	/*系统名称的样式效果*/
+	font-family: "微软雅黑";
+	color: #FFFFFF;
+	font-weight: 100;
+	margin-left: -1.5%;
+	font-size: 25px;
+}
+
+.zwlogoFontOne {
+	/*系统名称的样式效果*/
+	font-family: "微软雅黑";
+	color: #FFFFFF;
+	font-weight: 100;
+	margin-left: -1.5%;
+	font-size: 40px;
+}
+.loginBox-title {
+	margin-left: 6%;
+	/*数值来源于100-88=12/2=6*/
+	color: #878787;
+	font-family: "微软雅黑";
+	font-size: 24px;
+}
+
+.logoFontDiv {
+	margin-top: 10%;
+	margin-left: 26%;
+	margin-right: 26%;
+	/* border:1px solid red; */
+}
+
+@media ( max-width :1024px) {
+	.logoFontDiv {
+		margin-top: 10%;
+		margin-left: 0px;
+		margin-right: 0px;
+	}
+	.logoFont {
+		font-size: 25px;
+		display: block;
+		text-align: center;
+		margin-left: 0px;
+		/* span元素在div中居中方式三种方法，第一设置float:left;text-align:center;
+		第二设置display:block;text-align:center;第三设置display:inline-block；text-align:center;width:300px; */
+	}
+	.loginBox-title {
+		padding-top: 25px;
+		margin-bottom: 1px;
+		font-size: 18px;
+		font-weight: 400 !important;
+	}
+	#submitBtn {
+		font-size: 12px;
+		width: 80px;
+	}
+	.form-horizontal .form-group {
+		margin: 20px 6%;
+		font-size: 11px;
+	}
+	#leftDiv {
+		display: none;
+	}
+	#middleDiv {
+		width:100% !important;
+	}
+	#middleImg {
+		display: none;
+	}
+	#rightDiv {
+		display: none;
+	}
+	.loginBox {
+		position: relative !important;
+		top: 20%;
+		/*距离父容器即栅格的顶部百分比，百分比的高度来源于100%-76%2*/
+		height: 70%;
+		/*距离父容器即栅格的总高度的百分比，数值来源于效果图*/
+		margin: 0px auto;
+		/*距离父容器即栅格的左右百分比，百分比的高度来源于100%-80%2*/
+		width: 30%;
+		/*距离父容器即栅格的总宽度的百分比，数值来源于效果图*/
+		background-color: #FFFFFF;
+		box-shadow: none !important;
+	}
+	.bottomFont {
+		color: #F5F5F5;
+		display:block;
+		text-align:center;
+		margin:0 auto !important;
+	}
+}
+
+@media ( min-width : 1024px) and (max-width:1280px) {
+	.logoFont {
+		font-size: 25px;
+	}
+	.logoFontOne {
+		font-size: 12px;
+	}
+	.loginBox-title {
+		margin-top: 10px;
+		margin-bottom: 1px;
+		font-size: 18px;
+		font-weight: 100 !important;
+	}
+	#submitBtn {
+		width: 60px;
+	}
+	.form-horizontal .form-group {
+		margin: 12px 6%;
+		font-size: 12px;
+	}
+	.loginBox {
+		top: 16%;
+		/*距离父容器即栅格的顶部百分比，百分比的高度来源于100%-76%2*/
+		height: 70%;
+		/*距离父容器即栅格的总高度的百分比，数值来源于效果图*/
+		margin: 0px 15%;
+		/*距离父容器即栅格的左右百分比，百分比的高度来源于100%-70%2*/
+		width: 70%;
+		/*距离父容器即栅格的总宽度的百分比，数值来源于效果图*/
+	}
+}
+
+@media ( min-width : 1280px) and (max-width:1440px) {
+	.logoFont {
+		font-size: 28px;
+	}
+	.logoFontOne {
+		font-size: 16px;
+	}
+	.loginBox-title {
+		margin-top: 15px;
+		margin-bottom: 4px;
+		font-size: 22px;
+		font-weight: 400 !important;
+	}
+	#submitBtn {
+		width: 80px;
+	}
+	.form-horizontal .form-group {
+		margin: 15px 6%;
+		font-size: 12px;
+	}
+	.loginBox {
+		top: 20%;
+		/*距离父容器即栅格的顶部百分比，百分比的高度来源于100%-76%2*/
+		height: 62%;
+		/*距离父容器即栅格的总高度的百分比，数值来源于效果图*/
+		margin: 0px 15%;
+		/*距离父容器即栅格的左右百分比，百分比的高度来源于100%-80%2*/
+		width: 70%;
+		/*距离父容器即栅格的总宽度的百分比，数值来源于效果图*/
+	}
+}
+
+@media ( min-width : 1440px) and (max-width:1680px) {
+	/* 大于等于1440px分辨率显示器处理 */
+	.logoFont {
+		font-size: 32px;
+	}
+	.logoFontOne {
+		font-size: 18px;
+	}
+	.form-horizontal .form-group {
+		margin: 20px 6%;
+		font-size: 14px;
+	}
+	.loginBox-title {
+		margin-top: 20px;
+		margin-bottom: 1px;
+		font-size: 22px;
+		font-weight: 400 !important;
+	}
+	.loginBox {
+		top: 20%;
+		/*距离父容器即栅格的顶部百分比，百分比的高度来源于100%-76%2*/
+		height: 65%;
+		/*距离父容器即栅格的总高度的百分比，数值来源于效果图*/
+		margin: 0px 20%;
+		/*距离父容器即栅格的左右百分比，百分比的高度来源于100%-80%2*/
+		width: 60%;
+		/*距离父容器即栅格的总宽度的百分比，数值来源于效果图*/
+	}
+}
+
+@media ( min-width : 1680px) {
+	/* 大于等于1680px分辨率显示器处理 */
+	.logoFont {
+		font-size: 43px;
+	}
+	.logoFontOne {
+		font-size: 25px;
+	}
+	.form-horizontal .form-group {
+		margin: 25px 6%;
+		font-size: 14px;
+	}
+	.loginBox-title {
+		margin-top: 30px;
+		margin-bottom: 1px;
+		font-size: 22px;
+		font-weight: 400 !important;
+	}
+	.loginBox {
+		top: 23%;
+		/*距离父容器即栅格的顶部百分比，百分比的高度来源于100%-76%2*/
+		height: 60%;
+		/*距离父容器即栅格的总高度的百分比，数值来源于效果图*/
+		margin: 0px 20%;
+		/*距离父容器即栅格的左右百分比，百分比的高度来源于100%-80%2*/
+		width: 60%;
+		/*距离父容器即栅格的总宽度的百分比，数值来源于效果图*/
+	}
+}
+
+.input-group {
+	margin: 0px 6%;
+}
+
+.form-group {
+	width: 88%;
+	/*输入框的宽度相对于loginBox窗体的宽度*/
+	margin-top: 10px;
+}
+
+.form-horizontal .has-feedback .form-control-feedback {
+	right: 0px;
+}
+
+.loginBox {
+	/*登录窗体的样式*/
+	position: absolute;
+	/*设置绝度定位*/
+	z-index: 9;
+	/*让从栅格当中浮动出来，并且显示在最上层*/
+	background-color: #FCFCFC;
+	border-radius: 3px;
+	-moz-border-radius: 3px; /* Old Firefox */
+	box-shadow: 8px 8px 5px #888888;
+	/*数值来源于效果图*/
+	/* border: 1px solid #666666; */
+}
+
+.bottomFont {
+	color: #F5F5F5;
+	margin-left: 38.5%;
+	/*底部版权信息的的字体颜色*/
+}
+
+.btn-primary {
+	/*更改bootstrap默认的按钮颜色及鼠标飘过之后的颜色*/
+	background-color: #0099FF;
+	border-color: #0099CC;
+	width: 80px;
+}
+
+.btn-primary:hover {
+	/*更改bootstrap默认的按钮颜色及鼠标飘过之后的颜色*/
+	background-color: #0099CC;
+	border-color: #0099CC;
+}
+
+.zwsoftlink {
+	color: #F8F8F8;
+	/*text-decoration: none;*/
+}
+
+.zwsoftlink:hover {
+	color: #F8F8F8;
+	/*text-decoration: none;*/
+}
+
+.zwsoftlink:visited {
+	color: #F8F8F8;
+	/*text-decoration: none;*/
+}
+
+.zwsoftlink:link {
+	color: #F8F8F8;
+	/*text-decoration: none;*/
+}
+
+.loadingSucDiv {
+	/*授权认证窗体的样式*/
+	position: absolute;
+	/*设置绝度定位*/
+	top: 23%;
+	/*距离父容器即栅格的顶部百分比，百分比的高度来源于100%-54%*/
+	margin: 0px 23%;
+	/*距离父容器即栅格的左右百分比，百分比的高度来源于100%-54%*/
+	width: 54%;
+	/*距离父容器即栅格的总宽度的百分比，数值来源于效果图*/
+	height: 54%;
+	/*距离父容器即栅格的总高度的百分比，数值来源于效果图*/
+	z-index: 999;
+	/*让从栅格当中浮动出来，并且显示在最上层*/
+	/*数值来源于效果图*/
+	text-align: center;
+	visibility: hidden;
+}
+
+.loadFont {
+	color: #FFFFFF;
+}
+.phone-login{
+	text-decoration:none !important;
+	margin-right:10px;
+	cursor: pointer;
+}
+.login-hide{
+	display: none;
+}
+.feachBtn{
+	cursor: pointer;
+}

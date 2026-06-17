@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>清单计量</title>
+</head>
+<body>
+<input type="hidden" value="SBSJ" id="roleTypeCode">
+	<div id="varyMeasureTab"></div>
+		<div class="modal fade bs-example-modal-lg text-center" id="showProcessImg" tabindex="-1" role="dialog" aria-labelledby="myLargeModalLabel" >
+          <div class="modal-dialog modal-lg" style="display: inline-block; width: auto;margin-top:12%">
+            <div class="modal-content" style="box-shadow: darkgrey 0px 0px 30px 5px;">
+              <img  id="imgInModalID"  
+			 class="carousel-inner img-responsive img-rounded" 
+			 onclick="javascript:$('#showProcessImg').modal('hide')"
+			 onmouseover="this.style.cursor='pointer';this.style.cursor='hand'" 
+			 onmouseout="this.style.cursor='default'"/>
+            </div>
+          </div>
+    	</div>
+	<script type="text/html" id="indexTabContent" >
+		<div class="box" style="margin-bottom: 0px;height:50%;border: none;">
+			<div class="box-body">
+				<table id="varyMeasureTable"  lay-filter="varyMeasureTable"></table>
+			</div>
+		</div>
+		<div class="box" style="margin-bottom: 0px;border: none;height:50%">
+			<div class="box-body">
+				<table id="varyMeasureDetailTable"  lay-filter="varyMeasureDetailTable"></table>
+			</div>
+		</div>
+	</script>
+	<script type="text/html" id="varyMeasureTableToolBar">
+						<button class="btn btn-primary btn-sm" lay-event="addMeasure"><i class="glyphicon glyphicon-plus"></i> 添加变更</button>
+						
+						<button class="btn btn-success btn-sm" lay-event="reportMeasure"><i class="glyphicon glyphicon-send"></i> <lable>上报数据</lable> </button>	
+						
+						<button class="btn btn-danger btn-sm" lay-event="deleteVary"><i class="glyphicon glyphicon-trash"></i> 删除数据</button>		
+						<button class="btn btn-default btn-sm" lay-event="withdrawMeasure"><i class="fa fa-copy"></i> 撤回上报</button>
+					   	
+						<button  class="btn btn-default btn-sm"  lay-event="reportVaryView"><i class="glyphicon glyphicon-ok-circle"></i>预览报表</button>
+						<button  class="btn btn-default btn-sm" style="display:none;" id="refreshVaryView" lay-event="refreshVaryView"><i class="glyphicon glyphicon-ok-circle"></i>刷新</button>
+	</script>
+	<script type="text/html" id="varyMeasureDetailTableToolBar">
+		<button  class="btn btn-default btn-sm" style="display:none;" id="refreshVaryDetail" lay-event="refreshVaryDetail"><i class="glyphicon glyphicon-ok-circle"></i>刷新</button>
+	</script>
+	<script type="text/javascript">
+	layui.use(['table'],function() {
+		var pageNum = pageNum;
+		layer.load(2);
+		/*初始化tab*/
+		$("#varyMeasureTab").html($("#indexTabContent").html());
+		//表格
+		var selectVaryId=0;
+		var amountNum = getValue("numDecimals");
+		var priceNum = getValue("priceDecimals");
+		var moneyNum = getValue("moneyDecimals");
+		var saveVaryState = "0";
+		var table = layui.table;
+		/**计量支付主表 数据加载*/
+		var cols = [
+			{"type":"checkbox"},
+          	{"title": "变更编号","field":"varyNo",width:140,event : "measureNo"},
+            {"title": "变更日期","field":"measureDate",width:125,event : "measureNo"},
+            {"title": "变更等级",event : "measureNo",templet: function(d){
+        		return d.varyGrade.bdName;
+            }},
+            {"title": "变更类型",event : "measureNo",templet: function(d){
+        		return d.varyType.bdName;
+            }},
+            {"title": "变更金额",event : "measureNo","align": "center",templet: function(d){
+				if(d.srVaryMoney==""){
+					return "";
+				}
+				return parseFloat(d.srVaryMoney.toFixed(moneyNum));
+            }},
+            {"title": "变更项目","align": "center","field":"varyItem",width:125,event : "measureNo"},
+            {"title": "所属工区",event : "measureNo","field":"workAreaName","align": "center",templet: function(d){
+				if(d.sysWorkArea==""){
+					return "";
+				}
+				return d.sysWorkArea.workAreaName;
+     	   }},
+            {"title": "状态","align": "center","field":"states",width:180,event : "measureNo"},
+            {"title": "操作","align": "center","fixed":"right", width:240,templet: function(d){
+				var id = d.varyId;
+				var states = d.states;
+				var processInstanceId = d.processInstanceId;
+				var isArchive = d.isArchive;
+				var measureState = d.measureState;
+            	var roleTypeName=$("#roleTypeCode").val();
+            	var state="0";
+           		var butHtml="<div>";
+           		if(d.isArchive==0){
+                   	if(roleTypeName=="SBSJ"){
+                   		if(d.taskUser&&(measureState==0||measureState==1||measureState==6)){
+                   			if(saveVaryState == 0){
+	                   			butHtml+='<button title="变更"  lay-event="measureBtn" class="btn btn-success btn-xs">变更</button>';
+                   			}
+                   			butHtml+='<button title="编辑"  lay-event="editBtn" class="btn btn-primary btn-xs">编辑</button>';
+                    		butHtml+='<button title="删除 " lay-event="deleteBtn" class="btn btn-danger btn-xs">删除</button>';
+                   		}else{
+    						if(states=='可归档'){
+    							butHtml+='<button title="确定 "  lay-event="archive"  class="btn btn-info btn-xs">确定</button>';
+                   			}
+                   		}
+                   		
+                   	}
+                   	if(roleTypeName=="SHSJ"){
+                   		if(d.taskUser){
+                   			butHtml+='<button title="审核 " lay-event="auditingBtn" class="btn btn-primary btn-xs">审核</button>';
+                   			butHtml+='<button title="同意 " lay-event="agreeBtn" class="btn btn-success btn-xs">同意</button>';
+                   			//butHtml+='<button title="退回 " lay-event="returnBtn" class="btn btn-warning btn-xs">退回</button>';
+                   		}else{
+                   		}
+                   	}
+                   	if(roleTypeName=="PFSJ"){
+                   		if(d.taskUser){
+                   			butHtml+='<button title="审核 " lay-event="auditingBtn" class="btn btn-primary btn-xs">审核</button>';
+                   			butHtml+='<button title="同意 "lay-event="agreeBtn" class="btn btn-success btn-xs">同意</button>';
+                   			//butHtml+='<button title="退回 "lay-event="returnBtn" class="btn btn-warning btn-xs">退回</button>';
+                   		}else{
+                   		}
+                   	}
+           		}else{
+           			if(roleTypeName=="SBSJ" && saveVaryState == 1){
+               			butHtml+='<button title="变更"  lay-event="measureBtn" class="btn btn-success btn-xs">变更</button>';
+                   	}
+           		}
+           		butHtml+='<button title="追踪 " lay-event="trackBtn"  class="btn btn-info btn-xs">追踪</button>';
+               	butHtml+='<button title="浏览 " lay-event="see" class="btn btn-defaultsuc btn-xs">浏览</button>';
+               	butHtml+='</div>';
+               	return butHtml;
+            }}
+        ];
+		var detailCols=[
+            {"title": "清单编号","align": "center",templet: function(d){
+        		return d.secBill.billModel.billNo;
+            }},
+            {"title": "清单名称","align": "center",templet: function(d){
+        		return d.secBill.billModel.billName;
+            }},
+            {"title": "单位","align": "center",templet: function(d){
+        		return d.secBill.billModel.measureUnit;
+            }},
+            {"title": "变更前数量","align": "center",templet: function(d){
+            	//if(d.beforeVaryNum!="" && d.beforeVaryNum > 0){
+            	//	return parseFloat(d.beforeVaryNum.toFixed(amountNum));
+            	//}
+            	return d.beforeVaryNum;
+            }},
+            {"title": "变更前单价","align": "center",templet: function(d){
+            	//if(d.beforeVaryPrice!=""){
+            	//	return parseFloat(d.beforeVaryPrice.toFixed(priceNum));
+            	//}
+				return d.beforeVaryPrice;
+            }},
+            {"title": "变更后数量","align": "center",templet: function(d){
+            	//if(d.afterVaryNum!=""){
+            	//	return parseFloat(d.afterVaryNum.toFixed(amountNum));
+            	//}
+				return d.afterVaryNum;
+            }},
+            {"title": "变更后单价","align": "center",templet: function(d){
+            	//if(d.afterVaryPrice!=""){
+            	//	return parseFloat(d.afterVaryPrice.toFixed(priceNum));
+            	//}
+				return d.afterVaryPrice;
+            }},
+            {"title": "变更金额","align": "center",templet: function(d){
+            	//if(d.varyMoney!=""){
+            	//	return parseFloat(d.varyMoney.toFixed(moneyNum));
+            	//}
+				return d.varyMoney;
+            }},
+            {"title": "变更差价","field":"varyPrice" ,"align": "center",templet: function(d){
+            	//if(d.varyPrice!=""){
+            	//	return parseFloat(d.varyPrice.toFixed(priceNum));
+            	//}
+				return d.varyPrice;
+            }},
+            {"title": "操作","align": "center",templet: function(d){
+				var varyDetailId = d.varyDetailId;
+				var roleTypeName=$("#roleTypeCode").val();
+            	var butHtml="<div>";
+				if(roleTypeName=="SBSJ" && ((saveVaryState == 1 && d.varyApplication.isArchive == 1)
+            			|| (saveVaryState == 0&&d.varyApplication.isArchive != 1 && (d.varyApplication.measureState == 0 
+            				|| d.varyApplication.measureState == 1 || d.varyApplication.measureState == 6)))){
+           			butHtml+='<button title="编辑 "  lay-event="editBtn" class="btn btn-primary btn-xs">编辑</button>';
+					butHtml+='<button title="删除 "  lay-event="deleteBtn" class="btn btn-danger btn-xs">删除</button>';
+            	}
+            	butHtml+='</div>';
+            	return butHtml;
+            }}
+		]
+		table.render({
+			    elem: '#varyMeasureDetailTable'
+			    ,url: 'vary_detail/list' //数据接口
+			    ,where:{varyId:0}
+			  	,page: false
+			  	,cellMinWidth: 80
+				,defaultToolbar:[]
+			  	,height: 190
+			  	,even:true
+			  	,limit:100
+			    ,cols: [detailCols]
+			    ,size: 'sm'
+			    ,done : function(d) {
+			    	if(d.data.length > 0) {
+			    		var obj = d.data[0];
+			    		if(obj.varyType.bdCode == 'SL'){
+			    			$("[data-field='varyPrice']").css('display','none');
+			    		}
+			    	}
+					layer.closeAll('loading');
+					
+				}
+		});
+		table.render({
+			    elem: '#varyMeasureTable'
+			    ,url: 'vary_measure/list?typeCode=' //数据接口
+			  	,cellMinWidth: 80
+			  	,toolbar: '#varyMeasureTableToolBar'
+				,defaultToolbar:[]
+				,height: 'full-350'
+			  	,even:true
+				,page: {
+			  		curr: 1,
+			  		limit: 10
+			  	}
+			    ,cols: [cols]
+			    ,size: 'sm'
+			    ,done : function(res, curr, count) {
+			    	pageNum = curr;
+					if("0"!=1){
+						 $(".layui-table-box").find("[data-field='workAreaName']").css("display","none");
+					}
+					layer.closeAll('loading');
+				}
+		});
+		//监听操作栏按钮
+		table.on('tool(varyMeasureTable)', function(obj){
+			var data = obj.data;
+ 			varyMeasureTableLineClick[obj.event](data.varyId,obj);
+		});
+		//监听操作栏按钮
+		table.on('tool(varyMeasureDetailTable)', function(obj){
+			var data = obj.data;
+ 			varyMeasureDetailTableLineClick[obj.event](data);
+		});
+		varyMeasureDetailTableLineClick={
+				editBtn: function(varyApplication){
+					Ewin.modal({
+		    		  	modalId:"varyMeasureDetailEdit",
+						title:"编辑变更信息",
+						url:"vary_measure/editVaryMeasureDetailPage",
+						data:{varyDetailId: varyApplication.varyDetailId},
+						width: 450
+					});
+				},
+				deleteBtn:function(varyApplication){
+					Ewin.confirm({message : "确认要删除选择的数据吗？"}).on(function(e) {
+						if (e) {//e 为true 说明点击确定
+							$.ajax({
+									url : "vary_detail/delete/"+ varyApplication.varyDetailId,
+									type : "delete",
+									dataType : "json",
+									success : function(result) {
+										if (result.code == 1) {
+											Ewin.msg({type : "success",content : "已删除"});
+											 table.reload("varyMeasureDetailTable",{where:{varyId:varyApplication.varyId}});
+										} else {
+											Ewin.msg({type : "danger",content : result.msg});
+										}
+									}
+								});
+								return;
+						}
+					});
+				}
+				
+		}
+		//监听头部按钮
+		table.on('toolbar(varyMeasureDetailTable)', function(obj){
+			var checkStatus = table.checkStatus(obj.config.id),data = checkStatus.data;
+			varyMeasureDetailTableToolClick[obj.event](data);
+		});
+		//监听头部按钮
+		table.on('toolbar(varyMeasureTable)', function(obj){
+			var checkStatus = table.checkStatus(obj.config.id),data = checkStatus.data;
+			varyMeasureTableToolClick[obj.event](data);
+		});
+		 
+		table.on('checkbox(varyMeasureTable)', function(obj){
+			if(obj.type!='all'){
+				if(obj.checked){
+					 obj.tr.addClass('layui-table-click'); 	
+				}else{
+					 obj.tr.removeClass('layui-table-click'); 	
+				}
+			}else{
+				if(obj.checked){
+					 $("div[class='layui-unselect layui-form-checkbox layui-form-checked']").attr('class','layui-unselect layui-form-checkbox layui-form-checked');
+					$("div[lay-id='varyMeasureTable'] div[class='layui-table-fixed layui-table-fixed-l'] tr").addClass('layui-table-click ');
+					$("div[lay-id='varyMeasureTable'] div[class='layui-table-body layui-table-main'] tr").addClass('layui-table-click ');
+				}else{
+					 $("div[class='layui-unselect layui-form-checkbox layui-form-checked']").attr('class','layui-unselect layui-form-checkbox');
+					$("div[lay-id='varyMeasureTable'] div[class='layui-table-fixed layui-table-fixed-l'] tr").removeClass('layui-table-click ');
+					$("div[lay-id='varyMeasureTable'] div[class='layui-table-body layui-table-main'] tr").removeClass('layui-table-click ');
+				}
+			}
+			
+		})
+		//表格行的点击
+		var varyMeasureTableLineClick={
+			trackBtn:function(varyId,obj){//追踪
+				Ewin.modal({
+					title : "追踪清单",
+					modalId : "trackBillMeasureList",
+					width : 580,
+					url : "vary_measure/track_page",
+					data : {
+						"varyId" : varyId
+					},
+					headerClass:"zw-track-header",
+					btn:"hide",
+					drag : true
+				});
+			},
+			archive:function(varyId,obj){//归档
+				Ewin.modal({
+					title : "确认归档",
+					modalId : "archiveVaryApplication",
+					width : 550,
+					url : "vary_measure/archive_upload_pic_page",
+					data : {
+						"varyId" : varyId
+					},
+					submitText:"归档",
+					headerClass:"zw-track-header",
+				});
+			},
+			agreeBtn:function(varyId,obj){//同意
+				Ewin.confirm({ message: "确定同意此条变更令？" }).on(function (e) {
+					if (e) {//e 为true 说明点击确定
+						$.ajax({
+							url:"vary_measure/agree_order",
+							type:"post",
+							data:{"varyId":varyId,"comment":"同意"},
+							dataType:"json",
+							success:function(result){
+								if(result.code==1){
+									Ewin.msg({type:"success",content:"审核通过！"})
+									table.reload("varyMeasureTable");
+								}else{
+									Ewin.msg({type:"danger",content:result.msg})
+								}
+							}
+						});
+					}
+				});
+			},
+			auditingBtn:function(varyId,obj){//审核按钮
+				$.ajax({
+					url : "vary_measure/edit_page",
+					type : "get",
+					async : false,
+					data : {
+						varyId : varyId,
+						btnType:"auditing",
+						pageNum: pageNum
+					},
+					success : function(result) {
+						$("#varyMeasureTab").html(result);
+					}
+				});
+				
+			},
+			editBtn : function(varyId,obj) {//编辑
+				$.ajax({
+					url : "vary_measure/edit_page",
+					type : "get",
+					async : false,
+					data : {
+						varyId: varyId,
+						btnType: "edit",
+						pageNum: pageNum
+					},
+					success : function(result) {
+						$("#varyMeasureTab").html(result);
+					}
+				});
+			},
+			see : function(varyId,obj) {//查看
+				$.ajax({
+					url : "vary_measure/edit_page",
+					type : "get",
+					async : false,
+					data : {
+						varyId: varyId,
+						btnType: "see",
+						pageNum: pageNum
+					},
+					success : function(result) {
+						$("#varyMeasureTab").html(result);
+					}
+				});
+			},
+			returnBtn:function(varyId,obj){//退回
+				Ewin.modal({
+        		  	modalId:"returnOrderPageList",
+					title:"退回",
+					width:300,
+					headerClass:"zw-track-header",
+					submitText:"确认退回",
+					url:"vary_measure/return_order_page",
+					data:{
+						"varyId":varyId
+					}
+				});
+			},
+			deleteBtn : function(varyId,obj) {//删除
+				Ewin.confirm({message : "确认要删除选择的数据吗？"}).on(function(e) {
+					if (e) {//e 为true 说明点击确定
+						$.ajax({
+							url : "vary_measure/delete/"+ varyId,
+							type : "delete",
+							dataType : "json",
+							success : function(result) {
+								if (result.code == 1) {
+									Ewin.msg({type : "success",content : "已删除"});
+									 table.reload("varyMeasureTable");
+								} else {
+									Ewin.msg({type : "danger",content : result.msg});
+								}
+							}
+						});
+						return;
+					}
+				});
+			},measureBtn:function(varyId,obj){
+				$.ajax({
+					url : "vary_measure/edit_detail_page",
+					type : "get",
+					async : false,
+					data:{
+						varyId : varyId,
+						btnType:"varyMeasureTab",
+						pageNum: pageNum
+					},
+					success : function(result) {
+						$("#varyMeasureTab").html(result);
+					}
+				});
+			},
+			measureNo:function(varyId,obj){
+				 $("div[lay-id='varyMeasureTable'] input[type='checkbox']").prop('checked',false);
+				 $("div[class='layui-unselect layui-form-checkbox layui-form-checked']").attr('class','layui-unselect layui-form-checkbox');
+				$(obj.tr).find("td:first").children().find("div:first").addClass("layui-form-checked");
+				var index=$(obj.tr).attr("data-index");
+				var data=table.cache["varyMeasureTable"];
+				for(var i=0;i<data.length;i++){
+					data[i]['LAY_CHECKED']='';
+					if(index==i){
+						data[i]['LAY_CHECKED']='True';
+					}
+				}
+			      var varyMeasure = obj.data;
+				  var varyIds = varyMeasure.varyId;
+				  selectVaryId=varyIds;
+				  table.reload("varyMeasureDetailTable",{where:{varyId:varyIds}});
+			},
+	
+		};
+		
+		// 点击头部按钮
+		var varyMeasureTableToolClick={
+				addMeasure:function(data){
+				/* 	Ewin.modal({
+		    		  	modalId:"varyMeasureEdit",
+						title:"添加数据",
+						url:"vary_measure/add_page"
+					});
+					 */
+					$.ajax({
+						url : "vary_measure/add_page",
+						type : "get",
+						async : false,
+						data : {
+							pageNum: pageNum
+						},
+						success : function(result) {
+							$("#varyMeasureTab").html(result);
+						}
+					});
+				},
+				reportMeasure:function(data){
+					//退回
+					//$("#varyMeasureEdit-from-return").on("click",function() {
+					var varyIds="*";
+				    var message ="确认要将选择的清单上报吗?";
+					if(data.length==0){
+						message="确认要全部执行吗?";
+					}else{
+						var arr=new Array();
+				    	for(var i=0;i<data.length;i++){
+				    		arr.push(data[i].varyId);
+				    	}
+				    	varyIds = arr.join(",");
+					}
+					
+					$.ajax({
+						url:"vary_measure/next_task_list",
+						type:"post",
+						data:{"varyIds":varyIds},
+						dataType:"json",
+						success:function(result){
+							var size=result.data;
+							if(size>1){
+								Ewin.modal({
+									modalId : "returnOrderPageList",
+									title : "上报",
+									width : 300,
+									headerClass : "zw-track-header",
+									submitText : "确认上报",
+									url : "vary_measure/render_order_page",
+									data : {
+										"varyIds" : varyIds
+									}
+								});
+							}else{
+								var btnText = "上报数据";
+								if(btnText!="上报数据"){
+									if(data.length==0){
+										message="确认将全部已同意清单处理为（可归档）?";
+									}else{
+										message="确定将当前清单处理为（可归档）?";
+									}
+								}
+								Ewin.confirm({ message: message }).on(function (e) {
+									if (e) {//e 为true 说明点击确定
+										$.ajax({
+											url:"vary_measure/up_order",
+											type:"post",
+											data:{"varyIds":varyIds},
+											dataType:"json",
+											success:function(result){
+												if(result.code==1){
+													Ewin.msg({type:"success",content:"操作完成！"})
+													if(btnText=="上报数据"){
+													Ewin.modal({
+														width : 400,
+														modalId : "workflowSendSMSpage",
+														async : false,
+														title : "发送通知",
+														url : "workflow/isSendSMSpage",
+														data : {
+														"pageType" : "varyApplication",
+														"pageNum":1
+														},
+														drag : true
+													});
+													}
+													$("#refreshVaryView").click();
+												}else{
+													Ewin.msg({type:"warning",content:result.msg})
+												}
+											}
+										});
+									}
+								});
+							}
+						}
+					});
+					
+						
+					//});
+					
+				   /* var varyIds="*";
+				    var message ="确认要将选择的清单上报吗?";
+					if(data.length==0){
+						message="确认要全部执行吗?";
+					}else{
+						var arr=new Array();
+				    	for(var i=0;i<data.length;i++){
+				    		arr.push(data[i].varyId);
+				    	}
+				    	varyIds = arr.join(",");
+					}
+					var btnText = $(this).text().replace(/\s+/g,"");
+					if(btnText=="可归档"){
+						if(checkBoxArr.length==0){
+							message="确认将全部已同意清单处理为（可归档）?";
+						}else{
+							message="确定将当前清单处理为（可归档）?";
+						}
+					}
+					Ewin.confirm({ message: message }).on(function (e) {
+						if (e) {//e 为true 说明点击确定
+							$.ajax({
+								url:"vary_measure/up_order",
+								type:"post",
+								data:{"varyIds":varyIds},
+								dataType:"json",
+								success:function(result){
+									if(result.code==1){
+										Ewin.msg({type:"success",content:"操作完成！"})
+										$("#refreshVaryView").click();
+									}else{
+										Ewin.msg({type:"warning",content:result.msg})
+									}
+								}
+							});
+						}
+					});*/
+				},
+				withdrawMeasure : function(data) {//撤回计量单
+					var message = "确认要操作选择的清单吗?";
+					var varyIds = "*";
+					if (data.length == 0) {
+						message = "确认要全部执行吗?";
+					} else {
+						var arr = new Array();
+						for (var i = 0; i < data.length; i++) {
+							arr.push(data[i].varyId);
+						}
+						varyIds = arr.join(",");
+					}
+					 
+					Ewin
+						.confirm({
+							message : message
+						})
+						.on(
+								function(e) {
+									if (e) {
+						
+						$.ajax({
+								url : "workflow/withdraw_order",
+								type : "post",
+								data : {
+									"ids" : varyIds,
+									"measureType":"VaryApplication"
+								},
+								dataType : "json",
+								success : function(result) {
+									if (result.code == 1) {
+									Ewin.msg({
+											type : "success",
+											content : "操作完成！"
+											})
+										table.reload("varyMeasureTable");
+									} else {
+										Ewin.msg({
+											type : "warning",
+											content : result.msg
+											})
+									}
+									}
+									});
+							}
+							});
+							
+				},
+				agreeMeasure:function(data){
+				    var checkBoxArr = [];
+				    $('#varyMeasureTable input[type="checkbox"]:checked').each(function() {
+				    	checkBoxArr.push($(this).val());
+				    });
+				    var message="确认要全部执行吗?";
+				    var varyIds="*";
+					if(checkBoxArr.length==0){
+						message="确认要全部同意吗?";
+					}else{
+						var arr=new Array();
+				    	for(var i=0;i<data.length;i++){
+				    		arr.push(data[i].varyId);
+				    	}
+				    	varyIds = arr.join(",");
+					}
+					Ewin.confirm({ message: message }).on(function (e) {
+						if (e) {//e 为true 说明点击确定
+							$.ajax({
+								url:"vary_measure/agree_all_order",
+								type:"post",
+								data:{"varyIds":varyIds},
+								dataType:"json",
+								success:function(result){
+									if(result.code==1){
+										Ewin.msg({type:"success",content:"审核完成！"})
+										$("#refreshVaryView").click();
+									}else{
+										Ewin.msg({type:"danger",content:result.msg})
+									}
+								}
+							});
+						}
+					});
+				},
+				adjustMeasure : function(data) {//调整计量单
+					if (data.length == 0) {
+						Ewin.msg({
+							type : "danger",
+							content : "请至少选中一条计量单！"
+						})
+					} else if (data.length > 15) {
+						Ewin.msg({
+							type : "danger",
+							content : "只能调整15条计量单！"
+						});
+					} else {
+						var arr = new Array();
+						for (var i = 0; i < data.length; i++) {
+							arr.push(data[i].varyId);
+						}
+						Ewin.modal({
+							title : "调整清单",
+							modalId : "adjustPage",
+							width : 400,
+							url : "vary_measure/adjust_page",
+							data : {
+								"varyIds" : arr
+										.join(",")
+							},
+							headerClass : "zw-track-header",
+							btn : "hide",
+							drag : true
+						});
+					}
+				},
+				deleteVary:function(data){
+					var varyIds = "";
+					var isDelete=false;
+					console.log(JSON.stringify(data))
+				    if(data.length==0){
+				    	Ewin.msg({type:"warning",content:"请选择要删除的计量单！"});
+				    	return false;
+				    }else {
+				    	var arr=new Array();
+				    	for(var i=0;i<data.length;i++){
+				    		var stateId=data[i].measureState;
+					    	if(stateId==1 || stateId==0){
+					    		isDelete=true;
+					    	}
+				    		arr.push(data[i].varyId);
+				    	}
+				    	varyIds = arr.join(",");
+					}
+					if(isDelete){
+						Ewin.confirm({ message: "确认要删除数据吗" }).on(function (e) {
+							if (e) {//e 为true 说明点击确定
+								$.ajax({
+									url : "vary_measure/delete/"+ varyIds,
+									type : "delete",
+									dataType : "json",
+									success : function(result) {
+										if (result.code == 1) {
+											Ewin.msg({type : "success",content : "已删除"});
+											$("#refreshVaryView").click();
+										} else {
+											Ewin.msg({type : "danger",content : result.msg});
+										}
+									}
+								});
+								}
+							});
+					}
+					else{
+						Ewin.msg({type:"warning",content:"选中的计量单无法删除！"});
+						return false;
+						
+					}
+				},
+				refreshVaryView:function(data){
+					 table.reload("varyMeasureTable");
+				},
+				archiveMeasureNo:function(data){
+				    var checkBoxArr = [];
+				    $('#varyMeasureTable input[type="checkbox"]:checked').each(function() {
+				    	checkBoxArr.push($(this).val());
+				    });
+				    var message="确认要全部执行吗?";
+				    var varyIds="*";
+					if(checkBoxArr.length==0){
+						message="确认要全部同意吗?";
+					}else{
+						var arr=new Array();
+				    	for(var i=0;i<data.length;i++){
+				    		arr.push(data[i].varyId);
+				    	}
+				    	varyIds = arr.join(",");
+					}
+					Ewin.confirm({ message: message }).on(function (e) {
+						if (e) {//e 为true 说明点击确定
+							$.ajax({
+								url:"vary_measure/archive_measure",
+								type:"post",
+								data:{"varyIds":varyIds},
+								dataType:"json",
+								success:function(result){
+									if(result.code==1){
+										Ewin.msg({type:"success",content:"归档完成！"})
+										$("#refreshVaryView").click();
+									}else{
+										Ewin.msg({type:"danger",content:result.msg})
+									}
+								}
+							});
+						}
+					});
+				},
+				reportVaryView:function(data){
+					var varyIds = "";
+				    if(data.length==0){
+				    	Ewin.msg({type:"warning",content:"请选择的计量单！"});
+				    	return false;
+				    }else {
+				    	var arr=new Array();
+				    	for(var i=0;i<data.length;i++){
+				    		var stateId=data[i].measureState;
+					    	if(stateId==1 || stateId==0){
+					    		isDelete=true;
+					    	}
+				    		arr.push(data[i].varyId);
+				    	}
+				    	varyIds = arr.join(",");
+					}
+						layer.open({
+							  type: 2, 
+							  title:"预览报表",
+							  area: ['60%', '70%'],
+							  content: ['reportManager/reportViewSecurity?reportCode=report_vary_apply&ids='+varyIds,'no'] //这里content是一个URL，如果你不想让iframe出现滚动条，你还可以content: ['http://sentsin.com', 'no']
+						}); 
+				}
+				
+				
+		}
+		
+		// 点击头部按钮
+		var varyMeasureDetailTableToolClick={
+			refreshVaryDetail:function(data){
+				 table.reload("varyMeasureDetailTable");
+			}
+		}
+		/*
+		//点击状态触发流程图显示
+		varyMeasureTableListData.on('click','p[data-processInstanceId]', function ( e, settings, json ) {
+			e.stopPropagation();//阻止冒泡事件
+			$("#showProcessImg .modal-content>img").attr("src","workflow/see_process_img?processInstanceId="+$(this).attr("data-processInstanceId")+"&dfd="+new Date().getMilliseconds());
+			$("#showProcessImg").modal();
+		});
+		*/
+	});
+	</script>
+</body>
+</html>

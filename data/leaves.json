@@ -1,0 +1,194 @@
+[
+  {
+    "id": 29,
+    "name": "清单范本",
+    "url": "billModel/billModel_page",
+    "refreshType": 1
+  },
+  {
+    "id": 31,
+    "name": "材料范本",
+    "url": "manual_model/manual_model_page",
+    "refreshType": 1
+  },
+  {
+    "id": 40,
+    "name": "合同概括",
+    "url": "contract_survey/contract_survey_page/0",
+    "refreshType": 2
+  },
+  {
+    "id": 41,
+    "name": "工程计划",
+    "url": "secProjectPlan/plan_list_page",
+    "refreshType": 2
+  },
+  {
+    "id": 42,
+    "name": "清单管理",
+    "url": "secBill/sec_bill_page",
+    "refreshType": 2
+  },
+  {
+    "id": 359,
+    "name": "材料清单管理",
+    "url": "secMateria/sec_materia_page",
+    "refreshType": 2
+  },
+  {
+    "id": 44,
+    "name": "分部分项管理",
+    "url": "billAnalyzeNode/designBillList_page",
+    "refreshType": 2
+  },
+  {
+    "id": 355,
+    "name": "工期管理",
+    "url": "sysGather/gatherData_page/0",
+    "refreshType": 2
+  },
+  {
+    "id": 47,
+    "name": "清单计量",
+    "url": "bill_measure/page",
+    "refreshType": 3
+  },
+  {
+    "id": 48,
+    "name": "材料补差计量",
+    "url": "meterialdiasmeasure/meterialdiasmeasurePage",
+    "refreshType": 3
+  },
+  {
+    "id": 49,
+    "name": "材料到场计量",
+    "url": "meterialInMeasure/meterialInMeasureList",
+    "refreshType": 3
+  },
+  {
+    "id": 50,
+    "name": "手动计量",
+    "url": "manualMeasure/manualMeasureList/0",
+    "refreshType": 3
+  },
+  {
+    "id": 63,
+    "name": "支付报表",
+    "url": "reportManager/report_project_page/0?bdCode=MEASUREREOPORT",
+    "refreshType": 3
+  },
+  {
+    "id": 64,
+    "name": "批量导出",
+    "url": "reportManager/export_report_project_page/0?bdCode=MEASUREREOPORT",
+    "refreshType": 3
+  },
+  {
+    "id": 69,
+    "name": "工程技术联系单",
+    "url": "engineering_contact_bill/page",
+    "refreshType": 2
+  },
+  {
+    "id": 600,
+    "name": "工程变更会议纪要",
+    "url": "vary_meeting/vary_meeting_page",
+    "refreshType": 2
+  },
+  {
+    "id": 68,
+    "name": "变更令管理",
+    "url": "vary_measure/page",
+    "refreshType": 3
+  },
+  {
+    "id": 370,
+    "name": "多项目查询",
+    "url": "mtilProjectQuer/page",
+    "refreshType": 0
+  },
+  {
+    "id": 371,
+    "name": "变更台帐查询",
+    "url": "bigVaryQuery/getBigVaryQueryPage",
+    "refreshType": 0
+  },
+  {
+    "id": 376,
+    "name": "分项台账",
+    "url": "leaderquery/sub_item_page",
+    "refreshType": 2
+  },
+  {
+    "id": 377,
+    "name": "清单计量支付台账",
+    "url": "leaderquery/project_measure_pay_ledger",
+    "refreshType": 2
+  },
+  {
+    "id": 378,
+    "name": "变更清单计量支付台账",
+    "url": "varyMeasurePay/get_vary_measure_page",
+    "refreshType": 2
+  },
+  {
+    "id": 688,
+    "name": "计量金额审批进度台帐",
+    "url": "measure_data/audit_money_page",
+    "refreshType": 3
+  },
+  {
+    "id": 411,
+    "name": "建设单位工程资料",
+    "url": "oaDataNode/get_data_manage_page?type=2",
+    "refreshType": 1
+  },
+  {
+    "id": 568,
+    "name": "试验室内部资料",
+    "url": "syzl/page",
+    "refreshType": 2
+  },
+  {
+    "id": 640,
+    "name": "施工质检类资料",
+    "url": "projectInformationNode/page/0",
+    "refreshType": 2
+  },
+  {
+    "id": 641,
+    "name": "监理质检类资料",
+    "url": "projectInformationNode/page/1",
+    "refreshType": 2
+  },
+  {
+    "id": 642,
+    "name": "资料综合查询台帐",
+    "url": "projectInformationParam/page",
+    "refreshType": 1
+  },
+  {
+    "id": 670,
+    "name": "施工单位工程资料",
+    "url": "oaDataNode/get_data_manage_page?type=0",
+    "refreshType": 2
+  },
+  {
+    "id": 671,
+    "name": "监理单位工程资料",
+    "url": "oaDataNode/get_data_manage_page?type=1",
+    "refreshType": 2
+  },
+  {
+    "id": 672,
+    "name": "审计单位工程资料",
+    "url": "oaDataNode/get_data_manage_page?type=3",
+    "refreshType": 2
+  },
+  {
+    "id": 673,
+    "name": "设计单位工程资料",
+    "url": "oaDataNode/get_data_manage_page?type=4",
+    "refreshType": 2
+  }
+]

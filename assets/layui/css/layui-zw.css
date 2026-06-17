@@ -1,0 +1,112 @@
+.layui-table {
+	color: #333333;
+}
+
+.layui-table th {
+	font-weight: 600;
+}
+
+.layui-table tbody tr:hover {
+	background-color: #F5F5F5;
+}
+
+.layui-table>thead>tr:last-child {
+	border-bottom: 2px solid #ddd !important;
+}
+
+.layui-table, .layui-table thead tr, .layui-table-header {
+	background-color: #FFFFFF !important;
+}
+
+.layui-table-edit:focus {
+	border: 1px solid #3c8dbc !important;
+}
+
+.layui-table-click {
+	background-color: #3c8dbc !important;
+	color: #FFFFFF !important;
+}
+
+.layui-table-click input {
+	color: #333333;
+}
+.layui-table-click i {
+	color: #FFFFFF !important;
+}
+
+.layui-table-hover {
+	color: #333333;
+	background-color: #f2f2f2;
+}
+
+.layui-form-checkbox[lay-skin="primary"]:hover i{
+	border-color: #3c8dbc !important;
+}
+.layui-form-checked[lay-skin="primary"] i {
+	background-color: #3c8dbc;
+	border-color: #3c8dbc !important;
+	color: #FFFFFF;
+}
+
+.layui-laypage .layui-laypage-curr .layui-laypage-em{
+	background-color:#3c8dbc;
+}
+ .layui-table-tool{
+	background-color:#fff;
+}
+.layui-form-radio > i:hover{
+	color:#3c8dbc;
+}
+.layui-table-hover .layui-form-radio > i{
+	color:#3c8dbc;
+}
+.layui-table-tips-c{
+	padding: 0;
+}
+.layui-input, .layui-select, .layui-textarea{
+	height:34px;
+}
+.layui-form-pane .layui-form-label{
+	height:34px;
+}
+.layui-table-tool-temp{
+	padding-right: 0;
+}
+.layui-table-tool{
+	z-index: 100;
+}
+.layui-table-view{
+	margin-top:2px;
+}
+table[lay-size="sm"] .layui-table-edit{
+	height:30px;
+}
+.zw-text-warning{
+	color:#CDCD000
+}
+.layui-table tbody tr:hover, .layui-table thead tr, .layui-table-click, .layui-table-header, .layui-table-hover, .layui-table-mend, .layui-table-patch, .layui-table-tool, .layui-table-total, .layui-table-total tr, .layui-table[lay-even] tr:nth-child(2n) {
+    background-color: #f9f9f9;
+}
+
+body .layui-zw-model-add-text .layui-layer-title{
+	color:#008d4c; 
+}
+body .layui-zw-model-edit-text .layui-layer-title{
+	color:#3c8dbc; 
+}
+body .layui-zw-model-add .layui-layer-title{
+	background-color:#5CB85C;
+	color:#fff; 
+	border: none;
+}
+body .layui-zw-model-add .layui-layer-content{
+	border: 1px solid #5CB85C;
+}
+body .layui-zw-model-edit .layui-layer-title{
+	background-color:#3c8dbc;
+	color:#fff; 
+	border: none;
+}
+body .layui-zw-model-edit .layui-layer-content{
+	border: 1px solid #3c8dbc;
+}

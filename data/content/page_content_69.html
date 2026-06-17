@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>工程技术联系单</title>
+<style type="text/css">
+.checkbox-column {
+	background-color: #FFFFFF !important;
+}
+</style>
+</head>
+<body>
+<div id="engineeringContactTab" class="zw-back-body"></div>
+<script type="text/html" id="engineeringContactContent" >
+	<table id="engineeringContactBillTable"  lay-filter="engineeringContactBillTable"></table>
+</script>
+<script type="text/html" id="engineeringContactBillTableToolBar">
+	<button class="btn btn-primary btn-sm" lay-event="addContactBill"><i class="glyphicon glyphicon-plus"></i> 添加工程技术联系单</button>
+	<button class="btn btn-danger btn-sm"  lay-event="deleteContactBill"><i class="glyphicon glyphicon-trash"></i> 删除工程技术联系单</button>
+	<button class="btn btn-success btn-sm" lay-event="renderContactBill"><i class="glyphicon glyphicon-send"></i> <lable>上报数据</lable> </button>
+	
+	
+	<button class="btn btn-default btn-sm" lay-event="reportContactBill"><i class="glyphicon glyphicon-ok-circle"></i>预览工程技术联系单</button>
+</script>
+<script type="text/html" id="engineeringContactBillTableBar">
+	{{#  if("SBSJ"=="SBSJ"){ }}
+		{{#  if(d.taskUser==true){ }}
+		<a title="编辑" lay-event="editBtn" class="btn btn-primary btn-xs">编辑</a>
+		{{# }else{ }}	
+		{{# } }}
+	{{# }else if("SBSJ"=="SHSJ" || "SBSJ"=="PFSJ"){ }}
+		{{#  if(d.taskUser==true){ }}
+		<a title="审核 " lay-event="auditingBtn" class="btn btn-primary btn-xs">审核</a>
+		<a title="同意 " lay-event="agreeBtn" class="btn btn-success btn-xs">同意</a>
+		{{# }else{ }}
+		{{# } }}
+	{{# } }}
+
+		<a title="追踪 " lay-event="trackBtn"  class="btn btn-info btn-xs">追踪</a>
+		<a title="浏览 " lay-event="see" class="btn btn-defaultsuc btn-xs">浏览</a>
+</script>
+
+<!-- 		<a title="退回 " lay-event="returnBtn" class="btn btn-danger btn-xs">退回</a> -->
+<script type="text/javascript">
+$("#engineeringContactTab").html($("#engineeringContactContent").html());
+	var tableCols=[
+		{"type":"checkbox"},
+		{"field":"skillNo","align":"center","title":"编号","width": 100,"event":"measureNo"},
+//		{"field":"title","align":"center","title":"标题","width": 200},
+		{"field":"contactContent","align":"center","title":"联系内容","event":"measureNo"},
+		{"field":"changeMeetingText","align":"center","title":"会议记录","event":"measureNo"},
+//		{"field":"remark","align":"center","title":"备注","width": 100},
+		{"field":"createDate","align":"center","title":"创建时间","width": 200,"event":"measureNo"},
+		{"field":"userName","align":"center","title":"创建人","width": 100,"event":"measureNo"},
+		{"title": "状态","align": "center","field":"states",minWidth:200,event : "measureNo",templet:function(d){
+        	return "<p data-processInstanceId='"+d.processInstanceId+"'>"+d.states+"</p>"
+        }}, 
+		{"title": "操作","align": "center", toolbar: '#engineeringContactBillTableBar',"event":"measureNo",minWidth:240}
+	]
+	if(false){
+		tableCols=[
+			{"type":"checkbox"},
+			{"field":"skillNo","align":"center","title":"编号","width": 100,"event":"measureNo"},
+//			{"field":"title","align":"center","title":"标题","width": 200},
+			{"field":"contactContent","align":"center","title":"联系内容","event":"measureNo"},
+			{"field":"changeMeetingText","align":"center","title":"会议记录","event":"measureNo"},
+//			{"field":"remark","align":"center","title":"备注","width": 100},
+			{"field":"workAreaName","align":"center","title":"所属工区","width": 150,"event":"measureNo"},
+			{"field":"createDate","align":"center","title":"创建时间","width": 200,"event":"measureNo"},
+			{"field":"userName","align":"center","title":"创建人","width": 100,"event":"measureNo"},
+			{"title": "状态","align": "center","field":"states",minWidth:200,event : "measureNo",templet:function(d){
+	        	return "<p data-processInstanceId='"+d.processInstanceId+"'>"+d.states+"</p>"
+	        }},
+			{"title": "操作","align": "center","event":"measureNo", toolbar: '#engineeringContactBillTableBar',minWidth:240}
+		]
+	}
+	layui.use(['table'],function() {
+		var table = layui.table;
+		table.render({
+		    elem: '#engineeringContactBillTable'
+		    ,url: 'engineering_contact_bill/list?typeCode=' //数据接口
+		    ,toolbar: '#engineeringContactBillTableToolBar'
+		  	,cellMinWidth: 80
+			,defaultToolbar:[]
+		  	,height: 'full-200'
+		  	,even:true
+		  	,limit:30
+		    ,cols: [tableCols]
+		    ,size: 'sm'
+		    ,done : function(d) {
+		    	if(d.data.length > 0) {
+		    	}
+				layer.closeAll('loading');
+			}
+		});
+		table.on('checkbox(engineeringContactBillTable)', function(obj){
+			if(obj.type!='all'){
+				if(obj.checked){
+					 obj.tr.addClass('layui-table-click'); 	
+				}else{
+					 obj.tr.removeClass('layui-table-click'); 	
+				}
+			}else{
+				if(obj.checked){
+					 $("div[class='layui-unselect layui-form-checkbox']").attr('class','layui-unselect layui-form-checkbox layui-form-checked');
+					$("div[lay-id='engineeringContactBillTable'] div[class='layui-table-fixed layui-table-fixed-l'] tr").addClass('layui-table-click ');
+					$("div[lay-id='engineeringContactBillTable'] div[class='layui-table-body layui-table-main'] tr").addClass('layui-table-click ');
+				}else{
+					 $("div[class='layui-unselect layui-form-checkbox layui-form-checked']").attr('class','layui-unselect layui-form-checkbox');
+					$("div[lay-id='engineeringContactBillTable'] div[class='layui-table-fixed layui-table-fixed-l'] tr").removeClass('layui-table-click ');
+					$("div[lay-id='engineeringContactBillTable'] div[class='layui-table-body layui-table-main'] tr").removeClass('layui-table-click ');
+				}
+			}
+			
+		})
+		table.on('row(engineeringContactBillTable)', function(obj){
+			//obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+		})
+		//监听操作栏按钮
+		table.on('tool(engineeringContactBillTable)', function(obj){
+			engineeringContactBillLineClick[obj.event](obj);
+		});
+		//监听头部按钮
+		table.on('toolbar(engineeringContactBillTable)', function(obj){
+			var checkStatus = table.checkStatus(obj.config.id),data = checkStatus.data;
+			engineeringContactBillToolClick[obj.event](data);
+		});
+		var engineeringContactBillLineClick={
+				measureNo:function(obj){
+					 $("div[lay-id='engineeringContactBillTable'] input[type='checkbox']").prop('checked',false);
+					 $("div[class='layui-unselect layui-form-checkbox layui-form-checked']").attr('class','layui-unselect layui-form-checkbox');
+					 
+					$(obj.tr).find("td:first").children().find("div:first").addClass("layui-form-checked");
+					var index=$(obj.tr).attr("data-index");
+					var data=table.cache["engineeringContactBillTable"];
+					for(var i=0;i<data.length;i++){
+						data[i]['LAY_CHECKED']='';
+						if(index==i){
+							data[i]['LAY_CHECKED']='True';
+						}
+					}
+				},
+				editBtn:function(obj){
+// 					$.get('engineering_contact_bill/edit_page?type=edit&id='+data.id,function(str){
+// 						  layer.open({
+// 							title:'编辑工程技术联系单',
+// 						    type: 1,
+// 						    area: ['100%',"100%"],
+// 						    content: str 
+// 						  });
+// 					});
+					var data = obj.data;
+					$.ajax({
+						url : "engineering_contact_bill/edit_page",
+						type : "get",
+						async : false,
+						data: {"type" : "edit","id":data.id},
+						success : function(result) {
+							$("#engineeringContactTab").html(result);
+						}
+					});
+				},
+				trackBtn:function(obj){//追踪
+					var data = obj.data;
+					Ewin.modal({
+						title : "追踪清单",
+						modalId : "engineeringContactBillTrackList",
+						width : 650,
+						url : "engineering_contact_bill/track_engineering_contact_bill_page",
+						data : {
+							"id" : data.id
+						},
+						headerClass:"zw-track-header",
+						btn:"hide",
+					});
+				},
+				agreeBtn:function(obj){//同意
+					var data = obj.data;
+					Ewin.confirm({ message: "确定同意此条清单？" }).on(function (e) {
+						if (e) {//e 为true 说明点击确定
+							$.ajax({
+								url : "engineering_contact_bill/agree_order",
+								type : "post",
+								data : {ids : data.id,opinion : "同意",contactContent:data.contactContent,changeMeeting:data.changeMeeting},
+								dataType : "json",
+								success : function(result) {
+									if (result.code == 1) {
+										Ewin.msg({
+											type : "success",
+											content : "审核完成！"
+										})
+										table.reload("engineeringContactBillTable");
+									} else {
+										Ewin.msg({type : "warning",content : result.msg})
+									}
+								}
+							});
+						}
+					});
+				},
+				auditingBtn:function(obj){//审核按钮
+					var data = obj.data;
+// 					$.get('engineering_contact_bill/edit_page?type=auditing&id='+data.id,function(str){
+// 						  layer.open({
+// 							title:'审核工程技术联系单',
+// 						    type: 1,
+// 						    area: ['80%',"90%"],
+// 						    resize:false,
+// 						    content: str 
+// 						  });
+// 					});
+					$.ajax({
+						url : "engineering_contact_bill/edit_page",
+						type : "get",
+						async : false,
+						data: {"type" : "auditing","id":data.id},
+						success : function(result) {
+							$("#engineeringContactTab").html(result);
+						}
+					});
+				},
+				see : function(obj) {//查看
+					var data = obj.data;
+// 					$.get('engineering_contact_bill/edit_page?type=see&id='+data.id,function(str){
+// 						  layer.open({
+// 							title:'查看工程技术联系单',
+// 						    type: 1,
+// 						    area: ['80%',"90%"],
+// 						    resize:false,
+// 						    content: str 
+// 						  });
+// 					});
+					$.ajax({
+						url : "engineering_contact_bill/edit_page",
+						type : "get",
+						async : false,
+						data: {"type" : "see","id":data.id},
+						success : function(result) {
+							$("#engineeringContactTab").html(result);
+						}
+					});
+				},
+				returnBtn : function(obj) {//退回
+					var data = obj.data;
+					Ewin.modal({
+						modalId : "returnOrderPageList",
+						title : "退回",
+						width : 300,
+						headerClass : "zw-track-header",
+						submitText : "确认退回",
+						url : "engineering_contact_bill/return_order_page",
+						data : {
+							"id" : data.id,
+							"tableId" : "engineeringContactBillTable"
+						}
+					});
+				}
+		};
+		var engineeringContactBillToolClick={//顶部按钮执行方法
+				addContactBill:function(data){
+// 					$.get('engineering_contact_bill/edit_page?type=add',function(str){
+// 						  layer.open({
+// 							title:'添加工程技术联系单',
+// 						    type: 1,
+// 						    area: ['100%',"100%"],
+// 						    resize:false,
+// 						    content: str 
+// 						  });
+// 					});
+					$.ajax({
+						url : "engineering_contact_bill/edit_page",
+						type : "get",
+						async : false,
+						data: {"type" : "add"},
+						success : function(result) {
+							$("#engineeringContactTab").html(result);
+						}
+					});
+				},
+				deleteContactBill:function(data){
+					var ids = "";
+					var isDelete = false;
+					if (data.length == 0) {
+						Ewin.msg({
+							type : "warning",
+							content : "请选择要删除的计量单！"
+						});
+						return false;
+					} else {
+						var arr = new Array();
+						for (var i = 0; i < data.length; i++) {
+							var stateId = data[i].measureState;
+							if (stateId == 1 || stateId == 0 || stateId == 6) {
+								isDelete = true;
+							}
+							arr.push(data[i].id);
+						}
+						ids = arr.join(",");
+					}
+					if (isDelete) {
+						Ewin.confirm({message : "确认要删除选择的数据吗？"}).on(function(e) {
+							if (e) {
+								$.ajax({
+									url : "engineering_contact_bill/del",
+									data:{ids:ids},
+									type : "delete",
+									dataType : "json",
+									success : function(result) {
+										if (result.code == 1) {
+											Ewin.msg({
+												type : "success",
+												content : "已删除"
+											});
+											table.reload("engineeringContactBillTable");
+										} else {
+											Ewin.msg({
+												type : "danger",
+												content : result.msg
+											});
+										}
+									}
+								});
+								return;
+							}
+						});
+					} else {
+						Ewin.msg({
+							type : "warning",
+							content : "选中的计量单无法删除！"
+						});
+					}
+				},
+				reportContactBill:function(data){
+					if (data.length == 0) {
+						Ewin.msg({
+							type : "danger",
+							content : "请选择一条清单！"
+						});
+						return false;
+					} else if (data.length > 1) {
+						Ewin.msg({
+							type : "danger",
+							content : "只能预览一条清单！"
+						});
+						return false;
+					}
+					layer.open({
+						  type: 2, 
+						  title:"预览报表",
+						  area: ['800px', '600px'],
+						  content: ['reportManager/reportViewSecurity?reportCode=vary_skill_contact&ids='+data[0].id,'no'] //这里content是一个URL，如果你不想让iframe出现滚动条，你还可以content: ['http://sentsin.com', 'no']
+						
+					}); 
+				},
+				renderContactBill:function(data){//上报数据
+					var message = "确认要操作选择的数据吗?";
+					var ids = "*";
+					if (data.length == 0) {
+						message = "确认要全部执行吗?";
+					} else {
+						var arr = new Array();
+						for (var i = 0; i < data.length; i++) {
+							arr.push(data[i].id);
+						}
+						ids = arr.join(",");
+					}
+					Ewin.confirm({
+						message : message
+					}).on(function(e) {
+						if (e) {
+							$.ajax({
+									url : "engineering_contact_bill/up_order",
+									type : "post",
+									data : {"ids" : ids},
+									dataType : "json",
+									success : function(result) {
+										if (result.code == 1) {
+											Ewin.msg({
+												type : "success",
+												content : "操作完成！"
+											})
+											table.reload("engineeringContactBillTable");
+										} else {
+											Ewin.msg({type : "warning",content : result.msg})
+										}
+									}
+							});
+						}
+					});
+				},
+				agreeContactBill:function(data){//全部同意
+					var message = "确认要操作选择的数据吗?";
+					var ids = "*";
+					if (data.length == 0) {
+						message = "确认要全部执行吗?";
+					} else {
+						var arr = new Array();
+						for (var i = 0; i < data.length; i++) {
+							arr.push(data[i].id);
+						}
+						ids = arr.join(",");
+					}
+					Ewin.confirm({
+						message : message
+					}).on(function(e) {
+						if (e) {
+							$.ajax({
+								url : "engineering_contact_bill/agree_order",
+								type : "post",
+								data : {ids : ids,opinion : "同意"},
+								dataType : "json",
+								success : function(result) {
+									if (result.code == 1) {
+										Ewin.msg({
+											type : "success",
+											content : "操作完成！"
+										})
+										table.reload("engineeringContactBillTable");
+									} else {
+										Ewin.msg({type : "warning",content : result.msg})
+									}
+								}
+							});
+						}
+					});
+				}
+		};
+	});
+	</script>
+</body>
+</html>

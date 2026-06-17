@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>分项台账</title>
+</head>
+<body>
+	<div class="box" style="margin-bottom: 0px;  border: none;">
+		<div class="box-header dt-buttons btn-group form-inline">
+<!-- 			<button data-type="button" id="export_project_measure_pay" style="float: none;" class="btn btn-default">导出Excel</button> -->
+		</div>
+		<div class="box-body">
+			<table id="projectMeasurePayLederTable" lay-filter="projectMeasurePayLederTable" ></table>
+			<div id="myChart" style="height: 300px;"></div>
+		</div>
+	</div>
+	<script type="text/javascript" src="assets/data-tables/datatables.min.js"></script>
+	<script type="text/javascript" src="assets/data-tables/datatables.zh-CN.js"></script>
+	<script type="text/javascript">
+	
+	layui.use(['table'], function(){
+		//表格
+	  	var table = layui.table;
+		var $ = layui.$;
+		var amountNum = getValue("numDecimals");
+		var priceNum = getValue("priceDecimals");
+		var moneyNum = getValue("moneyDecimals");
+		layer.load(2);
+        var cols =[
+			  [
+		          	{ "title": "清单编号",width:120,'align':'center',"field":"billNo","rowspan":2,"colspan":1},
+		          	{ "title": "清单名称",'align':'center',"field":"billName","rowspan":2,"colspan":1},
+		          	{ "title": "计量单位",width:100,'align':'center',"field":"measureUnit","rowspan":2,"colspan":1},
+		          	{ "title": "合同",'align':'center',"rowspan":1,"colspan":2},
+		          	{ "title": "修正",'align':'center',"rowspan":1,"colspan":2},
+		          	{ "title": "变更",'align':'center',"rowspan":1,"colspan":2},
+		          	{ "title": "最终",'align':'center',"rowspan":1,"colspan":2},
+		          	{ "title": "累计数量",'align':'center',"field":"afterFinishNumSum","rowspan":2,width:100,"colspan":1},
+		          	{ "title": "剩余数量",'align':'center',"field":"remainAmount","rowspan":2,"colspan":1,width:100}
+			  ],
+			  [
+					{ "title": "数量",width:100,'align':'center',"field":"contractAmount"},
+					{ "title": "金额",width:100,'align':'center',"field":"contractMoney"},
+					{ "title": "数量",width:100,'align':'center',"field":"modifyAmount"},
+					{ "title": "金额",width:100,'align':'center',"field":"modifyMoney"},
+					{ "title": "数量",width:100,'align':'center',"field":"varyAmount"},
+					{ "title": "金额",width:100,'align':'center',"field":"varyMoney"},
+					{ "title": "数量",width:100,'align':'center',"field":"contractSumAmount"},
+					{ "title": "金额",width:100,'align':'center',"field":"contractSumMoney"}
+			  ]
+		    ];
+		  
+				table.render({
+				  elem: '#projectMeasurePayLederTable'
+				  ,url:"reportManager/findReportBillPayLastGather"
+				  ,defaultToolbar:[]
+				  ,size: 'sm'
+				  ,even:true
+				  ,page:true
+				  ,limits:10
+				  ,limits:[10,20,30]
+				  ,cols: cols
+				  //,height: 'full-400'
+				  ,cellMinWidth: 130
+				  ,done : function() {
+						layer.closeAll('loading');
+						 $(".layui-table-view[lay-id='projectMeasurePayLederTable'] .layui-table-body tr[data-index = 0]").click();
+				  }
+				});
+				$("#export_project_measure_pay").on("click",function(){
+					$.ajax({
+						url : "main_controller/mainReturnSectionFlag",
+						data : "",
+						success : function(result) {
+							if (result.code == 1) {
+								$.ajax({
+									url : "reportManager/export_project_measure_pay",
+									data : "",
+									success : function(result) {
+										var src=result.data;
+										console.log(src)
+										var url = "file_upload/down_load";
+								        var form = $("<form></form>").attr("action", url).attr("method", "post");
+								        form.append($("<input></input>").attr("type", "hidden").attr("name", "url").attr("value", src));
+								        form.appendTo('body').submit().remove();
+									}
+								})
+							}else{
+								Ewin.msg({type:"danger",content:result.msg});
+								return false;
+							}
+						}
+					})
+				});
+				
+				table.on('row(projectMeasurePayLederTable)', function(obj){
+					obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+					$.ajax({	
+						url : "reportManager/findReportBillPayAllGather",
+						type : "post",
+						data : {
+							"billPayId" : obj.data.billPayId
+						},
+						dataType : "json",
+						success : function(
+								result) {
+							if (result.code == 1) {
+								loadChart(result.data);
+							} else {
+								Ewin
+										.msg({
+											type : "danger",
+											content : result.msg
+										});
+							}
+						}
+					});
+				})
+				
+				
+						var myChart = echarts.init(document
+									.getElementById('myChart'));
+							// 指定图表的配置项和数据
+							function loadChart(da) {
+								var title = new Array();
+								var vals = new Array();
+								for (var i = 0; i < da.length; i++) {
+									title.push("第" + da[i].gatherNo + "期");
+									vals.push(da[i].currentFinishNumSum);
+								}
+								var ecWidth="95%";
+								var option = {
+									width:ecWidth,
+									color : [ '#3398DB' ],
+									title : {
+										text : '工期计量数量统计'
+									},
+									tooltip : {
+										trigger : 'axis',
+										axisPointer : { // 坐标轴指示器，坐标轴触发有效
+											type : 'shadow' // 默认为直线，可选为：'line' | 'shadow'
+										}
+									},
+									legend : {
+										data : [ '数量' ]
+									},
+									grid : {
+										left : '3%',
+										right : '4%',
+										bottom : '3%',
+										containLabel : true
+									},
+									xAxis : [ {
+										type : 'category',
+										data : title,
+										axisTick : {
+											alignWithLabel : true
+										}
+									} ],
+									yAxis : [ {
+										type : 'value'
+									} ],
+									series : [ {
+										name : '数量',
+										type : 'bar',
+										barWidth : '60%',
+										data : vals
+									} ]
+								};
+
+								myChart.setOption(option);
+							}
+				
+				})
+	</script>
+</body>
+</html>

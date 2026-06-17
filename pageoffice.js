@@ -1,0 +1,1 @@
+window.WebOffice = window.WebOffice || {};

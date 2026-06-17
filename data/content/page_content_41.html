@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>工程计划列表页面</title>
+<style>
+.displays {
+	display: none;
+}
+</style>
+</head>
+<body>
+	<div id="workingPositionDiv"></div>
+	<div class="box">
+	<input type="hidden" id="contractSumMoney" value="112282232" class="form-control">
+		<div class="box-header">
+			<div id="buttonGroup" class="dt-buttons btn-group form-inline">
+				<div class="input-group">起止时间：</div>
+				<input type="text" id="startDate" value="2019-07-01" class="form-control">
+				<input type="text" id="endDate" value="2020-06-30" class="form-control">
+				<button id="createProjectPlan" data-type="button" style="float: none;" class="btn btn-default">生成计划</button>
+				<button id="addProjectPlan" data-type="button" style="float: none;" class="btn btn-default">延长计划</button>
+			</div>
+		</div>
+		<div style="overflow-x: hidden;" id="myTabContent" class="tab-content">
+			<table id="projectPlanList" class="table table-striped table-bordered">
+			</table>
+		</div>
+	</div>
+	<script>
+		var thead = '<thead>' + '<tr>' + '<th rowspan="2">工期</th>'
+				+ '<th rowspan="2">开始时间</th>' + '<th rowspan="2">结束时间</th>'
+				+ '<th rowspan="2">计划年月</th>'
+				+ '<th class="am-text-middle" colspan="3">计划完成</th>'
+				+ '<th style="border-left-width:1px;" rowspan="2">操作</th>'
+				+ '</tr>' + '<tr>' + '<th>金额</th>' + '<th>百分比</th>'
+				+ '<th>累计百分比</th>' + '</tr>' + '</thead>';
+		$("#projectPlanList").html(thead);
+		var moneyNum = getValue("moneyDecimals");
+		$(document)
+				.ready(
+						function() {
+							var projectPlanDate = $('#projectPlanList')
+									.DataTable(
+											{
+												ajax : {
+													url : "secProjectPlan/get_plan_list",
+													dataSrc : "data",
+												},
+												paging : false, // 禁止分页
+												serverSide : false,//服务端模式
+												ordering : false, // 禁止排序
+												bFilter : false,//关闭搜索框
+												bLengthChange : false,//去掉每页显示多少条数据方法
+												fixedHeader : true,
+												colReorder : true,
+												select : 'single',
+												info : false, //不显示表格信息，在左下角
+												columns : [
+														{
+															//"title" : "工期",
+															"class" : "am-text-middle",
+															"data" : "planNo",
+															"width" : "100"
+														},
+														{
+															//"title" : "开始时间",
+															"class" : "am-text-middle",
+															"data" : "planStartDate"
+														},
+														{
+															//"title" : "结束时间",
+															"class" : "am-text-middle",
+															"data" : "planEndDate"
+														},
+														{
+															//"title" : "计划年月",
+															"class" : "am-text-middle",
+															"data" : "planYm"
+														},
+														{
+															//"title" : "金额",
+															"class" : "am-text-middle",
+															"data" : "finishMoney"
+														},
+														{
+															//	"title" : "百分数",
+															"class" : "am-text-middle",
+															"data" : "finishPercent"
+														},
+														{
+															//	"title" : "累计百分数",
+															"class" : "am-text-middle",
+															"data" : "finishTotalPercent"
+														},
+														{
+															//"title" : "操作",
+															"class" : "am-text-middle",
+															"data" : "planId",
+															"width" : "150"
+														} ],
+												columnDefs : [
+														{
+															// targets用于指定操作的列，从第0列开始，-1为最后一列
+															// return后边是我们希望在指定列填入的按钮代码
+															targets : -1,
+															render : function(
+																	data, type,
+																	full, meta) {
+																var gatherState = full.gatherState;
+																var isLast = full.isLast;
+																var btns = '<div class="btn-group" data-id="'+data+'">';
+																btns += '<button type="button" data-type="edit" class="btn btn-primary btn-xs">编辑</button>';
+																btns += '<button type="button"  data-type="remove" class="btn btn-danger btn-xs">删除</button>';
+																btns += "</div>";
+																return btns;
+															}
+														},
+														{
+															// 金额列
+															targets : -4,
+															render : function(
+																	data, type,
+																	full, meta) {
+																var totalPrice = new Number(
+																		data)
+																		.toFixed(moneyNum);
+																return parseFloat(totalPrice);
+															}
+														},
+														{
+															targets : 0,
+															render : function(
+																	data, type,
+																	full, meta) {
+																var gatherState = full.gatherState;
+																if (gatherState == 1) {
+																	$(full)
+																			.css(
+																					'color',
+																					'#A9A9A9')
+																}
+																var gatherName = "第"
+																		+ data
+																		+ "期";
+																return gatherName;
+															}
+														} ]
+											});
+
+						/* 	$('#projectPlanList tbody').on('click', 'td',
+									function(e, settings, json) {
+										var obj = $(this);
+										var maction=projectPlanDate.row( this.parentNode ).data();
+										var idx = projectPlanDate.cell(this).index().column;
+										var colName=projectPlanDate.column(idx).dataSrc();
+										var oldValue=projectPlanDate.cell(this).data();	//修改之前数据值
+										if( colName != "finishMoney"&&colName != "finishPercent"&&colName != "finishTotalPercent")
+											return ;
+										$(this).html("<input type='text' data-name='amount' value='"+oldValue+"' data-verification='amount' >");
+										$(this).addClass("zw-table-input");
+										projectPlanDate.on("focus","input",function(e, settings, json){
+											$(this)[0].selectionStart = $(this).val().length;
+											e.stopPropagation();//阻止冒泡事件
+										});
+										$(this).find("input").focus();
+										projectPlanDate.on("blur","input",function(e, settings, json){
+											$(this).parent().removeClass("zw-table-input");
+											$(this).parent().html($(this).val());
+										});
+										projectPlanDate.on("change","input",function(e, settings, json){
+											projectPlanDate.off("change");//触发事件后 立刻解除事件绑定
+											var newValue=$(this).val();	//修改之后的值
+											$(this).parent().removeClass("zw-table-input");
+											  $(this).parent().html($(this).val());
+											//失去焦点之后保存修改
+											if(newValue!=oldValue){
+												var plan = new Object();
+												plan[colName]=newValue;
+												plan["planId"]=maction["planId"];
+												//alert(JSON.stringify(plan))
+												$.ajax({
+													url : "secProjectPlan/update_plan",
+													type : "post",
+													async : false,
+													data : {
+														"planData" : JSON.stringify(plan)
+													},
+													dataType : "json",
+													success : function(result) {
+														if (result.code == 1) {
+															Ewin.msg({
+																type : "success",
+																content : "操作成功！"
+															});
+															 var cell = projectPlanDate.cell(obj);
+															 cell.data(newValue).draw(); //将input中的值注入到表格中	
+																//projectPlanDate.ajax.reload(null, false);
+														}
+													}
+												});
+											}
+										});
+									}); */
+							projectPlanDate.on('click',
+									'.btn-group[data-id] button[data-type]',
+									function(e, settings, json) {
+										sysSectionLineClick[$(this).attr(
+												"data-type")]($(this).parent()
+												.attr("data-id"), $(this).attr(
+												"data-gatherState"), this);//监听 操作按钮
+									});
+							var sysSectionLineClick = {
+								edit : function(planId) {
+									Ewin.modal({
+										width : 400,
+										modalId : "planDataEdit",
+										title : "编辑范本",
+										url : "secProjectPlan/plan_edit_page",
+										data : {
+											"planId" : planId,
+										}
+									});
+								},
+								remove : function(planId) {
+									Ewin
+											.confirm({
+												message : "确认要删除选择的数据吗？"
+											})
+											.on(
+													function(e) {
+														if (e) {//e 为true 说明点击确定
+															$
+																	.ajax({
+																		url : "secProjectPlan/delete_plan",
+																		type : "get",
+																		data : {
+																			"planId" : planId
+																		},
+																		dataType : "json",
+																		success : function(
+																				result) {
+																			if (result.code == 1) {
+																				Ewin
+																						.msg({
+																							type : "success",
+																							content : "已删除"
+																						});
+																				var projectPlanDate = $(
+																						'#projectPlanList')
+																						.DataTable();
+																				projectPlanDate.ajax
+																						.reload(
+																								null,
+																								false);
+																			} else {
+																				Ewin
+																						.msg({
+																							type : "danger",
+																							content : result.msg
+																						})
+																			}
+																		}
+																	});
+															return;
+														}
+													});
+								}
+							}
+						});
+
+		$(document).ready(function() {
+			jeDate('#startDate', {
+				format : "YYYY-MM-DD"
+			});
+			jeDate('#endDate', {
+				format : "YYYY-MM-DD"
+			});
+		});
+
+		//生成计划
+		$("#createProjectPlan").on(
+				"click",
+				function() {
+					if($("#sysSectionWorkPositionSel>option").length==0 ||$("#sysSectionWorkPositionSel").find("option[value='0']").length==1){
+						Ewin.msg({type:"danger",content:"请选择工作位置！"})
+						return false;
+					}
+					Ewin.confirm({message : "重新生成将替换原有数据，确认要重新生成吗？"}).on(
+						function(e) {if (e) {//e 为true 说明点击确定
+							$.ajax({
+								url : "secProjectPlan/create_project_plan",
+								type : "get",
+								data : {
+									"startDate" : $("#startDate").val(),
+									"endDate" : $("#endDate").val()
+								},
+								dataType : "json",
+								success : function(result) {
+									if (result.code == 1) {
+										Ewin.msg({
+											type : "success",
+											content : "生成成功"
+										});
+										var projectPlanDate = $('#projectPlanList')
+												.DataTable();
+										projectPlanDate.ajax.reload(null, false);
+									} else {
+										Ewin.msg({
+											type : "danger",
+											content : result.msg
+										})
+									}
+								}
+							});
+
+							return;
+							}
+						});
+				});
+
+		$("#addProjectPlan").click(function() {
+			var projectPlanDate = $('#projectPlanList').DataTable();
+			var info = projectPlanDate.page.info();
+			var dataRows = info.recordsTotal;
+			if (dataRows == 0) {
+				Ewin.msg({
+					type : "danger",
+					content : "请先生成计划"
+				});
+				return;
+			}
+			Ewin.modal({
+				width : 400,
+				modalId : "planDataEdit",
+				title : "编辑范本",
+				url : "secProjectPlan/plan_edit_page",
+				data : {
+
+				}
+			});
+		})
+	</script>
+</body>
+</html>

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>变更工程计量支付台账</title>
+</head>
+<body>
+	<div id="myTabContent" class="box">
+		<div class="box-header dt-buttons btn-group form-inline">
+			<div class="input-group">清单编号查询：</div>
+			<input type="text" id="billNo" class="form-control">
+			<button id="search" data-type="button" style="float: none;" class="btn btn-default">查询</button>
+<!-- 			<button data-type="button" id="export_vary_measure_pay" style="float: none;" class="btn btn-default">导出Excel</button> -->
+		</div>
+		<table id="varyMeasurePayListTable" lay-filter="varyMeasurePayListTable" ></table>
+		<div id="myChart" style="width: 90%; height: 400px;"></div>
+	</div>
+	<script type="text/javascript">
+	layui.use(['table'], function(){
+		//表格
+	  	var table = layui.table;
+		var $ = layui.$;
+		var amountNum = getValue("numDecimals");
+		var priceNum = getValue("priceDecimals");
+		var moneyNum = getValue("moneyDecimals");
+		layer.load(2);
+        var cols =[
+			  [
+		          	{ "title": "变更工程编号",width:160,'align':'center',"field":"varyNo","rowspan":2,"colspan":1},
+		          	{ "title": "清单编号",width:100,'align':'center',"field":"billNo","rowspan":2,"colspan":1},
+		          	{ "title": "清单名称",'align':'center',"field":"billName","rowspan":2,"colspan":1},
+		          	{ "title": "计量单位",width:100,'align':'center',"field":"measureUnit","rowspan":2,"colspan":1},
+		          	{ "title": "变更前",'align':'center',"rowspan":1,"colspan":3},
+		          	{ "title": "变更后",'align':'center',"rowspan":1,"colspan":3},
+		          	{ "title": "变更增减",'align':'center',"rowspan":1,"colspan":2,"field":"afterVaryNum"},
+		          	{ "title": "累计计量",'align':'center',"rowspan":1,"colspan":2,"field":"afterVaryMoney"},
+			  ],
+			  [
+					{ "title": "单价",width:100,'align':'center',"field":"contractAmount",templet:function(d){
+						return d.varyDetail.beforeVaryPrice;
+	                }},
+					{ "title": "数量",width:100,'align':'center',"field":"contractMoney",templet:function(d){
+						return d.varyDetail.beforeVaryNum;
+	                }},
+					{ "title": "金额",width:100,'align':'center',"field":"modifyAmount",templet:function(d){
+						return d.varyDetail.varyBefortMoney;
+	                }},
+					{ "title": "单价",width:100,'align':'center',"field":"modifyMoney",templet:function(d){
+						return d.varyDetail.afterVaryPrice;
+	                }},
+					{ "title": "数量",width:100,'align':'center',"field":"varyAmount",templet:function(d){
+						return d.varyDetail.afterVaryNum;
+	                }},
+					{ "title": "金额",width:100,'align':'center',"field":"varyMoney",templet:function(d){
+						return d.varyDetail.varyAfterMoney;
+	                }},
+					{ "title": "数量",width:100,'align':'center',"field":"varyAmount"},
+					{ "title": "金额",width:100,'align':'center',"field":"varyMoney"},
+					{ "title": "数量",width:100,'align':'center',"field":"afterVaryNum"},
+					{ "title": "金额",width:100,'align':'center',"field":"afterVaryMoney"}
+			  ]
+		    ];
+			table.render({
+				  elem: '#varyMeasurePayListTable'
+				  ,url:"varyMeasurePay/get_vary_measure_list"
+				  ,where:{billNo : $("#billNo").val()}
+				  ,defaultToolbar:[]
+				  ,size: 'sm'
+				  ,even:true
+				  ,page:true
+				  ,limits:10
+				  ,limits:[10,20,30]
+				  ,cols: cols
+				  //,height: 'full-400'
+				  ,cellMinWidth: 130
+				  ,done : function() {
+						layer.closeAll('loading');
+				  }
+			});
+			table.on('row(varyMeasurePayListTable)', function(obj){
+				obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+				getChartData(obj.data.varyDetail.varyDetailId, obj.data.billNo);
+			})
+			
+		$("#search").click(function() {
+			table.reload('varyMeasurePayListTable',{where: {billNo : $("#billNo").val()}});
+		})
+		$("#export_vary_measure_pay").click(function() {
+			$.ajax({
+				url : "main_controller/mainReturnSectionFlag",
+				data : "",
+				success : function(result) {
+					if (result.code == 1) {
+						$.ajax({
+							url : "varyMeasurePay/export_vary_measure_pay",
+							data : "",
+							success : function(result) {
+								var src=result.data;
+								var url = "file_upload/down_load";
+						        var form = $("<form></form>").attr("action", url).attr("method", "post");
+						        form.append($("<input></input>").attr("type", "hidden").attr("name", "url").attr("value", src));
+						        form.appendTo('body').submit().remove();
+							}
+						})
+					}else{
+						Ewin.msg({type:"danger",content:result.msg});
+						return false;
+					}
+				}
+			})
+			
+		})
+			
+			
+			
+			
+		function getChartData(varyDetailId, billNo) {
+			var data = new Array();
+			var detail0 = new Array();
+			detail0[0] = "product";
+			detail0[1] = "数量";
+			detail0[2] = "金额";
+			data[0] = detail0;
+			$.ajax({
+				url : 'varyMeasurePay/get_gather_data', //这个是后台提供的借口    
+				dataType : 'json',
+				async : false,
+				data : {
+					varyDetailId : varyDetailId
+				},
+				success : function(result) { //这里的json就是从后台获取的借口。  
+					var list = result.data;
+					for (var i = 0; i < list.length; i++) {
+						var detail = list[i];
+						detail[0] = "第" + detail[0] + "期";
+						data[i + 1] = detail;
+					}
+					getChart(data, billNo);
+				}
+			});
+
+		}
+
+		var myChart;
+		// 基于准备好的dom，初始化echarts实例
+		function getChart(data, billNo) {
+			if (myChart != null && myChart != "" && myChart != undefined) {
+				myChart.dispose();
+			}
+			myChart = echarts.init(document.getElementById('myChart'));
+			var ecWidth="90%";
+			var option = {
+				width:ecWidth,
+				title : {
+					text : [ billNo + ' 各工期计量情况' ]
+				},
+				legend : {},
+				tooltip : {},
+				dataset : {
+					source : data
+				},
+				xAxis : {
+					type : 'category'
+				},
+				yAxis : {},
+				// Declare several bar series, each will be mapped
+				// to a column of dataset.source by default.
+				series : [ {
+					type : 'bar'
+				}, {
+					type : 'bar'
+				} ]
+			};
+
+			// 使用刚指定的配置项和数据显示图表。
+			myChart.setOption(option);
+		}
+			
+        
+        
+	})
+	</script>
+</body>
+</html>

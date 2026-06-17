@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="renderer" content="webkit">
+<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+<meta http-equiv="Access-Control-Allow-Origin" content="*">
+<meta name="viewport"
+	content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="format-detection" content="telephone=no">
+<title>工程项目信息化管理云平台</title>
+<link rel="shortcut icon" href="img/logo-ico.ico" />
+<!-- Bootstrap 3.3.7 -->
+<link rel="stylesheet" href="assets/bower_components/bootstrap/dist/css/bootstrap.css">
+<!-- Font Awesome -->
+<link rel="stylesheet" href="assets/bower_components/font-awesome/css/font-awesome.min.css">
+<!-- Ionicons -->
+<link rel="stylesheet" href="assets/bower_components/Ionicons/css/ionicons.min.css">
+<!-- Theme style -->
+<link rel="stylesheet" href="assets/dist/css/AdminLTE.css">
+<!-- AdminLTE Skins. Choose a skin from the css/skins folder instead of downloading all of them to reduce the load. -->
+<link rel="stylesheet" href="assets/dist/css/skins/_all-skins.min.css">
+<!-- bootstrap wysihtml5 - text editor -->
+<link rel="stylesheet" href="assets/bower_components/bootstrap-daterangepicker/daterangepicker.css">
+<link rel="stylesheet" href="assets/bower_components/bootstrap-datepicker/dist/css/bootstrap-datepicker.min.css">
+<link rel="stylesheet" href="assets/bower_components/bootstrap-colorpicker/dist/css/bootstrap-colorpicker.min.css">
+<link rel="stylesheet" href="assets/plugins/timepicker/bootstrap-timepicker.min.css">
+<link rel="stylesheet" href="assets/plugins/bootstrap-wysihtml5/bootstrap3-wysihtml5.min.css">
+<link rel="stylesheet" href="assets/bootstrap-treeview/bootstrap-treeview.min.css">
+<link rel="stylesheet" href="assets/bower_components/select2/dist/css/select2.min.css">
+<link rel="stylesheet" href="assets/iconfont/iconfont.css">
+<!-- 文件上传控件的样式文件 -->
+<link rel="stylesheet" href="assets/bootstrap-fileinput-master/css/fileinput.min.css">
+<!-- 开关控件 -->
+<link rel="stylesheet" href="assets/bootstrap-switch/bootstrap-switch.css" >
+<link rel="stylesheet" href="assets/layui/css/layui.css">
+<link rel="stylesheet" href="assets/layui/css/layui-zw.css">
+<link rel="stylesheet" href="assets/common-plus/css/zw-index.css">
+<link rel="stylesheet" href="assets/common-plus/css/zw-custom.css">
+<!-- 日期控件 -->
+<link rel="stylesheet" href="assets/jeDate/jeDate-test.css">
+<link rel="stylesheet" href="assets/jeDate/jedate.css">
+<link rel="stylesheet" href="assets/layui/css/treetable.css">
+<link rel="stylesheet" href="assets/plugins/iCheck/flat/blue.css">
+<link rel="stylesheet" href="assets/plugins/iCheck/all.css">
+<link rel="stylesheet" href="assets/data-tables/datatables.min.css">
+<link rel="stylesheet" href="assets/dhtmlxtree/dhtmlxtree.css">
+<link rel="stylesheet" href="css/bootstrap-zwtab.css">
+<link rel="stylesheet" href="css/loadPage.css" />
+<link rel="stylesheet" href="css/style.css">
+<style id="layui-zw-bg-color"></style>
+	<link rel="stylesheet" type="text/css" href="assets/fullcalendar/css/fullcalendar.css" />
+	<link rel="stylesheet" type="text/css" href="assets/fullcalendar/css/index.css"/>
+</head>
+<body class="layui-layout-body layui-zw-max-body">
+	<!-- 加载等待效果 -->
+	<div class="zw-back">
+		<div class="socket">
+			<div class="gel center-gel"><div class="hex-brick h1"></div><div class="hex-brick h2"></div><div class="hex-brick h3"></div></div>
+			<div class="gel c1 r1"><div class="hex-brick h1"></div><div class="hex-brick h2"></div><div class="hex-brick h3"></div></div>
+			<div class="gel c2 r1"><div class="hex-brick h1"></div><div class="hex-brick h2"></div><div class="hex-brick h3"></div></div>
+			<div class="gel c3 r1"><div class="hex-brick h1"></div><div class="hex-brick h2"></div><div class="hex-brick h3"></div></div>
+			<div class="gel c4 r1"><div class="hex-brick h1"></div><div class="hex-brick h2"></div><div class="hex-brick h3"></div></div>
+			<div class="gel c5 r1"><div class="hex-brick h1"></div><div class="hex-brick h2"></div><div class="hex-brick h3"></div></div>
+			<div class="gel c6 r1"><div class="hex-brick h1"></div><div class="hex-brick h2"></div><div class="hex-brick h3"></div></div>
+		</div>
+	</div>
+	<div class="layui-layout layui-layout-admin layui-zw-admin">
+		<div class="layui-header layui-zw-header">
+			<span class="layui-logo-mini" data-zw-main><img alt="" src="img/logo-mini.png" ></span>
+			<span class="layui-logo" data-zw-main>工程项目信息化管理云</span>
+			<!-- 加载头部导航 -->
+			<ul class="layui-nav layui-layout-left zw-header-menu-pc"></ul>
+			<ul class="layui-nav layui-layout-right zw-header-set-pc">
+				<li class="layui-nav-item">
+	                <a href="javascript:;" data-refresh="刷新"><i class="layui-icon layui-icon-refresh-3"></i></a>
+	            </li>
+				<li class="layui-nav-item" data-user-info style="margin-right: 15px;">
+					<a href="javascript:;">
+						<img class="zw-user-image layui-hide" src="">
+						<span class="zw-user-name"></span>
+					</a>
+					<dl class="layui-nav-child">
+						<dd>
+							<a href="javascript:;" data-user-base><i class="layui-icon layui-icon-username"></i> 个人中心</a>
+						</dd>
+						<dd class="zwsoft-select-bgcolor">
+							<a href="javascript:;"><i class="layui-icon layui-icon-layouts"></i> 主题切换</a>
+						</dd>
+						<!-- <dd>
+							<a href="javascript:;" data-switch-user><i class="fa fa-street-view"></i> 切换用户</a>
+						</dd> -->
+						<dd>
+							<a href="javascript:;" data-user-layout><i class="layui-icon layui-icon-close-fill"></i> 注销</a>
+						</dd>
+					</dl>
+				</li>
+			</ul>
+		</div>
+		<div class="layui-side layui-bg-black layui-zw-bg-black">
+			<div class="layui-side-scroll  layui-left-menu">
+				<div class="zwsoft-tool" data-zwsoft-indent="1"><i class="fa fa-dedent"></i></div>
+				<!-- 左侧导航区域（可配合layui已有的垂直导航） -->
+				<ul class="layui-nav layui-nav-tree zw-left-menu-pc" l 
+				ay-shrink="all" lay-filter="zw-left-menu">
+				</ul>
+			</div>
+			<footer class="zw-footer"  id="gonggaoMeassgeIndex">
+				<a class="zw-bottom-title"><i class="glyphicon glyphicon-bullhorn"></i> 公告信息 <span class="label label-success pull-right" data-id="gonggaoMessageCountId"></span></a>
+			</footer>
+		</div>
+		<div class="layui-body" style="z-index:20;">
+			<div class="workPositionDiv">
+			</div>
+			<!-- 内容主体区域 -->
+			<div class="lay-zw-content-page"></div>
+		</div>
+		<div class="layui-footer">
+			<div class="layui-row">
+			  
+			  
+			  
+			  
+			  <div class="layui-col-md7" style="text-align: right;">
+			   	
+			   	
+			   	
+				 
+				
+				
+			  </div>
+			</div>
+		</div>
+	</div>
+	<div style="display: none" id="scanCodeWechat"><img src="img/scanCodeWechat.png" style="width:100%"/></div>
+	<input type="hidden" id="xmzlglType">
+		<script src="js/vue.global.min.js"></script>
+	
+	<script src="js/layui_file_uploadv1.1.js"></script>
+	<script type="text/javascript" src="pageoffice.js" id="po_js_main"></script>
+	<script src="assets/layui/layui.js"></script>
+	<script src="assets/common-plus/lay-zw-config.js"></script>
+	<!-- jQuery -->
+	<script src="assets/bower_components/jquery/dist/jquery.min.js"></script>
+	<script src="assets/bower_components/jquery-ui/jquery-ui.min.js"></script>
+	<script src="js/pdfobject.js"></script>
+	<!-- Resolve conflict in jQuery UI tooltip with Bootstrap tooltip -->
+	<!-- Bootstrap 3.3.7 -->
+	<script src="assets/bower_components/bootstrap/dist/js/bootstrap.min.js"></script>
+	<script src="assets/bower_components/bootstrap-datepicker/dist/js/bootstrap-datepicker.js"></script>
+	<script src="assets/plugins/timepicker/bootstrap-timepicker.min.js"></script>
+	<script src="assets/bower_components/moment/min/moment.min.js"></script>
+	<script src="assets/bower_components/bootstrap-daterangepicker/daterangepicker.js"></script>
+	<!-- AdminLTE App -->
+	<script src="assets/dist/js/adminlte.min.js"></script>
+	<script src="assets/bower_components/ckeditor/ckeditor.js"></script>
+	<script src="assets/bower_components/ckeditor/ckeditor.js"></script>
+	<!-- <script src="assets/ckeditorModel/ckeditor.js"></script> -->
+	<!-- 共用方法 -->
+	<script type="text/javascript" src="js/base64.min.js"></script>
+	<script type="text/javascript" src="js/index.js"></script>
+	<script type="text/javascript" src="js/common.js"></script>
+	<script type="text/javascript" src="js/menu.js"></script>
+	<!-- alert 和 confirm -->
+	<script type="text/javascript" src="js/zw-alert.js"></script>
+	<!-- 监控元素宽度变化插件 -->
+	<script src="js/jquery-resize.js"></script>
+	<!--引入开关控件-->
+	<script src="assets/bootstrap-switch/bootstrap-switch.js"></script>
+	<!-- 树结构 -插件 -->
+	<script type="text/javascript" src="assets/bootstrap-treeview/bootstrap-treeview.min.js"></script>
+	<script type="text/javascript" src="assets/dhtmlxtree/dhtmlxtree.js"></script>
+	<script type="text/javascript" src="assets/zTree/jquery.ztree.all.min.js"></script>
+	<!-- 文件控件上传时候用 -->
+	<script type="text/javascript" src="assets/bootstrap-fileinput-master/js/fileinput.js"></script>
+	<script type="text/javascript" src="assets/bootstrap-fileinput-master/js/locales/zh.js"></script>
+	<!-- 日期控件js -->
+	<script type="text/javascript" src="assets/jeDate/jedate.js"></script>
+	<script type="text/javascript" src="js/echarts.min.js"></script><!-- 百度echars -->
+	<script type="text/javascript" src="assets/plugins/iCheck/icheck.min.js"></script>
+	<script type="text/javascript" src="assets/data-tables/datatables.min.js"></script>
+	<!-- 此处把CDN文件暂时改为项目文件 替换回CDN文件时  记得上传一次本文件 datatables.zh-CN.js-->
+	<!-- <script type="text/javascript" src="assets/data-tables/datatables.zh-CN.js"></script> -->
+	<script type="text/javascript" src="assets/data-tables/datatables.zh-CN.js"></script>
+	<script type="text/javascript" src="js/bootstrap-zwtab.js"></script>
+	<script type="text/javascript" src="js/reconnecting-websocket.min.js"></script>
+	<script src="assets/bower_components/select2/dist/js/select2.js"></script>
+<!-- 	<script type="text/javascript" src="common/map/js/map.js"></script> -->
+	<script src = 'https://webapi.amap.com/maps?v=2.0&key=ac1aaf508b920f880ca32958fb09bae7' type="text/javascript" > </script>
+	<script type="text/javascript" src="assets/fullcalendar/js/moment.min.js" ></script><!-- 日期处理时间工具 -->
+	<script type="text/javascript" src="assets/fullcalendar/js/fullcalendar.min.js" ></script>
+	<script>
+	const { createApp } = Vue
+	window._AMapSecurityConfig = {
+		    securityJsCode:"e6cc11ad7ff88abb2ed5619f31bc799c",
+	}
+	//JavaScript代码区域
+	layui.use(['layer','element','zwInit','jquery','zwOnline'], function(){
+		  var element = layui.element,$ = layui.$,zwOnline = layui.zwOnline,zwInit = layui.zwInit,layer = layui.layer;;
+		  zwInit.init({});//初始化 页面导航
+		  zwInit.listen();//监听hash地址变化
+		  zwOnline.loadCurrUserInfo();//加载登录用户的信息以及打开webSocket
+		  $('body').on('mouseover','.layui-table-body .layui-table-cell',function (){
+			 	$(this).parent().attr("title",$(this).text());
+		  });
+		  $('a[data-img-qrcodeXCX]').on("click",function(){
+			  layer.open({
+				  type: 1,
+				  id:'data-img-qrcodeXCX',
+				  title: false,
+				  closeBtn: 0,
+				  area: ['50%','auto'],
+				  skin: 'layui-layer-nobg', //没有背景色
+				  shadeClose: true,
+				  content: $("#scanCodeWechat").html()
+				});
+		  })
+		  
+		   window.openAIHelperDialog = function () {
+		                  // 定义要弹出的固定HTML代码
+		                  var aiHelperHTML = `
+		                      <div style="padding: 20px;">
+		                          <h2>AI助手对话框</h2>
+		                          <p>这是一段固定的说明文字，展示如何使用AI助手功能。</p>
+		                          <form class="layui-form">
+		                              <div class="layui-form-item">
+		                                  <label class="layui-form-label">提问</label>
+		                                  <div class="layui-input-block">
+		                                      <textarea id="ai-question" name="ai-question" placeholder="请输入你的问题" class="layui-textarea"></textarea>
+		                                  </div>
+		                              </div>
+		                              <div class="layui-form-item">
+		                                  <div class="layui-input-block">
+		                                      <button class="layui-btn" onclick="sendQuestion()">发送</button>
+		                                  </div>
+		                              </div>
+		                              <div class="layui-form-item">
+		                                  <label class="layui-form-label">回答</label>
+		                                  <div class="layui-input-block">
+		                                      <div id="ai-answer"></div>
+		                                  </div>
+		                              </div>
+		                          </form>
+		                      </div>
+		                  `;
+
+		                  layer.open({
+		                      type: 1,
+		                      title: 'AI助手',
+		                      content: aiHelperHTML,
+		                      area: ['500px', 'auto'],
+		                      btnAlign: 'c',
+		                      success: function (layero, index) {
+		                          // 对话框弹出成功后的回调，可用于初始化一些操作
+		                      }
+		                  });
+		              }
+					  
+					 
+
+
+	});
+
+	window.addEventListener('unload', function () {
+		$.ajax({
+						url : "/loginout",
+						type : "get",	
+						async : false,
+						success : function(result) {
+						}
+					});
+		})
+	</script>
+</body>
+</html>

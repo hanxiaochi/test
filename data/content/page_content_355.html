@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>工期管理页面</title>
+<script type="text/javascript" src="assets/bootstrap-tagsinput/bootstrap-tagsinput.min.js"></script>
+<link rel="stylesheet" type="text/css" href="assets/bootstrap-tagsinput/bootstrap-tagsinput.css" />
+<style>
+.displays{
+display: none;
+
+}
+</style>
+</head>
+<body >
+	<!-- 登录人员是否有修改工期状态的权限  0 代表有  1 代表没有 -->
+	<div class="box" style="padding:15px;padding-top:0px;">
+<!-- 		<div class="box-header"> -->
+<!-- 			<div id="buttonGroup" class="dt-buttons btn-group form-inline"> -->
+<!-- 				<button data-type="button" style="float: none;" data-url="extend_gather" class="btn btn-default">添加工期</button> -->
+<!-- 			</div> -->
+<!-- 		</div> -->
+			<table  id="gatherDataList" lay-filter="gatherDataList" class="table table-striped table-bordered">
+			</table>
+	</div>
+	<script>
+	
+	layui.use(['table','util','layer' ], function(){
+		 var table = layui.table;
+		 var util  = layui.util;
+		 var layer = layui.layer;
+			var msg = "";
+			if(msg!=""){
+				layer.msg(msg, {icon: 5,offset: '200px' });
+			}
+		 var optGatherState="1",gatherFlag="",isTest="0";
+		 var gatherList;
+		 var headCols=[
+			 [
+			  {"field":"gatherNo","align":"center","title":"工期"},
+			  {"field":"gatherFileNo","align":"center","title":"文件编号","edit":"text"},
+			  {"field":"gatherStartDate","align":"center","title":"开始日期"},
+			  {"field":"gatherEndDate","align":"center","title":"结束日期"},
+			  {"field":"collectTime","align":"center","title":"最后操作时间"},
+				{"field":"gatherShow","align":"center","title":"说明","hide":true},
+			  {"field":"remark","align":"center","title":"备注"},
+			  {"title":"操作","align":"center",width:250,"templet":function(d){
+				  var gatherState=d.gatherState,isLast=d.isLast,data=d.gatherId;
+				  var btns ='<div class="btn-group" data-id="'+data+'">';
+					if(isLast==1){
+						btns += '<button type="button"lay-event="collect" class="btn btn-primary btn-xs">汇总</button>';
+						btns += '<button type="button" lay-event="edit" class="btn btn-primary btn-xs">编辑</button>';
+						btns += '<button type="button"  lay-event="remove" class="btn btn-danger btn-xs">删除</button>';
+					}
+					if (optGatherState == 0) {
+						if (gatherState == 0){
+							btns += '<button type="button"  lay-event="optGatherState" data-gatherState="'+gatherState+'"   class="btn btn-primary btn-xs">锁定</button>';
+						}
+						else{
+							$("div[data-id='"+data+"']").parent().parent("tr").css('color','#A9A9A9')
+							btns += '<button type="button"  lay-event="optGatherState" data-gatherState="'+gatherState+'"   class="btn btn-primary btn-xs">激活</button>';
+						}
+					}
+					if(isTest==1){
+					btns += '<button type="button" lay-event="superEdit" class="btn btn-primary btn-xs">调整</button>';
+					}
+					btns += '<button type="button" lay-event="showEdit" class="btn btn-primary btn-xs">说明</button>';
+					btns += "</div>";
+					return btns;
+			  }},
+			 ]
+		 ]
+		 if(optGatherState != 0){
+			 headCols[0].splice(4,1)
+		 }
+		table.render({
+		  elem: '#gatherDataList'
+		  ,url:"sysGather/get_gather_data_list"
+		  ,size: 'sm'
+		  ,cols: headCols
+		  ,toolbar:'<div><button id="addSysGather" lay-event="addSysGather" class="btn btn-default">添加工期</button><button style="display:none" id="refresh" lay-event="refresh">刷新</button></div>'
+		  ,defaultToolbar:[]
+		  //,height: 'full-165'
+		  ,even:true
+		  ,where:{sectionType:"0"}
+		  ,cellMinWidth: 80
+		  ,done : function() {
+				layer.closeAll('loading');
+		  }
+		});
+		 
+		table.on('row(gatherDataList)', function(obj){ 
+			 obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+		})
+		table.on('edit(gatherDataList)', function(obj){ 
+			var gatherId=obj.data.gatherId,newFileNo=obj.value;
+			$.ajax({
+				url : "sysGather/updateGatherNo",
+				type : "get",
+				data : {
+					"gatherId" : gatherId,
+					"gatherFileNo":newFileNo
+				},
+				dataType : "json",
+				success : function(
+						result) {
+					if (result.code == 1) {
+							Ewin.msg({
+								type : "success",
+								content : "成功"
+							});	
+					}
+				}
+			});
+		})
+		 
+		table.on('toolbar(gatherDataList)', function(obj){
+			$.ajax({
+				url : "main_controller/mainReturnSectionFlag",
+				data : "",
+				success : function(result) {
+					if (result.code == 1) {
+						 switch(obj.event){
+							 case 'addSysGather':
+									 if(gatherFlag!=1){
+											Ewin.msg({
+												type : "warning",
+												content : "上期数据未汇总，不能添加工期"
+											});
+											return false;
+									 }
+									Ewin.modal({
+										width : 400,
+										modalId : "gatherDataEdit",
+										title : "操作工期",
+										url : "sysGather/edit_gatherData_page",
+										data : {
+											type:"add"
+										},
+										drag : true
+									});
+							 break;
+							 case 'refresh':
+								 table.reload('gatherDataList');
+							 break;
+						 }
+					}else{
+						Ewin.msg({type : "danger",content : result.msg});
+						return false;
+					}
+				}
+			})
+
+		});
+		 
+		table.on('tool(gatherDataList)', function(obj){
+			sysSectionLineClick[obj.event](obj.data.gatherId,obj.data.gatherState,obj.data.gatherShow);
+		});
+	});
+	
+							var sysSectionLineClick = {
+								edit : function(gatherId, gatherState,gatherShow) {
+									Ewin.modal({
+										width : 400,
+										modalId : "gatherDataEdit",
+										title : "编辑工期",
+										url : "sysGather/edit_gatherData_page",
+										data : {
+											"gatherId" : gatherId,
+											type:"edit"
+										},
+						 				drag:true
+									});
+								},
+								superEdit : function(gatherId, gatherState,gatherShow) {
+									Ewin.modal({
+										width : 400,
+										modalId : "gatherDataEdit",
+										title : "编辑工期",
+										url : "sysGather/edit_gatherData_page",
+										data : {
+											"gatherId" : gatherId,
+											type:"edit"
+										},
+						 				drag:true
+									});
+								},
+								showEdit : function(gatherId, gatherState,gatherShow) {
+									const defaultDesc = gatherShow ? gatherShow : '';
+                                    layer.open({
+                                        title: '编辑工期说明',
+                                        type: 1,
+                                        area:['400px','300px'],
+										content: `<textarea id="periodDesc" style="width: 100%; height: 200px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; resize: vertical;" placeholder="请输入工期说明（支持多行输入）">${defaultDesc}</textarea>`,
+                                        btn:['保存','取消'],
+                                        btnAlign:'c',
+										yes:function (index, layero){
+											const periodDesc = layero.find('#periodDesc').val();
+											$.ajax({
+												url : "sysGather/updateGatherShow",
+												type : "get",
+												data : {
+													"gatherId" : gatherId,
+													"gatherShow":periodDesc
+												},
+												dataType : "json",
+												success : function(result) {
+													if (result.code == 1) {
+														Ewin.msg({
+															type : "success",
+															content : "成功"
+														});
+														layui.table.reload('gatherDataList',{});
+														// 保存成功后关闭模态框
+														layer.close(index);
+													}
+												}
+											});
+										},
+										btn2: function(index) {
+											layer.close(index);
+										}
+                                    });
+								},
+								collect : function(gatherId) {
+									$.ajax({
+										url : "dataGather/data_collect_gather",
+										type : "get",
+										data : {
+											"gatherId" : gatherId
+										},
+										dataType : "json",
+										success : function(
+												result) {
+											gatherFlag=1;
+											if (result.code == 1) {
+													Ewin.msg({
+														type : "success",
+														content : "成功"
+													});	
+													$("#refresh").click();
+											}else if (result.code == 0){
+						                    	Ewin.msg({
+						                            type: "danger",
+						                            content: result.msg
+						                        });
+						                    }
+											
+										}
+									});
+								},
+								optGatherState : function(gatherId, gatherState) {
+									if (gatherState == 0) {
+										var message = "确定要锁定本期数据吗？锁定之后数据将无法改变。";
+										gatherState = 1;
+									} else {
+										var message = "确定要激活本期数据吗？激活以后数据可能被改变。";
+										gatherState = 0;
+									}
+									layer.prompt({
+										formType: 2,
+										value: '备注',
+										title: message+"(备注选填)",
+										offset: 't',
+										area: ['450px', '54px'] //自定义文本域宽高
+									}, function(value, index, elem){
+										if("备注"==value){
+											value=""
+										}
+										$.ajax({
+											url : "sysGather/update_gather_state",
+											type : "get",
+											data : {
+												"gatherState" : gatherState,
+												"gatherId" : gatherId,
+												"remark" : value
+											},
+											dataType : "json",
+											success : function(
+													result) {
+												if (result.code == 1) {
+													if(gatherState==0){
+														Ewin.msg({
+															type : "success",
+															content : "已激活"
+														});
+													}else{
+														Ewin.msg({
+															type : "success",
+															content : "已锁定"
+														});
+													}
+												}
+												$("#refresh").click();
+											}
+										});
+										layer.close(index);
+									});
+									/*Ewin.confirm({message : message}).on(function(e) {
+														if (e) {//e 为true 说明点击确定
+															$.ajax({
+																		url : "sysGather/update_gather_state",
+																		type : "get",
+																		data : {
+																			"gatherState" : gatherState,
+																			"gatherId" : gatherId
+																		},
+																		dataType : "json",
+																		success : function(
+																				result) {
+																			if (result.code == 1) {
+																				if(gatherState==0){
+																					Ewin.msg({
+																						type : "success",
+																						content : "已激活"
+																					});																					
+																				}else{
+																					Ewin.msg({
+																						type : "success",
+																						content : "已锁定"
+																					});																						
+																				}
+																			}
+																			$("#refresh").click();
+																		}
+																	});
+														}
+													});*/
+								},
+								remove : function(gatherId, gatherState) {
+									Ewin.confirm({
+												message : "确认要删除选择的数据吗？"
+											})
+											.on(function(e) {
+														if (e) {//e 为true 说明点击确定
+															$.ajax({
+																		url : "sysGather/del_gather",
+																		type : "post",
+																		data : {
+																			"gatherId" : gatherId
+																		},
+																		dataType : "json",
+																		success : function(result) {
+																			if (result.code == 1) {
+																				Ewin.msg({
+																							type : "success",
+																							content : "已删除"
+																						});
+																				$("#refresh").click();
+																			} else {
+																				Ewin.msg({
+																							type : "danger",
+																							content : result.msg
+																						})
+																			}
+																		}
+																	});
+															return;
+														}
+													});
+								}
+							}
+	</script>
+</body>
+</html>

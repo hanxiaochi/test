@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>重大变更查询</title>
+</head>
+<body>
+	<div id="queryVaryTab"></div>
+	<script type="text/html" id="queryVaryTable">
+				<div style="margin:5px 0px;padding-right:20px;display:none;width:300px;" id="bigVaryClicntSelectId">
+					<select class="form-control input-sm" id="bigVaryClientId">
+						<!-- 其中m是个临时变量，像for(User u : userList)那样中的u-->
+						<option value="1" >陕西众望软件通用版演示系统</option>
+					</select>
+				</div>
+			<table id="bigVartQueryTable" lay-filter="bigVartQueryTable" ></table>
+			<div id="myChart" style="width: 1000px; height: 400px;"></div>
+	</script>
+	<script type="text/html" id="bigVaryQueryLineBtn">
+		<button title="详情 " lay-event="details" class="btn btn-primary btn-xs">详情</button>
+	</script>
+	<script type="text/javascript" src="assets/plugins/iCheck/icheck.min.js"></script>
+	<script type="text/javascript" src="js/bootstrap-zwtab.js"></script>
+	<script type="text/javascript">
+
+		ZwTab.init({id:"queryVaryTab",title:"变更列表",html:$("#queryVaryTable").html()});
+		layui.use(['table'], function(){
+			 var table = layui.table;
+			 var $ = layui.$;
+				 bigVaryQueryTableData();
+				 function bigVaryQueryTableData(){
+				  		$.ajax({
+							type : 'get',
+							url : "bigVaryQuery/detail_titles",
+							dataType : 'json',
+							success : function(res) {
+								if(res.code==1){
+									table.render({
+									  elem: '#bigVartQueryTable'
+									  ,url:"bigVaryQuery/getBigVarQueryData"
+									  ,where:{clientId:$("#bigVaryClientId").val()}
+									  ,defaultToolbar:[]
+									  ,size: 'sm'
+									  ,even:true
+									  ,page:true
+									  ,limits:10
+									  ,limits:[10,20,30]
+									  ,cols: res.data
+									  //,height: 'full-400'
+									  ,cellMinWidth: 130
+									  ,done : function() {
+											layer.closeAll('loading');
+											$(".layui-table-view[lay-id='bigVartQueryTable'] .layui-table-body tr[data-index = 0]").click();
+									  }
+									});
+								}else{
+									layer.msg(res.msg);
+								}
+							}
+						});
+				 }
+				 
+					var isTests="0";
+					if(isTests=="1"){
+						$("#bigVaryClicntSelectId").css("display","");
+					}
+					$("#bigVaryClientId").on("change",function(){
+						table.reload('bigVartQueryTable',{where: {clientId:$("#bigVaryClientId").val()}});
+					})
+					table.on('row(bigVartQueryTable)', function(obj){
+						obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+						getChartData(obj.data.projectId,obj.data.projectName);
+					})
+					table.on('tool(bigVartQueryTable)', function(obj){
+						sysReportParamLineClick[obj.event](obj.data.projectId)
+					})
+					var sysReportParamLineClick = {
+							details : function(projectId) {
+								ZwTab.addTab({
+									id : "queryVaryTab",
+									type : "addpage",
+									title : "变更详情",
+									url : "bigVaryQuery/varyQueryDetial",
+									data : {
+										"projectId" : projectId
+									}
+								});
+						}
+					}
+					function getChartData(projectId,projectName){
+						$.ajax({
+							url : "bigVaryQuery/get_vary_data_by_project",
+							type : "get",
+							data : {
+								projectId : projectId
+							},
+							success : function(result) {
+								var serviceName=[];
+								var serviceData=[];
+								if (result.code == 1) {
+									var data=result.data;
+									var i=0;
+									for(var key in data){
+									  	var obj=new Object();
+						                obj.name=key; 
+						                obj.value=data[key];
+						                serviceData[i]=data[key];
+						                serviceName[i]=key;
+						                i++;
+									}
+									getChart(serviceData,serviceName,projectName);
+								}
+							}
+						});
+					}
+				
+						var myChart;
+						// 基于准备好的dom，初始化echarts实例
+						function getChart(serviceData,serviceName,projectName){
+							 if (myChart != null && myChart != "" && myChart != undefined) {
+							        myChart.dispose();
+							    }
+							 myChart  = echarts.init(document.getElementById('myChart'));
+		
+							 option = {
+									title: {
+							        text: '工程变更金额（单位:元）',
+							        subtext: projectName,
+							        sublink: ''
+							    },
+							     color: ['#3398DB'],
+							     tooltip : {
+							         trigger: 'axis',
+							         axisPointer : {            // 坐标轴指示器，坐标轴触发有效
+							             type : 'shadow'        // 默认为直线，可选为：'line' | 'shadow'
+							         }
+							     },
+							     grid: {
+							         left: '3%',
+							         right: '4%',
+							         bottom: '3%',
+							         containLabel: true
+							     },
+							     xAxis : [
+							         {
+							             type : 'category',
+							             data : serviceName,
+							             axisTick: {
+							                 alignWithLabel: true
+							             }
+							         }
+							     ],
+							     yAxis : [
+							         {
+							             type : 'value'
+							         }
+							     ],
+							     series : [
+							         {
+							             name:'金额',
+							             type:'bar',
+							             barWidth: '60%',
+							             data:serviceData
+							         }
+							     ]
+							 };
+		
+							// 使用刚指定的配置项和数据显示图表。
+							myChart.setOption(option);
+						}
+		})
+
+	</script>
+
+</body>
+</html>

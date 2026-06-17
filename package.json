@@ -1,0 +1,14 @@
+{
+  "name": "zwkjy-local-clone",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local runnable clone of the captured engineering project management portal.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "verify": "node scripts/verify.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

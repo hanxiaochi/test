@@ -1,0 +1,570 @@
+.zw-back{
+	position: fixed;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	z-index: 5000;
+	background-color: #ecf0f5;
+}
+
+.socket{
+	width: 200px;
+	height: 200px;
+	position: absolute;
+	left: 50%;
+	margin-left: -100px;
+	top: 50%;
+	margin-top: -100px;
+}
+
+.socket .hex-brick{
+  background: #3c8dbc;
+  width: 30px;
+  height: 17px;
+  position: absolute;
+  top: 5px;
+  animation-name: fade;
+  animation-duration: 2s;
+  animation-iteration-count: infinite;
+	-webkit-animation-name: fade;
+	-webkit-animation-duration: 2s;
+	-webkit-animation-iteration-count: infinite;
+}
+
+.socket .h2{
+	transform: rotate(60deg);
+	-webkit-transform: rotate(60deg);
+}
+
+.socket .h3{
+	transform: rotate(-60deg);
+	-webkit-transform: rotate(-60deg);
+}
+
+.socket .gel{
+	height: 30px;
+	width: 30px;	
+	transition: all .3s;
+	-webkit-transition: all .3s;
+	position: absolute;
+	top: 50%;
+	left: 50%;
+}
+
+.socket .center-gel{
+	margin-left: -15px;
+	margin-top: -15px;
+	animation-name: pulse;
+	animation-duration: 2s;
+	animation-iteration-count: infinite;
+	-webkit-animation-name: pulse;
+	-webkit-animation-duration: 2s;
+	-webkit-animation-iteration-count: infinite;
+}
+
+.socket .c1{
+	margin-left: -47px;
+	margin-top: -15px;
+}
+
+.socket .c2{
+	margin-left: -31px;
+	margin-top: -43px;
+}
+
+.socket .c3{
+	margin-left: 1px;
+	margin-top: -43px;
+}
+
+.socket .c4{
+	margin-left: 17px;
+	margin-top: -15px;
+}
+.socket .c5{
+	margin-left: -31px;
+	margin-top: 13px;
+}
+
+.socket .c6{
+	margin-left: 1px;
+	margin-top: 13px;
+}
+
+.socket .c7{
+	margin-left: -63px;
+	margin-top: -43px;
+}
+
+.socket .c8{
+	margin-left: 33px;
+	margin-top: -43px;
+}
+
+.socket .c9{
+	margin-left: -15px;
+	margin-top: 41px;
+}
+
+.socket .c10{
+	margin-left: -63px;
+	margin-top: 13px;
+}
+
+.socket .c11{
+	margin-left: 33px;
+	margin-top: 13px;
+}
+
+.socket .c12{
+	margin-left: -15px;
+	margin-top: -71px;
+}
+
+.socket .c13{
+	margin-left: -47px;
+	margin-top: -71px;
+}
+
+.socket .c14{
+	margin-left: 17px;
+	margin-top: -71px;
+}
+
+.socket .c15{
+	margin-left: -47px;
+	margin-top: 41px;
+}
+
+.socket .c16{
+	margin-left: 17px;
+	margin-top: 41px;
+}
+
+.socket .c17{
+	margin-left: -79px;
+	margin-top: -15px;
+}
+
+.socket .c18{
+	margin-left: 49px;
+	margin-top: -15px;
+}
+
+.socket .c19{
+	margin-left: -63px;
+	margin-top: -99px;
+}
+
+.socket .c20{
+	margin-left: 33px;
+	margin-top: -99px;
+}
+
+.socket .c21{
+	margin-left: 1px;
+	margin-top: -99px;
+}
+
+.socket .c22{
+	margin-left: -31px;
+	margin-top: -99px;
+}
+
+.socket .c23{
+	margin-left: -63px;
+	margin-top: 69px;
+}
+
+.socket .c24{
+	margin-left: 33px;
+	margin-top: 69px;
+}
+
+.socket .c25{
+	margin-left: 1px;
+	margin-top: 69px;
+}
+
+.socket .c26{
+	margin-left: -31px;
+	margin-top: 69px;
+}
+
+.socket .c27{
+	margin-left: -79px;
+	margin-top: -15px;
+}
+
+.socket .c28{
+	margin-left: -95px;
+	margin-top: -43px;
+}
+
+.socket .c29{
+	margin-left: -95px;
+	margin-top: 13px;
+}
+
+.socket .c30{
+	margin-left: 49px;
+	margin-top: 41px;
+}
+
+.socket .c31{
+	margin-left: -79px;
+	margin-top: -71px;
+}
+
+.socket .c32{
+	margin-left: -111px;
+	margin-top: -15px;
+}
+
+.socket .c33{
+	margin-left: 65px;
+	margin-top: -43px;
+}
+
+.socket .c34{
+	margin-left: 65px;
+	margin-top: 13px;
+}
+
+.socket .c35{
+	margin-left: -79px;
+	margin-top: 41px;
+}
+
+.socket .c36{
+	margin-left: 49px;
+	margin-top: -71px;
+}
+
+.socket .c37{
+	margin-left: 81px;
+	margin-top: -15px;
+}
+
+.socket .r1{
+	animation-name: pulse;
+	animation-duration: 2s;
+	animation-iteration-count: infinite;
+	animation-delay: .2s;
+	-webkit-animation-name: pulse;
+	-webkit-animation-duration: 2s;
+	-webkit-animation-iteration-count: infinite;
+	-webkit-animation-delay: .2s;
+}
+
+.socket .r2{
+	animation-name: pulse;
+	animation-duration: 2s;
+	animation-iteration-count: infinite;
+	animation-delay: .4s;
+	-webkit-animation-name: pulse;
+	-webkit-animation-duration: 2s;
+	-webkit-animation-iteration-count: infinite;
+	-webkit-animation-delay: .4s;
+}
+
+.socket .r3{
+	animation-name: pulse;
+	animation-duration: 2s;
+	animation-iteration-count: infinite;
+	animation-delay: .6s;
+	-webkit-animation-name: pulse;
+	-webkit-animation-duration: 2s;
+	-webkit-animation-iteration-count: infinite;
+	-webkit-animation-delay: .6s;
+}
+
+.socket .socket .r1 > .hex-brick{
+	animation-name: fade;
+	animation-duration: 2s;
+	animation-iteration-count: infinite;
+	animation-delay: .2s;
+	-webkit-animation-name: fade;
+	-webkit-animation-duration: 2s;
+	-webkit-animation-iteration-count: infinite;
+	-webkit-animation-delay: .2s;
+}
+
+.socket .r2 > .hex-brick{
+	animation-name: fade;
+	animation-duration: 2s;
+	animation-iteration-count: infinite;
+	animation-delay: .4s;
+	-webkit-animation-name: fade;
+	-webkit-animation-duration: 2s;
+	-webkit-animation-iteration-count: infinite;
+	-webkit-animation-delay: .4s;
+}
+
+.socket .r3 > .hex-brick{
+	animation-name: fade;
+	animation-duration: 2s;
+	animation-iteration-count: infinite;
+	animation-delay: .6s;
+	-webkit-animation-name: fade;
+	-webkit-animation-duration: 2s;
+	-webkit-animation-iteration-count: infinite;
+	-webkit-animation-delay: .6s;
+}
+
+
+@keyframes pulse{
+	0%{
+		-webkit-transform: scale(1);
+		transform: scale(1);
+	}
+	
+	50%{
+		-webkit-transform: scale(0.01);
+		transform: scale(0.01);
+	}
+	
+	100%{
+		-webkit-transform: scale(1);
+		transform: scale(1);
+	}
+}
+
+@keyframes fade{
+	0%{
+		background: #3c8dbc;
+	}
+	
+	50%{
+		background: #90BBBF;
+	}
+	
+	100%{
+		background: #3c8dbc;
+	}
+}
+
+@-webkit-keyframes pulse{
+	0%{
+		-webkit-transform: scale(1);
+		transform: scale(1);
+	}
+	
+	50%{
+		-webkit-transform: scale(0.01);
+		transform: scale(0.01);
+	}
+	
+	100%{
+		-webkit-transform: scale(1);
+		transform: scale(1);
+	}
+}
+
+@-webkit-keyframes fade{
+	0%{
+		background: #3c8dbc;
+	}
+	
+	50%{
+		background: #389CA6;
+	}
+	
+	100%{
+		background: #3c8dbc;
+	}
+}
+/**2020年11/10  新添样式*/
+.pimsc-form{
+	padding:10px;
+}
+.pimsc-form .layui-form-item{
+	margin:10px;
+}
+.pimsc-padding{
+	padding:10px;
+}
+.pimsc-btn{
+	display: inline-block;
+	height: 35px;
+	line-height: 35px;
+	padding: 0 15px;
+	background-color: #009688;
+	color: #fff;
+	white-space: nowrap;
+	text-align: center;
+	font-size: 14px;
+	border: none;
+	border-radius: 5px;
+	cursor: pointer;
+}
+
+.bg-red {
+	background-color: #e54d42;
+	color: #ffffff;
+}
+
+.bg-orange {
+	background-color: #f37b1d;
+	color: #ffffff;
+}
+
+.bg-yellow {
+	background-color: #fbbd08;
+	color: #333333;
+}
+
+.bg-olive {
+	background-color: #8dc63f;
+	color: #ffffff;
+}
+
+.bg-green {
+	background-color: #39b54a;
+	color: #ffffff;
+}
+
+.bg-cyan {
+	background-color: #1cbbb4;
+	color: #ffffff;
+}
+
+.bg-blue {
+	background-color: #0081ff;
+	color: #ffffff;
+}
+
+.bg-grey {
+	background-color: #8799a3;
+	color: #ffffff;
+}
+
+.bg-gray {
+	background-color: #f0f0f0;
+	color: #333333;
+}
+
+.bg-black {
+	background-color: #333333;
+	color: #ffffff;
+}
+
+.bg-white {
+	background-color: #ffffff;
+	color: #666666;
+}
+
+.bg-shadeTop {
+	background-image: linear-gradient(rgba(0, 0, 0, 1), rgba(0, 0, 0, 0.01));
+	color: #ffffff;
+}
+
+.bg-shadeBottom {
+	background-image: linear-gradient(rgba(0, 0, 0, 0.01), rgba(0, 0, 0, 1));
+	color: #ffffff;
+}
+
+.bg-red.light {
+	color: #e54d42;
+	background-color: #fadbd9;
+}
+
+.bg-orange.light {
+	color: #f37b1d;
+	background-color: #fde6d2;
+}
+
+.bg-yellow.light {
+	color: #fbbd08;
+	background-color: #fef2ced2;
+}
+
+.bg-olive.light {
+	color: #8dc63f;
+	background-color: #e8f4d9;
+}
+
+.bg-green.light {
+	color: #39b54a;
+	background-color: #d7f0dbff;
+}
+
+.bg-cyan.light {
+	color: #1cbbb4;
+	background-color: #d2f1f0;
+}
+
+.bg-blue.light {
+	color: #0081ff;
+	background-color: #cce6ff;
+}
+
+.bg-purple.light {
+	color: #6739b6;
+	background-color: #e1d7f0;
+}
+
+.bg-mauve.light {
+	color: #9c26b0;
+	background-color: #ebd4ef;
+}
+
+.bg-pink.light {
+	color: #e03997;
+	background-color: #f9d7ea;
+}
+
+.bg-brown.light {
+	color: #a5673f;
+	background-color: #ede1d9;
+}
+
+.bg-grey.light {
+	color: #8799a3;
+	background-color: #e7ebed;
+}
+
+.bg-gradual-red {
+	background-image: linear-gradient(45deg, #f43f3b, #ec008c);
+	color: #ffffff;
+}
+
+.bg-gradual-orange {
+	background-image: linear-gradient(45deg, #ff9700, #ed1c24);
+	color: #ffffff;
+}
+
+.bg-gradual-green {
+	background-image: linear-gradient(45deg, #39b54a, #8dc63f);
+	color: #ffffff;
+}
+
+.bg-gradual-purple {
+	background-image: linear-gradient(45deg, #9000ff, #5e00ff);
+	color: #ffffff;
+}
+
+.bg-gradual-pink {
+	background-image: linear-gradient(45deg, #ec008c, #6739b6);
+	color: #ffffff;
+}
+
+.bg-gradual-blue {
+	background-image: linear-gradient(45deg, #0081ff, #1cbbb4);
+	color: #ffffff;
+}
+
+.layui-table-view .layui-table[lay-size="sm"] .layui-table-cell {
+    height: 24px;
+    line-height: 20px;
+}
+
+.layui-table-click .btn{
+	border:1px solid #f9f9f9;
+}
+
+.layui-disabled, .layui-disabled:hover {
+    color: #4E4E4E !important;
+    cursor: not-allowed !important;
+}

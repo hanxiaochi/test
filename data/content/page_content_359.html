@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>材料管理</title>
+<style>
+#myTab li a {
+	padding: 5px 30px;
+}
+</style>
+</head>
+<body>
+	<div id="workingPositionDiv"></div>
+	<!-- 引入工作位置 -->
+	<div class="box">
+			<table  id="secMaterialTable" lay-filter="secMaterialTable" class="table table-striped table-bordered">
+			</table>
+	</div>
+	<script type="text/html" id="toolbarDemo">
+ 		 <div class="layui-btn-container">
+ 		  	 <button class="btn btn-primary btn-sm" lay-event="addMaterialBtn">添加材料清单</button>
+ 			<button  class="btn btn-danger btn-sm" style="display:none;" id="refreshSecMateria" lay-event="refreshSecMateria">刷新</button>
+  		</div>
+	</script>
+	<script type="text/javascript">
+	layui.use(['table','util'], function(){
+		var pageNum = 1;
+		 var table = layui.table;
+		 var headCols=[
+			 [
+			  {"field":"","align":"center","title":"材料编号","templet":function(d){
+					return d.materialModel.materialNo;
+			  }},
+			  {"field":"","align":"center","title":"材料名称","templet":function(d){
+					return d.materialModel.materialName;
+			  }},
+			  {"field":"materialModel.specType","align":"center","title":"规格型号","templet":function(d){
+					return d.materialModel.specType;
+			  }},
+			  {"field":"materialModel.measureUnit","align":"center","title":"单位","templet":function(d){
+					return d.materialModel.measureUnit;
+			  }},
+			  {"field":"unitPrice","align":"center","title":"单价"},
+			  {"field":"sendersRange","align":"center","title":"补差范围"},
+			  {"title":"操作","align":"center","templet":function(d){
+					var btns = '<div class="btn-group"><button type="button" lay-event="edit" class="btn btn-primary btn-xs">编辑</button>';
+					btns += '<button type="button"  lay-event="remove" class="btn btn-danger btn-xs">删除</button></div>';
+					return btns;
+			  }},
+			 ]
+		 ]
+		table.render({
+		  elem: '#secMaterialTable'
+		  ,url:"secMateria/find_sec_materia_list"
+		  ,size: 'sm'
+		  ,cols: headCols
+		  ,toolbar:'#toolbarDemo'
+		  ,defaultToolbar:[]
+		  //,height: 'full-165'
+		  ,even:true
+		  ,page:{
+			  curr: 1,
+			  limit:10
+		  }
+		  ,limits: [10,20,30]
+		  ,cellMinWidth: 80
+		  ,height:'full-160'
+		  ,done : function(res, curr, count) {
+			  pageNum = curr;
+				layer.closeAll('loading');
+		  }
+		});
+		 
+		table.on('row(secMaterialTable)', function(obj){ 
+			 obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+		})
+		table.on('toolbar(secMaterialTable)', function(obj){
+			$.ajax({
+				url : "main_controller/mainReturnSectionFlag",
+				data : "",
+				success : function(result) {
+					if (result.code == 1) {
+						 switch(obj.event){
+						 case 'addMaterialBtn':
+								$.ajax({
+									url : "secMateria/sec_materia_add_page",
+									data : {pageNum: pageNum},
+									dataType : "html",
+									success : function(result) {
+										$(".lay-zw-content-page").empty();// 清空内容
+										$(".lay-zw-content-page").html(result);
+									}
+								});
+						 break;
+						 case 'refreshSecMateria':
+							 table.reload('secMaterialTable');
+						 break;
+					 }
+					}else{
+						Ewin.msg({type : "danger",content : result.msg})
+					}
+				}
+			})
+
+		});
+		 
+		table.on('tool(secMaterialTable)', function(obj){
+			secMaterialClick[obj.event](obj.data.secMaterialId);
+		});
+		 
+		var secMaterialClick = {
+				edit : function(secMaterialId) {
+					$.ajax({
+						url : "secMateria/sec_materia_add_page",
+						data : {
+							secMaterialId: secMaterialId,
+							pageNum: pageNum
+						},
+						dataType : "html",
+						success : function(result) {
+							$(".lay-zw-content-page").empty();// 清空内容
+							$(".lay-zw-content-page").html(result);
+						}
+					});
+				},
+				remove : function(secMaterialId) {
+					
+					Ewin.confirm({message : "确认要删除吗？"}).on(function(e) {
+						if (e) {
+							$.ajax({
+								url : "secMateria/del_sec_materia",
+								data : {
+									secMaterialId:secMaterialId
+								},
+								dataType : "json",
+								success : function(result) {
+									if(result.code==1){
+										Ewin.msg({type : "success",content : "已删除"})
+									}
+									else{
+										Ewin.msg({type : "danger",content : "删除失败"})
+									}
+									$("#refreshSecMateria").click();
+									
+								}
+							});
+						}
+					})
+				},
+			}
+	})
+	
+	
+	
+	
+	
+	</script>
+</body>
+</html>
