@@ -6940,6 +6940,7 @@ function jlPaymentExportRows(req) {
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
+  const supportReport = engine.jlPaymentSupportReport({ periodId, sectionId });
   const rows = [];
   const push = (table, row) => rows.push({
     periodId: certificate.periodId,
@@ -6959,6 +6960,28 @@ function jlPaymentExportRows(req) {
     progressPct: jl101Report.cumulativePaymentRate,
     formula: jl101Report.formula
   });
+  supportReport.jl102Rows.forEach((row) => push("JL102计量支付报表传递单", {
+    code: row.formCode,
+    name: row.formName,
+    source: row.businessNo,
+    sectionName: row.sectionName,
+    item: row.currentStep,
+    amount: row.amount,
+    status: row.state,
+    result: row.result,
+    approver: row.approver,
+    approveTime: row.approveTime
+  }));
+  supportReport.jl103Rows.forEach((row) => push("JL103施工进度表", {
+    code: row.chapter,
+    name: row.chapterName,
+    contractAmount: row.contractAmount,
+    currentAmount: row.currentAmount,
+    cumulativeAmount: row.cumulativeAmount,
+    progressPct: row.progressPct,
+    status: row.status,
+    formula: row.formula
+  }));
   [
     ["本期实际支付", certificate.finalPayment, "JL104"],
     ["小计", certificate.subtotal, "JL104"],
@@ -7039,6 +7062,19 @@ function jlPaymentExportRows(req) {
     priceDiff: row.priceDiff,
     formula: row.formula
   }));
+  if (!supportReport.jl108RawMaterialRows.length) push("JL108-1原材料明细表", { name: "本期无原材料调差消耗明细", amount: 0, source: "JL108-1" });
+  supportReport.jl108RawMaterialRows.forEach((row) => push("JL108-1原材料明细表", {
+    code: row.measureNo,
+    name: row.materialName,
+    unit: row.unit,
+    quantity: row.consumeQuantity,
+    conversionFactor: row.conversionFactor,
+    convertedQuantity: row.convertedQuantity,
+    basePrice: row.basePrice,
+    currentPrice: row.currentPrice,
+    amount: row.adjustMoney,
+    formula: row.formula
+  }));
   push("JL116合同价格调表", {
     item: "合同价格调整公式",
     amount: priceAdjustmentReport.formula.certificatePriceAdjustment,
@@ -7060,6 +7096,27 @@ function jlPaymentExportRows(req) {
     amount: row.money,
     advanceAmount: row.advanceMoney
   }));
+  supportReport.jl112Rows.forEach((row) => push("JL112工程量表汇编", {
+    code: row.measureNo,
+    name: row.position,
+    sectionName: row.sectionName,
+    quantity: row.detailCount,
+    amount: row.amount,
+    status: row.state,
+    source: row.source,
+    formula: row.formula
+  }));
+  push("JL115开工动员预付款支付证书", {
+    code: supportReport.jl115Certificate.formCode,
+    name: supportReport.jl115Certificate.formName,
+    amount: supportReport.jl115Certificate.periodAdvance,
+    contractTotal: supportReport.jl115Certificate.contractTotal,
+    advanceRate: supportReport.jl115Certificate.advanceRate,
+    cumulativeAmount: supportReport.jl115Certificate.cumulativeAdvance,
+    remainingAdvance: supportReport.jl115Certificate.remainingAdvance,
+    status: supportReport.jl115Certificate.expected ? "应出现" : "本期可不出现",
+    formula: supportReport.jl115Certificate.formula
+  });
   engine.materialDeductionLedgerRows({ periodId, sectionId }).forEach((row) => push("JL110材料扣回台账", {
     period: row.periodDesc,
     periodAdvance: row.periodAdvance,
@@ -7112,6 +7169,7 @@ function jlPaymentPrintableHtml(req) {
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
+  const supportReport = engine.jlPaymentSupportReport({ periodId, sectionId });
   const jl106Rows = engine.jl106VariationQuantityRows({ periodId, sectionId });
   const jl107Rows = engine.jl107UnitPriceVariationRows({ periodId, sectionId });
   const materialDeductionLedger = engine.materialDeductionLedgerRows({ periodId, sectionId });
@@ -7152,6 +7210,15 @@ function jlPaymentPrintableHtml(req) {
         </tbody></table>
       </div>
       <div class="jl-print-section">
+        <h2>JL102/JL103 流转与施工进度</h2>
+        <table><thead><tr><th>表号</th><th>单据编号</th><th>合同段/章节</th><th>状态/进度</th><th>金额</th><th>处理人</th><th>时间</th></tr></thead><tbody>
+          ${rows(supportReport.jl102Rows.slice(0, 30), (row) => [row.formCode, row.businessNo, row.sectionName, row.result || row.state, moneyText(row.amount), row.approver, row.approveTime]) ||
+            `<tr><td colspan="7">本期暂无流转记录</td></tr>`}
+          ${rows(supportReport.jl103Rows, (row) => ["JL103", row.chapter, row.chapterName, `${percentText(row.progressPct)} ${row.status}`, moneyText(row.cumulativeAmount), "", ""]) ||
+            `<tr><td colspan="7">本期暂无施工进度</td></tr>`}
+        </tbody></table>
+      </div>
+      <div class="jl-print-section">
         <h2>JL104 中期财务支付证书</h2>
         <table><thead><tr><th>项目</th><th>金额</th><th>来源</th></tr></thead><tbody>
           ${rows([
@@ -7163,6 +7230,12 @@ function jlPaymentPrintableHtml(req) {
             ["保留金", certificate.retentionMoney, "JL104"],
             ["扣回动员预付款", certificate.mobilizationDeductionMoney, "JL111"]
           ], (row) => [row[0], moneyText(row[1]), row[2]])}
+        </tbody></table>
+      </div>
+      <div class="jl-print-section">
+        <h2>JL115 开工动员预付款支付证书</h2>
+        <table><thead><tr><th>合同价</th><th>预付款率</th><th>预付款总额</th><th>本期支付</th><th>累计支付</th><th>剩余</th><th>出现状态</th></tr></thead><tbody>
+          ${rows([supportReport.jl115Certificate], (row) => [moneyText(row.contractTotal), `${row.advanceRate}%`, moneyText(row.totalAdvance), moneyText(row.periodAdvance), moneyText(row.cumulativeAdvance), moneyText(row.remainingAdvance), row.expected ? "应出现" : "本期可不出现"])}
         </tbody></table>
       </div>
       <div class="jl-print-section">
@@ -7185,6 +7258,13 @@ function jlPaymentPrintableHtml(req) {
         </tbody></table>
       </div>
       <div class="jl-print-section">
+        <h2>JL108-1 原材料明细表</h2>
+        <table><thead><tr><th>材料</th><th>单位</th><th>消耗量</th><th>折算系数</th><th>折算数量</th><th>基价</th><th>现行价</th><th>调差金额</th></tr></thead><tbody>
+          ${rows(supportReport.jl108RawMaterialRows, (row) => [row.materialName, row.unit, row.consumeQuantity, row.conversionFactor, row.convertedQuantity, moneyText(row.basePrice), moneyText(row.currentPrice), moneyText(row.adjustMoney)]) ||
+            `<tr><td colspan="8">本期无原材料调差消耗明细</td></tr>`}
+        </tbody></table>
+      </div>
+      <div class="jl-print-section">
         <h2>JL104 章级汇总</h2>
         <table><thead><tr><th>章号</th><th>项目内容</th><th>合同金额</th><th>本期完成</th><th>累计完成</th></tr></thead><tbody>
           ${rows(certificate.chapters, (row) => [row.chapter, row.chapterName, moneyText(row.contractAmount), moneyText(row.currentAmount), moneyText(row.cumulativeAmount)])}
@@ -7194,6 +7274,13 @@ function jlPaymentPrintableHtml(req) {
         <h2>JL113 计量支付数量汇总表</h2>
         <table><thead><tr><th>细目编号</th><th>细目名称</th><th>计量表编号</th><th>单位</th><th>单价</th><th>数量</th><th>金额</th></tr></thead><tbody>
           ${rows(certificate.jl113Rows, (row) => [row.itemCode || row.billNo || "", row.itemName || row.billName || "", row.measureRefs || "", row.unit || row.measureUnit || "", moneyText(row.price), row.quantity, moneyText(row.amount)])}
+        </tbody></table>
+      </div>
+      <div class="jl-print-section">
+        <h2>JL112 工程量表汇编</h2>
+        <table><thead><tr><th>序号</th><th>计量表编号</th><th>合同段</th><th>部位</th><th>明细数</th><th>金额</th><th>状态</th></tr></thead><tbody>
+          ${rows(supportReport.jl112Rows, (row) => [row.orderNo, row.measureNo, row.sectionName, row.position, row.detailCount, moneyText(row.amount), row.state]) ||
+            `<tr><td colspan="7">本期暂无工程量表汇编</td></tr>`}
         </tbody></table>
       </div>
       <div class="jl-print-section">
@@ -7229,6 +7316,7 @@ function jlPaymentReportPageHtml(req) {
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
+  const supportReport = engine.jlPaymentSupportReport({ periodId, sectionId });
   const jl106Rows = engine.jl106VariationQuantityRows({ periodId, sectionId });
   const jl107Rows = engine.jl107UnitPriceVariationRows({ periodId, sectionId });
   const materialDeductionLedger = engine.materialDeductionLedgerRows({ periodId, sectionId });
@@ -7306,6 +7394,59 @@ function jlPaymentReportPageHtml(req) {
       <td>${htmlEscape(row.afterQuantity)}</td>
       <td>${moneyText(row.priceChangeMoney)}</td>
       <td class="left">${htmlEscape(row.reason || "")}</td>
+    </tr>`).join("");
+  const jl102Rows = supportReport.jl102Rows.slice(0, 80).map((row) => `
+    <tr>
+      <td>${htmlEscape(row.formCode)}</td>
+      <td>${htmlEscape(row.businessNo)}</td>
+      <td class="left">${htmlEscape(row.sectionName || "")}</td>
+      <td>${moneyText(row.amount)}</td>
+      <td>${htmlEscape(row.state || "")}</td>
+      <td>${htmlEscape(row.currentStep || "")}</td>
+      <td>${htmlEscape(row.approver || "")}</td>
+      <td>${htmlEscape(row.approveTime || "")}</td>
+    </tr>`).join("");
+  const jl103Rows = supportReport.jl103Rows.map((row) => `
+    <tr>
+      <td>${htmlEscape(row.chapter)}</td>
+      <td class="left">${htmlEscape(row.chapterName)}</td>
+      <td>${moneyText(row.contractAmount)}</td>
+      <td>${moneyText(row.currentAmount)}</td>
+      <td>${moneyText(row.cumulativeAmount)}</td>
+      <td>${percentText(row.progressPct)}</td>
+      <td>${htmlEscape(row.status || "")}</td>
+    </tr>`).join("");
+  const jl108RawRows = supportReport.jl108RawMaterialRows.map((row) => `
+    <tr>
+      <td>${htmlEscape(row.materialName || "")}</td>
+      <td>${htmlEscape(row.unit || "")}</td>
+      <td>${htmlEscape(row.consumeQuantity)}</td>
+      <td>${htmlEscape(row.conversionFactor)}</td>
+      <td>${htmlEscape(row.convertedQuantity)}</td>
+      <td>${moneyText(row.basePrice)}</td>
+      <td>${moneyText(row.currentPrice)}</td>
+      <td>${moneyText(row.adjustMoney)}</td>
+    </tr>`).join("");
+  const jl112Rows = supportReport.jl112Rows.map((row) => `
+    <tr>
+      <td>${htmlEscape(row.orderNo)}</td>
+      <td>${htmlEscape(row.measureNo || "")}</td>
+      <td class="left">${htmlEscape(row.sectionName || "")}</td>
+      <td class="left">${htmlEscape(row.position || "")}</td>
+      <td>${htmlEscape(row.detailCount)}</td>
+      <td>${moneyText(row.amount)}</td>
+      <td>${htmlEscape(row.state || "")}</td>
+    </tr>`).join("");
+  const jl115Rows = [supportReport.jl115Certificate].map((row) => `
+    <tr>
+      <td>${moneyText(row.contractTotal)}</td>
+      <td>${htmlEscape(row.advanceRate)}%</td>
+      <td>${moneyText(row.totalAdvance)}</td>
+      <td>${moneyText(row.periodAdvance)}</td>
+      <td>${moneyText(row.cumulativeAdvance)}</td>
+      <td>${moneyText(row.remainingAdvance)}</td>
+      <td>${htmlEscape(row.expected ? "应出现" : "本期可不出现")}</td>
+      <td class="left">${htmlEscape(row.formula || "")}</td>
     </tr>`).join("");
   const materialRows = engine.materialArrivalRows()
     .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId)
@@ -7455,8 +7596,13 @@ function jlPaymentReportPageHtml(req) {
             <a class="layui-btn layui-btn-sm" href="/payment/jl_print_page?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">打印预览</a>
             <a class="layui-btn layui-btn-sm" href="/payment/export_jl_report?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">导出CSV</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl101?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL101 JSON</a>
+            <a class="layui-btn layui-btn-sm" href="/api/payment/jl102?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL102 JSON</a>
+            <a class="layui-btn layui-btn-sm" href="/api/payment/jl103?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL103 JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl106?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL106 JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl107?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL107 JSON</a>
+            <a class="layui-btn layui-btn-sm" href="/api/payment/jl108_raw_material?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL108-1 JSON</a>
+            <a class="layui-btn layui-btn-sm" href="/api/payment/jl112?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL112 JSON</a>
+            <a class="layui-btn layui-btn-sm" href="/api/payment/jl115?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL115 JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_lifecycle?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">生命周期JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_price_adjustment?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">调差JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_deductions?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">扣款台账JSON</a>
@@ -7480,6 +7626,29 @@ function jlPaymentReportPageHtml(req) {
               <td>${htmlEscape(jl101Report.source)}</td>
             </tr></tbody>
           </table>
+        </div>
+        <div class="core-grid">
+          <div class="core-panel">
+            <h3>JL102 计量支付报表传递单 <span class="subtle">审批流转记录</span></h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>表号</th><th>单据编号</th><th>合同段</th><th>金额</th><th>状态</th><th>当前环节</th><th>处理人</th><th>处理时间</th></tr></thead>
+              <tbody>${jl102Rows || `<tr><td colspan="8" class="core-empty">本期暂无流转记录</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>JL103 施工进度表 <span class="subtle">按章节展示累计进度</span></h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>章号</th><th>项目内容</th><th>变更后金额</th><th>本期完成</th><th>累计完成</th><th>进度</th><th>状态</th></tr></thead>
+              <tbody>${jl103Rows || `<tr><td colspan="7" class="core-empty">本期暂无施工进度</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>JL115 开工动员预付款支付证书 <span class="subtle">合同价 × 动员预付款率</span></h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>合同价</th><th>预付款率</th><th>预付款总额</th><th>本期支付</th><th>累计支付</th><th>剩余</th><th>状态</th><th>公式</th></tr></thead>
+              <tbody>${jl115Rows}</tbody>
+            </table>
+          </div>
         </div>
         <div class="core-grid">
           <div class="core-panel">
@@ -7537,6 +7706,13 @@ function jlPaymentReportPageHtml(req) {
             </table>
           </div>
           <div class="core-panel">
+            <h3>JL112 工程量表汇编 <span class="subtle">本期JL114计量单汇编封面</span></h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>序号</th><th>计量表编号</th><th>合同段</th><th>部位</th><th>明细数</th><th>金额</th><th>状态</th></tr></thead>
+              <tbody>${jl112Rows || `<tr><td colspan="7" class="core-empty">本期暂无工程量表汇编</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
             <h3>JL113 计量支付数量汇总表 <span class="subtle">按细目编号汇总本期JL114</span></h3>
             <table class="layui-table" lay-size="sm">
               <thead><tr><th>细目编号</th><th>细目名称</th><th>计量表编号</th><th>单位</th><th>单价</th><th>数量</th><th>金额</th></tr></thead>
@@ -7562,6 +7738,13 @@ function jlPaymentReportPageHtml(req) {
             <table class="layui-table" lay-size="sm">
               <thead><tr><th>公式</th><th>F累计基数</th><th>X非调因子</th><th>可调因子</th><th>综合指数</th><th>JL108汇总</th><th>JL104价格调整</th><th>差额</th></tr></thead>
               <tbody>${jl116Rows}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>JL108-1 原材料明细表 <span class="subtle">消耗量 × 折算系数后进入JL108调差</span></h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>材料</th><th>单位</th><th>消耗量</th><th>折算系数</th><th>折算数量</th><th>基价</th><th>现行价</th><th>调差金额</th></tr></thead>
+              <tbody>${jl108RawRows || `<tr><td colspan="8" class="core-empty">本期无原材料调差消耗明细</td></tr>`}</tbody>
             </table>
           </div>
           <div class="core-panel">
@@ -11992,9 +12175,15 @@ app.get("/api/cost/ledger", (req, res) => table(res, req, engine.billLedgerRows(
 app.get("/api/payment/jl113", (req, res) => table(res, req, engine.jl113Rows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl105", (req, res) => table(res, req, engine.jl105LedgerRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl104_chapters", (req, res) => table(res, req, engine.jl104ChapterRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl102", (req, res) => table(res, req, engine.jl102TransferRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl103", (req, res) => table(res, req, engine.jl103ProgressRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl106", (req, res) => table(res, req, engine.jl106VariationQuantityRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl107", (req, res) => table(res, req, engine.jl107UnitPriceVariationRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl108_raw_material", (req, res) => table(res, req, engine.jl108RawMaterialDetailRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl112", (req, res) => table(res, req, engine.jl112QuantityCompilationRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl101", (req, res) => operationOk(res, engine.jl101MonthlyReport({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl115", (req, res) => operationOk(res, engine.jl115MobilizationAdvanceCertificate({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl_support", (req, res) => operationOk(res, engine.jlPaymentSupportReport({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/certificate", (req, res) => operationOk(res, engine.paymentCertificateForPeriod(queryNumber(req, "periodId") || queryNumber(req, "gatherId"), { sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_validation", (req, res) => operationOk(res, engine.jlPaymentValidation({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_lifecycle", (req, res) => operationOk(res, engine.jlFormLifecycle({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));

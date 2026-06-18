@@ -824,6 +824,253 @@ function jl101MonthlyReport(options = {}) {
   };
 }
 
+function selectedSections(sectionId = 0) {
+  const id = Number(sectionId || 0);
+  const rows = (db.sections || []).filter((item) => !id || Number(item.sectionId || item.id || 0) === id);
+  return rows.length ? rows : (db.sections || []);
+}
+
+function workflowLogsForRecord(moduleName, id, processInstanceId = "") {
+  const moduleText = String(moduleName || "").toLowerCase();
+  const processText = String(processInstanceId || "").toLowerCase();
+  const businessId = Number(id || 0);
+  return (db.workflowLogs || [])
+    .filter((log) => {
+      const logModule = String(log.module || "").toLowerCase();
+      const logBusinessId = Number(log.businessId || 0);
+      const logBusinessNo = String(log.businessNo || "").toLowerCase();
+      if (processText && logBusinessNo && logBusinessNo === processText) return true;
+      return moduleText && logModule === moduleText && businessId && logBusinessId === businessId;
+    })
+    .sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+}
+
+function workflowSummaryForRecord(moduleName, id, processInstanceId, fallbackState) {
+  const logs = workflowLogsForRecord(moduleName, id, processInstanceId);
+  const latest = logs[logs.length - 1] || {};
+  return {
+    logCount: logs.length,
+    currentStep: latest.step || fallbackState || "",
+    approver: latest.userName || "",
+    approveTime: latest.time || "",
+    result: latest.result || fallbackState || "",
+    remark: latest.remark || ""
+  };
+}
+
+function jl102TransferRows(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const period = findPeriod(opts.periodId) || periodRows()[periodRows().length - 1] || null;
+  const periodId = period ? Number(period.periodId || period.gatherId || period.id || 0) : Number(opts.periodId || 0);
+  const sectionId = Number(opts.sectionId || 0);
+  const rows = [];
+  const push = (source) => {
+    const workflow = workflowSummaryForRecord(source.module, source.businessId, source.processInstanceId, source.state);
+    rows.push({
+      orderNo: rows.length + 1,
+      periodId,
+      periodDesc: period ? (period.periodDesc || period.gatherNo || "") : "",
+      formCode: source.formCode,
+      formName: source.formName,
+      businessNo: source.businessNo || "",
+      sectionId: Number(source.sectionId || 0),
+      sectionName: source.sectionName || (source.sectionId ? section(source.sectionId).sectionName : ""),
+      submitDate: source.submitDate || "",
+      amount: round(Number(source.amount || 0)),
+      state: source.state || workflow.result || "",
+      currentStep: workflow.currentStep,
+      approver: workflow.approver,
+      approveTime: workflow.approveTime,
+      result: workflow.result,
+      remark: workflow.remark,
+      logCount: workflow.logCount,
+      sourceModule: source.module || ""
+    });
+  };
+  measureRows()
+    .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId)
+    .filter((row) => !period || rowBelongsToPeriod(row, period))
+    .forEach((row) => push({
+      formCode: "JL114",
+      formName: "工程计量表",
+      businessNo: row.measureNo,
+      sectionId: row.sectionId,
+      sectionName: row.sectionName,
+      submitDate: row.measureDate || row.updateDate || "",
+      amount: row.measureMoney,
+      state: row.states,
+      module: "billmeasure",
+      businessId: row.measureId || row.billMeasureId || row.id,
+      processInstanceId: row.processInstanceId
+    }));
+  materialArrivalRows()
+    .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId)
+    .filter((row) => !period || rowBelongsToPeriod(row, period))
+    .forEach((row) => push({
+      formCode: "JL109",
+      formName: "工程材料到达现场计量表",
+      businessNo: row.measureNo || row.certifyNo,
+      sectionId: row.sectionId,
+      sectionName: row.sectionName,
+      submitDate: row.measureDate || row.updateDate || "",
+      amount: row.advanceMoney,
+      state: row.states,
+      module: "meterialinmeasure",
+      businessId: row.arrivalId || row.meterialInMeasureId || row.id,
+      processInstanceId: row.processInstanceId
+    }));
+  materialDiasRows()
+    .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId)
+    .filter((row) => !period || rowBelongsToPeriod(row, period))
+    .forEach((row) => push({
+      formCode: "JL108",
+      formName: "永久性工程材料差价金额一览表",
+      businessNo: row.measureNo || row.approveNo,
+      sectionId: row.sectionId,
+      sectionName: row.sectionName,
+      submitDate: row.measureDate || row.updateDate || "",
+      amount: row.adjustMoney,
+      state: row.states,
+      module: "meterialdiasmeasure",
+      businessId: row.diasId || row.meterialDiasMeasureId || row.id,
+      processInstanceId: row.processInstanceId
+    }));
+  variationRowsForPeriod({ periodId, sectionId }).forEach((row) => push({
+    formCode: "JL106/JL107",
+    formName: "清单变更表",
+    businessNo: row.varyNo || row.meetingNo,
+    sectionId: row.sectionId,
+    sectionName: row.sectionName,
+    submitDate: row.updateDate || row.meetingDate || "",
+    amount: row.varyMoney,
+    state: row.states,
+    module: "varyapplication",
+    businessId: row.varyId || row.id,
+    processInstanceId: row.processInstanceId
+  }));
+  const certificate = paymentCertificateForPeriod(periodId, { sectionId });
+  push({
+    formCode: "JL104",
+    formName: "中期财务支付证书",
+    businessNo: certificate.periodDesc || `JL104-${periodId}`,
+    sectionId,
+    sectionName: sectionId ? section(sectionId).sectionName : "全部合同段",
+    submitDate: period ? (period.collectTime || period.endDate || "") : "",
+    amount: certificate.finalPayment,
+    state: period ? (period.gatherState || period.states || "") : "",
+    module: "payment",
+    businessId: periodId,
+    processInstanceId: `payment-${periodId}`
+  });
+  return rows;
+}
+
+function jl103ProgressRows(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const period = findPeriod(opts.periodId) || periodRows()[periodRows().length - 1] || null;
+  const periodId = period ? Number(period.periodId || period.gatherId || period.id || 0) : Number(opts.periodId || 0);
+  const sectionId = Number(opts.sectionId || 0);
+  const plans = planRows().filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId);
+  const planAmount = round(plans.reduce((sum, row) => sum + Number(row.finishMoney || row.amount || 0), 0));
+  return paymentCertificateForPeriod(periodId, { sectionId }).chapters.map((row) => ({
+    periodId,
+    periodDesc: period ? (period.periodDesc || period.gatherNo || "") : "",
+    chapter: row.chapter,
+    chapterName: row.chapterName,
+    contractAmount: row.adjustedAmount || row.contractAmount,
+    currentAmount: row.currentAmount,
+    cumulativeAmount: row.cumulativeAmount,
+    progressPct: row.adjustedAmount ? round((Number(row.cumulativeAmount || 0) / Number(row.adjustedAmount || 0)) * 100, 2) : 0,
+    periodPlanAmount: planAmount,
+    planCount: plans.length,
+    status: Number(row.currentAmount || 0) > 0 ? "本期有完成量" : "本期无新增完成量",
+    formula: "progressPct = cumulativeAmount / adjustedAmount * 100%"
+  }));
+}
+
+function jl108RawMaterialDetailRows(options = {}) {
+  return priceAdjustmentLedgerRows(options).map((row) => ({
+    ...row,
+    formCode: "JL108-1",
+    consumeQuantity: row.quantity,
+    conversionFactor: 1,
+    convertedQuantity: row.quantity,
+    consumeMoney: round(Number(row.quantity || 0) * Number(row.currentPrice || 0)),
+    formula: "adjustMoney = convertedQuantity * (currentPrice - basePrice); convertedQuantity = consumeQuantity * conversionFactor"
+  }));
+}
+
+function jl112QuantityCompilationRows(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const period = findPeriod(opts.periodId) || periodRows()[periodRows().length - 1] || null;
+  const periodId = period ? Number(period.periodId || period.gatherId || period.id || 0) : Number(opts.periodId || 0);
+  const sectionId = Number(opts.sectionId || 0);
+  return measureRows()
+    .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId)
+    .filter((row) => !period || rowBelongsToPeriod(row, period))
+    .map((row, index) => ({
+      orderNo: index + 1,
+      periodId,
+      periodDesc: period ? (period.periodDesc || period.gatherNo || "") : "",
+      measureNo: row.measureNo,
+      sectionId: row.sectionId,
+      sectionName: row.sectionName,
+      measureDate: row.measureDate,
+      position: row.position || row.pegNo || "",
+      detailCount: Array.isArray(row.details) ? row.details.length : 0,
+      amount: row.measureMoney,
+      state: row.states || "",
+      source: "JL114",
+      formula: "JL112.amount = ΣJL114明细数量 * 清单单价"
+    }));
+}
+
+function jl115MobilizationAdvanceCertificate(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const period = findPeriod(opts.periodId) || periodRows()[periodRows().length - 1] || null;
+  const periodId = period ? Number(period.periodId || period.gatherId || period.id || 0) : Number(opts.periodId || 0);
+  const sectionId = Number(opts.sectionId || 0);
+  const rules = calculationRules();
+  const contractTotal = sectionId
+    ? round(billRows().filter((row) => Number(row.sectionId || 0) === sectionId).reduce((sum, row) => sum + Number(row.finalMoney || 0), 0))
+    : contractSummary().finalMoney;
+  const totalAdvance = mobilizationAdvanceAmount(contractTotal, rules);
+  const periodOrder = Number(period?.orderNo || period?.periodId || periodId || 0);
+  const issueEndPeriod = Number(rules.jl115EndPeriod || 0);
+  const expected = periodOrder > 0 && issueEndPeriod > 0 && periodOrder <= issueEndPeriod;
+  const periodAdvance = expected ? round(totalAdvance / issueEndPeriod) : 0;
+  const cumulativeAdvance = round(Math.min(totalAdvance, Math.max(0, Math.min(periodOrder, issueEndPeriod)) * (issueEndPeriod ? totalAdvance / issueEndPeriod : 0)));
+  return {
+    formCode: "JL115",
+    formName: "开工动员预付款支付证书",
+    periodId,
+    periodDesc: period ? (period.periodDesc || period.gatherNo || "") : "",
+    sectionId,
+    sectionName: sectionId ? section(sectionId).sectionName : selectedSections(sectionId).map((item) => item.sectionName).join(","),
+    contractTotal,
+    advanceRate: rules.mobilizationAdvanceRate,
+    totalAdvance,
+    issueEndPeriod,
+    periodOrder,
+    expected,
+    periodAdvance,
+    cumulativeAdvance,
+    remainingAdvance: round(Math.max(0, totalAdvance - cumulativeAdvance)),
+    formula: `mobilizationAdvance = contractTotal * ${rules.mobilizationAdvanceRate}%`
+  };
+}
+
+function jlPaymentSupportReport(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  return {
+    jl102Rows: jl102TransferRows(opts),
+    jl103Rows: jl103ProgressRows(opts),
+    jl108RawMaterialRows: jl108RawMaterialDetailRows(opts),
+    jl112Rows: jl112QuantityCompilationRows(opts),
+    jl115Certificate: jl115MobilizationAdvanceCertificate(opts)
+  };
+}
+
 function materialRows() {
   return db.materials.map((item) => ({
     ...item,
@@ -1225,6 +1472,12 @@ function jlPaymentValidation(options = {}) {
   });
   const priceAdjustment = jlPriceAdjustmentReport({ periodId, sectionId });
   addCheck("纵向校验", "JL108/JL116→JL104价格调整", priceAdjustment.totalAdjustment, certificate.priceAdjustment, "JL108调差=Σ(现行价-基价)*实际用量，JL116公式归档");
+  const rawMaterialAdjustment = round(jl108RawMaterialDetailRows({ periodId, sectionId }).reduce((sum, row) => sum + Number(row.adjustMoney || 0), 0));
+  addCheck("纵向校验", "JL108-1→JL108原材料调差", rawMaterialAdjustment, priceAdjustment.totalAdjustment, "JL108-1原材料明细折算后汇总=JL108调差金额");
+  const jl112Amount = round(jl112QuantityCompilationRows({ periodId, sectionId }).reduce((sum, row) => sum + Number(row.amount || 0), 0));
+  addCheck("纵向校验", "JL112→JL113工程量汇编金额", jl112Amount, certificate.billMeasureMoney, "JL112工程量表汇编金额=JL113本期数量汇总金额");
+  const jl115 = jl115MobilizationAdvanceCertificate({ periodId, sectionId });
+  addCheck("横向校验", "JL115动员预付款总额", jl115.contractTotal * (rules.mobilizationAdvanceRate / 100), jl115.totalAdvance, `动员预付款=合同总价*${rules.mobilizationAdvanceRate}%`);
   const jl101 = jl101MonthlyReport({ periodId, sectionId });
   addCheck("纵向校验", "JL104→JL101支付金额", certificate.finalPayment, jl101.currentPayment, "JL101月报支付金额=JL104实际支付");
 
@@ -1276,6 +1529,9 @@ function jlPaymentValidation(options = {}) {
       jl104Payment: "实际支付 = 小计 + 价格调整 + 材料设备垫付款 - 扣回材料设备垫付款 - 保留金 - 扣回动员预付款 ± 索赔/罚金/利息",
       jl106Jl107Variation: "JL104变更金额 = ΣJL106工程量变更金额 + ΣJL107单价变更金额",
       jl108PriceAdjustment: "JL108价格调整 = Σ[实际用量 * (现行价-基价)]；JL116: T=F*[(X+index)-1]",
+      jl108RawMaterial: "JL108-1折算数量 = 原材料消耗量 * 折算系数；调差金额 = 折算数量 * (现行价-基价)",
+      jl112Compilation: "JL112工程量表汇编金额 = ΣJL114工程计量表金额 = JL113本期汇总金额",
+      jl115MobilizationAdvance: `JL115动员预付款 = 合同总价 * ${rules.mobilizationAdvanceRate}%`,
       jl101Payment: "JL101月报支付金额 = JL104本期实际支付",
       materialAdvance: `JL109材料设备垫付款 = 到场金额 * ${rules.materialAdvanceRate}%`,
       mobilizationDeduction: "JL111累计应扣回 = (C-D)/A*2*B，30%后开始，80%时扣完"
@@ -1300,7 +1556,8 @@ function jlFormLifecycle(options = {}) {
   const sameSection = (row) => !sectionId || Number(row.sectionId || 0) === sectionId;
   const currentMaterialAdjustRows = filterByPeriod(materialDiasRows(), periodId).filter(sameSection);
   const currentMaterialArrivalRows = filterByPeriod(materialArrivalRows(), periodId).filter(sameSection);
-  const currentVariationRows = variationRows().filter((row) => sameSection(row) && (!period || rowBelongsToPeriod(row, period)));
+  const currentQuantityVariationRows = jl106VariationQuantityRows({ periodId, sectionId });
+  const currentPriceVariationRows = jl107UnitPriceVariationRows({ periodId, sectionId });
   const allArrivalRowsToDate = materialArrivalRows().filter((row) => sameSection(row) && (!period || rowBelongsToPeriod(row, period) || rowBeforePeriod(row, period)));
   const cumulativeMaterialAdvance = round(allArrivalRowsToDate.reduce((sum, row) => sum + Number(row.advanceMoney || 0), 0));
   const materialDeductionsToDate = materialDeductionRows().filter((row) => !periodId || Number(row.periodId || row.gatherId || 0) <= periodId);
@@ -1314,8 +1571,8 @@ function jlFormLifecycle(options = {}) {
   const currentMobilizationDeduction = cumulativeMobilizationDeduction(certificate.cumulativeSubtotal, certificate.contractTotal, rules);
   const previousMobilizationDeduction = cumulativeMobilizationDeduction(certificate.previousCumulativeSubtotal, certificate.contractTotal, rules);
   const requiresMobilizationDeduction = mobilizationAdvance > 0 && currentMobilizationDeduction > 0 && previousMobilizationDeduction < mobilizationAdvance;
-  const hasChapterChange = certificate.chapters.some((row) => Math.abs(Number(row.changeAmount || 0)) > 0);
-  const hasVariation = currentVariationRows.length > 0 || hasChapterChange;
+  const hasQuantityVariation = currentQuantityVariationRows.length > 0;
+  const hasPriceVariation = currentPriceVariationRows.length > 0;
   const requiresMaterialAdvance = currentMaterialArrivalRows.length > 0 || Number(certificate.materialAdvanceMoney || 0) > 0;
   const requiresMaterialDeduction = cumulativeMaterialAdvance > 0 && cumulativeMaterialDeduction < cumulativeMaterialAdvance || Number(certificate.materialDeductionMoney || 0) > 0;
   const forms = [
@@ -1324,8 +1581,8 @@ function jlFormLifecycle(options = {}) {
     ["JL103", "施工进度表", true, "每期形象进度辅助表"],
     ["JL104", "中期财务支付证书", true, "最终支付金额输出表"],
     ["JL105", "清单中期财务支付报表", true, "清单累计/本期完成台账"],
-    ["JL106", "清单工程量变更表", hasVariation, hasVariation ? "本期或累计存在变更金额" : "本期未检测到工程量变更"],
-    ["JL107", "清单单价变更一览表", hasVariation, hasVariation ? "本期或累计存在变更金额" : "本期未检测到单价变更"],
+    ["JL106", "清单工程量变更表", hasQuantityVariation, hasQuantityVariation ? "本期存在工程量增减变更" : "本期未检测到工程量变更"],
+    ["JL107", "清单单价变更一览表", hasPriceVariation, hasPriceVariation ? "本期存在清单单价变更" : "本期未检测到单价变更"],
     ["JL108", "永久性工程材料差价金额一览表", requiresPriceAdjustmentForms, hasPriceAdjustment ? "本期存在材料价格调差" : `季度调差月：${rules.jlPriceAdjustmentMonths.join(",")}`],
     ["JL108-1", "原材料明细表", requiresPriceAdjustmentForms, hasPriceAdjustment ? "随JL108提供原材料消耗明细" : `季度调差月：${rules.jlPriceAdjustmentMonths.join(",")}`],
     ["JL109", "工程材料到达现场计量表", requiresMaterialAdvance, requiresMaterialAdvance ? "本期存在材料到场或材料设备垫付款" : "本期无材料到场预付"],
@@ -1373,7 +1630,8 @@ function jlFormLifecycle(options = {}) {
         mobilizationAdvance,
         currentMobilizationDeduction,
         previousMobilizationDeduction,
-        variationCount: currentVariationRows.length
+        quantityVariationCount: currentQuantityVariationRows.length,
+        priceVariationCount: currentPriceVariationRows.length
       }
     },
     forms
@@ -1751,6 +2009,12 @@ module.exports = {
   jl116FormulaSummary,
   jlPriceAdjustmentReport,
   jl101MonthlyReport,
+  jl102TransferRows,
+  jl103ProgressRows,
+  jl108RawMaterialDetailRows,
+  jl112QuantityCompilationRows,
+  jl115MobilizationAdvanceCertificate,
+  jlPaymentSupportReport,
   materialArrivalRows,
   materialDeductionRows,
   materialDeductionLedgerRows,
