@@ -1496,6 +1496,16 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(page.text.includes("JL表单校验结果") && page.text.includes("当前期横向、纵向、期次和样表基准校验全部通过"), "JL payment report page should show validation results");
   assert.ok(page.text.includes("JL表单生命周期") && page.text.includes("JL115") && page.text.includes("JL116"), "JL payment report page should show lifecycle table");
   assert.ok(page.text.includes("/api/payment/certificate") && page.text.includes("/api/payment/jl_validation") && page.text.includes("/api/payment/jl_lifecycle"), "JL payment report page should link certificate, validation and lifecycle JSON");
+  assert.ok(page.text.includes("/payment/jl_print_page") && page.text.includes("/payment/export_jl_report"), "JL payment report page should link print preview and CSV export");
+
+  const printPage = await requestText("/payment/jl_print_page?periodId=2");
+  assert.strictEqual(printPage.response.status, 200, "JL payment print page should load");
+  assert.ok(printPage.text.includes("JL计量支付报表打印预览"), "JL payment print page should show dedicated title");
+  assert.ok(["JL104 中期财务支付证书", "JL113 计量支付数量汇总表", "JL105 清单中期财务支付报表", "JL表单校验与生命周期"].every((label) => printPage.text.includes(label)), "JL payment print page should include printable core sections");
+
+  const exportCsv = await requestText("/payment/export_jl_report?periodId=2");
+  assert.strictEqual(exportCsv.response.status, 200, "JL payment CSV export should load");
+  assert.ok(exportCsv.text.includes("JL104支付证书") && exportCsv.text.includes("JL113数量汇总") && exportCsv.text.includes("JL表单生命周期"), "JL payment CSV export should include certificate, JL113 and lifecycle rows");
 
   const menuPage = await requestText("/sbr/sbr_com/9004");
   assert.strictEqual(menuPage.response.status, 200, "JL payment report menu page should load");

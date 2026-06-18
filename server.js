@@ -6910,6 +6910,189 @@ function reportManagerDashboardHtml(req) {
     </div>`;
 }
 
+function jlMaterialArrivalRows(periodId, sectionId) {
+  const target = (engine.db.measurePeriods || []).find((period) => Number(period.gatherId || period.id) === Number(periodId));
+  return engine.materialArrivalRows()
+    .filter((row) => !sectionId || Number(row.sectionId || 0) === Number(sectionId))
+    .filter((row) => {
+      if (!periodId) return true;
+      const rowPeriodId = Number(row.periodId || row.gatherId || 0);
+      if (rowPeriodId) return rowPeriodId === Number(periodId);
+      if (!target) return true;
+      const date = String(row.measureDate || "").slice(0, 10);
+      const start = String(target.startDate || target.gatherStartDate || "").slice(0, 10);
+      const end = String(target.endDate || target.gatherEndDate || "").slice(0, 10);
+      if (start && date && date < start) return false;
+      if (end && date && date > end) return false;
+      return true;
+    });
+}
+
+function jlPaymentExportRows(req) {
+  const requestedPeriodId = Number(req.query.periodId || req.body.periodId || req.query.gatherId || req.body.gatherId || 0);
+  const latestPeriod = (engine.db.measurePeriods || [])[engine.db.measurePeriods.length - 1] || {};
+  const periodId = requestedPeriodId || Number(latestPeriod.gatherId || latestPeriod.id || 0);
+  const sectionId = Number(req.query.sectionId || req.body.sectionId || 0);
+  const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
+  const validation = engine.jlPaymentValidation({ periodId, sectionId });
+  const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
+  const rows = [];
+  const push = (table, row) => rows.push({
+    periodId: certificate.periodId,
+    periodDesc: certificate.periodDesc,
+    sectionId,
+    table,
+    ...row
+  });
+  [
+    ["本期实际支付", certificate.finalPayment, "JL104"],
+    ["小计", certificate.subtotal, "JL104"],
+    ["价格调整", certificate.priceAdjustment, "JL108"],
+    ["材料设备垫付款", certificate.materialAdvanceMoney, "JL109"],
+    ["扣回材料设备垫付款", certificate.materialDeductionMoney, "JL110"],
+    ["保留金", certificate.retentionMoney, "JL104"],
+    ["扣回动员预付款", certificate.mobilizationDeductionMoney, "JL111"]
+  ].forEach(([item, amount, source]) => push("JL104支付证书", { item, amount, source }));
+  certificate.chapters.forEach((row) => push("JL104章级汇总", {
+    code: row.chapter,
+    name: row.chapterName,
+    contractAmount: row.contractAmount,
+    adjustedAmount: row.adjustedAmount,
+    previousAmount: row.previousAmount,
+    currentAmount: row.currentAmount,
+    cumulativeAmount: row.cumulativeAmount
+  }));
+  certificate.jl113Rows.forEach((row) => push("JL113数量汇总", {
+    code: row.itemCode || row.billNo,
+    name: row.itemName || row.billName,
+    measureRefs: row.measureRefs,
+    unit: row.unit || row.measureUnit,
+    price: row.price,
+    quantity: row.quantity,
+    amount: row.amount
+  }));
+  certificate.jl105Rows.forEach((row) => push("JL105清单支付", {
+    code: row.itemCode || row.billNo,
+    name: row.itemName || row.billName,
+    unit: row.measureUnit,
+    contractQuantity: row.contractQuantity,
+    contractPrice: row.contractPrice,
+    contractAmount: row.contractAmount,
+    previousQuantity: row.previousQuantity,
+    previousAmount: row.previousAmount,
+    currentQuantity: row.currentQuantity,
+    currentAmount: row.currentAmount,
+    cumulativeQuantity: row.cumulativeQuantity,
+    cumulativeAmount: row.cumulativeAmount,
+    progressPct: row.progressPct
+  }));
+  jlMaterialArrivalRows(periodId, sectionId).forEach((row) => push("JL109材料到场", {
+    code: row.measureNo || row.certifyNo,
+    name: row.materialName,
+    unit: row.unit || row.measureUnit,
+    price: row.price || row.measurePrice,
+    quantity: row.measureNum || row.quantity,
+    amount: row.money,
+    advanceAmount: row.advanceMoney
+  }));
+  validation.checks.forEach((row) => push("JL表单校验", {
+    group: row.group,
+    item: row.name,
+    expected: row.expected,
+    actual: row.actual,
+    difference: row.difference,
+    passed: row.passed,
+    basis: row.detail
+  }));
+  lifecycle.forms.forEach((row) => push("JL表单生命周期", {
+    code: row.code,
+    name: row.name,
+    status: row.status,
+    expected: row.expected,
+    basis: row.reason
+  }));
+  return rows;
+}
+
+function jlPaymentPrintableHtml(req) {
+  const requestedPeriodId = Number(req.query.periodId || req.body.periodId || req.query.gatherId || req.body.gatherId || 0);
+  const latestPeriod = (engine.db.measurePeriods || [])[engine.db.measurePeriods.length - 1] || {};
+  const periodId = requestedPeriodId || Number(latestPeriod.gatherId || latestPeriod.id || 0);
+  const sectionId = Number(req.query.sectionId || req.body.sectionId || 0);
+  const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
+  const validation = engine.jlPaymentValidation({ periodId, sectionId });
+  const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
+  const rows = (items, cells) => items.map((item) => `<tr>${cells(item).map((cell) => `<td>${htmlEscape(cell)}</td>`).join("")}</tr>`).join("");
+  return `
+    <div class="jl-print-page">
+      <style>
+        body { background:#f8fafc; }
+        .jl-print-page { max-width:1180px; margin:0 auto; padding:22px; color:#172033; font-family:Arial,"Microsoft YaHei",sans-serif; }
+        .jl-print-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
+        .jl-print-head h1 { margin:0; font-size:24px; }
+        .jl-print-head p { margin:6px 0 0; color:#64748b; }
+        .jl-print-actions { display:flex; gap:8px; }
+        .jl-print-actions a, .jl-print-actions button { border:1px solid #0f766e; background:#0f766e; color:#fff; border-radius:4px; padding:7px 12px; text-decoration:none; cursor:pointer; }
+        .jl-print-section { background:#fff; border:1px solid #dbe4f0; border-radius:6px; padding:14px; margin-bottom:12px; overflow:auto; }
+        .jl-print-section h2 { margin:0 0 10px; font-size:17px; }
+        table { width:100%; border-collapse:collapse; min-width:860px; }
+        th, td { border:1px solid #dbe4f0; padding:7px 8px; text-align:center; font-size:12px; }
+        th { background:#f1f5f9; }
+        .left { text-align:left; }
+        @media print { body { background:#fff; } .jl-print-actions { display:none; } .jl-print-section { break-inside:avoid; border-color:#94a3b8; } }
+      </style>
+      <div class="jl-print-head">
+        <div>
+          <h1>JL计量支付报表打印预览</h1>
+          <p>${htmlEscape(certificate.periodDesc || `期次 ${certificate.periodId}`)} · 横向/纵向/期次校验：${validation.ok ? "通过" : "需复核"} · 应出现表单 ${lifecycle.summary.requiredCount}/${lifecycle.summary.formCount}</p>
+        </div>
+        <div class="jl-print-actions">
+          <a href="/payment/export_jl_report?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">导出CSV</a>
+          <button onclick="window.print()">打印</button>
+        </div>
+      </div>
+      <div class="jl-print-section">
+        <h2>JL104 中期财务支付证书</h2>
+        <table><thead><tr><th>项目</th><th>金额</th><th>来源</th></tr></thead><tbody>
+          ${rows([
+            ["本期实际支付", certificate.finalPayment, "JL104"],
+            ["小计", certificate.subtotal, "JL105"],
+            ["价格调整", certificate.priceAdjustment, "JL108/JL116"],
+            ["材料设备垫付款", certificate.materialAdvanceMoney, "JL109"],
+            ["扣回材料设备垫付款", certificate.materialDeductionMoney, "JL110"],
+            ["保留金", certificate.retentionMoney, "JL104"],
+            ["扣回动员预付款", certificate.mobilizationDeductionMoney, "JL111"]
+          ], (row) => [row[0], moneyText(row[1]), row[2]])}
+        </tbody></table>
+      </div>
+      <div class="jl-print-section">
+        <h2>JL104 章级汇总</h2>
+        <table><thead><tr><th>章号</th><th>项目内容</th><th>合同金额</th><th>本期完成</th><th>累计完成</th></tr></thead><tbody>
+          ${rows(certificate.chapters, (row) => [row.chapter, row.chapterName, moneyText(row.contractAmount), moneyText(row.currentAmount), moneyText(row.cumulativeAmount)])}
+        </tbody></table>
+      </div>
+      <div class="jl-print-section">
+        <h2>JL113 计量支付数量汇总表</h2>
+        <table><thead><tr><th>细目编号</th><th>细目名称</th><th>计量表编号</th><th>单位</th><th>单价</th><th>数量</th><th>金额</th></tr></thead><tbody>
+          ${rows(certificate.jl113Rows, (row) => [row.itemCode || row.billNo || "", row.itemName || row.billName || "", row.measureRefs || "", row.unit || row.measureUnit || "", moneyText(row.price), row.quantity, moneyText(row.amount)])}
+        </tbody></table>
+      </div>
+      <div class="jl-print-section">
+        <h2>JL105 清单中期财务支付报表</h2>
+        <table><thead><tr><th>细目编号</th><th>细目名称</th><th>合同金额</th><th>上期金额</th><th>本期金额</th><th>累计金额</th><th>进度</th></tr></thead><tbody>
+          ${rows(certificate.jl105Rows, (row) => [row.itemCode || row.billNo || "", row.itemName || row.billName || "", moneyText(row.contractAmount), moneyText(row.previousAmount), moneyText(row.currentAmount), moneyText(row.cumulativeAmount), percentText(row.progressPct)])}
+        </tbody></table>
+      </div>
+      <div class="jl-print-section">
+        <h2>JL表单校验与生命周期</h2>
+        <table><thead><tr><th>类型</th><th>项目</th><th>状态/结论</th><th>依据</th></tr></thead><tbody>
+          ${rows(validation.failed.length ? validation.failed : [{ group: "校验结论", name: "当前期横向、纵向、期次和样表基准校验全部通过", passed: true, detail: "" }], (row) => [row.group || "", row.name || "", row.passed === false ? "需复核" : "通过", row.detail || ""])}
+          ${rows(lifecycle.forms, (row) => ["生命周期", `${row.code} ${row.name}`, row.status, row.reason])}
+        </tbody></table>
+      </div>
+    </div>`;
+}
+
 function jlPaymentReportPageHtml(req) {
   const requestedPeriodId = Number(req.query.periodId || req.body.periodId || req.query.gatherId || req.body.gatherId || 0);
   const latestPeriod = (engine.db.measurePeriods || [])[engine.db.measurePeriods.length - 1] || {};
@@ -7064,6 +7247,8 @@ function jlPaymentReportPageHtml(req) {
             <select onchange="location.href='/payment/jl_report_page?periodId='+this.value+'&sectionId=${encodeURIComponent(sectionId || "")}'">${periodOptionsHtml}</select>
             <select onchange="location.href='/payment/jl_report_page?periodId=${encodeURIComponent(periodId || "")}&sectionId='+this.value">${sectionOptionsHtml}</select>
             <a class="layui-btn layui-btn-sm" href="/reportManager/dashboard_page${sectionId ? `?sectionId=${sectionId}` : ""}">报表中心</a>
+            <a class="layui-btn layui-btn-sm" href="/payment/jl_print_page?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">打印预览</a>
+            <a class="layui-btn layui-btn-sm" href="/payment/export_jl_report?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">导出CSV</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_lifecycle?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">生命周期JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_validation?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">校验JSON</a>
             <a class="layui-btn layui-btn-sm layui-btn-primary" href="/api/payment/certificate?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">证书JSON</a>
@@ -11502,6 +11687,8 @@ app.get("/system/dashboard_page", (req, res) => html(res, adminDashboardHtml()))
 app.get("/admin/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml()));
 app.get("/system/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml()));
 app.all("/payment/jl_report_page", (req, res) => html(res, jlPaymentReportPageHtml(req)));
+app.all("/payment/jl_print_page", (req, res) => html(res, jlPaymentPrintableHtml(req)));
+app.all("/payment/export_jl_report", (req, res) => csv(res, "jl-payment-report.csv", jlPaymentExportRows(req)));
 app.get("/sbr/sbr_com/:id", (req, res) => html(res, contentForId(req.params.id)));
 app.all("/sbr/sbr_com", (req, res) => html(res, contentForId(req.body.leftId || req.query.leftId || "")));
 
