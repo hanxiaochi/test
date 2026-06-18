@@ -92,12 +92,21 @@ const jlPaymentDefaults = {
   penaltyMoney: 0,
   interestMoney: 0,
   otherAdjustmentMoney: 0,
-  provisionalCurrentMoney: 0
+  provisionalCurrentMoney: 0,
+  jl115EndPeriod: 2,
+  jlPriceAdjustmentMonths: [1, 4, 7, 10]
 };
 
 function calculationRules() {
   const saved = db.calculationRules && typeof db.calculationRules === "object" ? db.calculationRules : {};
   const bounded = (key, fallback, min, max) => Math.max(min, Math.min(max, numberOr(saved[key] ?? fallback, fallback)));
+  const monthList = (value, fallback) => {
+    const raw = Array.isArray(value) ? value : String(value ?? "").split(/[,\s，、]+/);
+    const months = raw
+      .map((item) => Number(item))
+      .filter((item) => Number.isInteger(item) && item >= 1 && item <= 12);
+    return Array.from(new Set(months.length ? months : fallback)).sort((a, b) => a - b);
+  };
   return {
     ...jlPaymentDefaults,
     ...saved,
@@ -126,7 +135,9 @@ function calculationRules() {
     penaltyMoney: numberOr(saved.penaltyMoney, jlPaymentDefaults.penaltyMoney),
     interestMoney: numberOr(saved.interestMoney, jlPaymentDefaults.interestMoney),
     otherAdjustmentMoney: numberOr(saved.otherAdjustmentMoney, jlPaymentDefaults.otherAdjustmentMoney),
-    provisionalCurrentMoney: numberOr(saved.provisionalCurrentMoney, jlPaymentDefaults.provisionalCurrentMoney)
+    provisionalCurrentMoney: numberOr(saved.provisionalCurrentMoney, jlPaymentDefaults.provisionalCurrentMoney),
+    jl115EndPeriod: bounded("jl115EndPeriod", jlPaymentDefaults.jl115EndPeriod, 0, 999),
+    jlPriceAdjustmentMonths: monthList(saved.jlPriceAdjustmentMonths, jlPaymentDefaults.jlPriceAdjustmentMonths)
   };
 }
 
@@ -1002,6 +1013,98 @@ function jlPaymentValidation(options = {}) {
   };
 }
 
+function jlFormLifecycle(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const period = findPeriod(opts.periodId) || periodRows()[periodRows().length - 1] || null;
+  const periodId = period ? Number(period.periodId || period.gatherId || period.id || 0) : Number(opts.periodId || 0);
+  const sectionId = Number(opts.sectionId || 0);
+  const rules = calculationRules();
+  const certificate = paymentCertificateForPeriod(periodId, { sectionId });
+  const periodOrder = Number(period?.orderNo || period?.periodId || periodId || 0);
+  const periodDate = dateOnly(period?.endDate || period?.gatherEndDate || period?.startDate || period?.gatherStartDate);
+  const periodMonth = Number(periodDate.slice(5, 7)) || 0;
+  const sameSection = (row) => !sectionId || Number(row.sectionId || 0) === sectionId;
+  const currentMaterialAdjustRows = filterByPeriod(materialDiasRows(), periodId).filter(sameSection);
+  const currentMaterialArrivalRows = filterByPeriod(materialArrivalRows(), periodId).filter(sameSection);
+  const currentVariationRows = variationRows().filter((row) => sameSection(row) && (!period || rowBelongsToPeriod(row, period)));
+  const allArrivalRowsToDate = materialArrivalRows().filter((row) => sameSection(row) && (!period || rowBelongsToPeriod(row, period) || rowBeforePeriod(row, period)));
+  const cumulativeMaterialAdvance = round(allArrivalRowsToDate.reduce((sum, row) => sum + Number(row.advanceMoney || 0), 0));
+  const materialDeductionsToDate = materialDeductionRows().filter((row) => !periodId || Number(row.periodId || row.gatherId || 0) <= periodId);
+  const cumulativeMaterialDeduction = materialDeductionsToDate.length
+    ? round(materialDeductionsToDate.reduce((sum, row) => sum + Number(row.deductionMoney || 0), 0))
+    : round(numberOr(rules.cumulativeMaterialDeductionMoney, 0));
+  const hasPriceAdjustment = currentMaterialAdjustRows.length > 0 || Math.abs(Number(certificate.priceAdjustment || 0)) > 0;
+  const isPriceAdjustmentMonth = rules.jlPriceAdjustmentMonths.includes(periodMonth);
+  const requiresPriceAdjustmentForms = hasPriceAdjustment || isPriceAdjustmentMonth;
+  const mobilizationAdvance = mobilizationAdvanceAmount(certificate.contractTotal, rules);
+  const currentMobilizationDeduction = cumulativeMobilizationDeduction(certificate.cumulativeSubtotal, certificate.contractTotal, rules);
+  const previousMobilizationDeduction = cumulativeMobilizationDeduction(certificate.previousCumulativeSubtotal, certificate.contractTotal, rules);
+  const requiresMobilizationDeduction = mobilizationAdvance > 0 && currentMobilizationDeduction > 0 && previousMobilizationDeduction < mobilizationAdvance;
+  const hasChapterChange = certificate.chapters.some((row) => Math.abs(Number(row.changeAmount || 0)) > 0);
+  const hasVariation = currentVariationRows.length > 0 || hasChapterChange;
+  const requiresMaterialAdvance = currentMaterialArrivalRows.length > 0 || Number(certificate.materialAdvanceMoney || 0) > 0;
+  const requiresMaterialDeduction = cumulativeMaterialAdvance > 0 && cumulativeMaterialDeduction < cumulativeMaterialAdvance || Number(certificate.materialDeductionMoney || 0) > 0;
+  const forms = [
+    ["JL101", "计量支付月报表", true, "每期封面与摘要信息"],
+    ["JL102", "计量支付报表传递单", true, "每期审批流转记录"],
+    ["JL103", "施工进度表", true, "每期形象进度辅助表"],
+    ["JL104", "中期财务支付证书", true, "最终支付金额输出表"],
+    ["JL105", "清单中期财务支付报表", true, "清单累计/本期完成台账"],
+    ["JL106", "清单工程量变更表", hasVariation, hasVariation ? "本期或累计存在变更金额" : "本期未检测到工程量变更"],
+    ["JL107", "清单单价变更一览表", hasVariation, hasVariation ? "本期或累计存在变更金额" : "本期未检测到单价变更"],
+    ["JL108", "永久性工程材料差价金额一览表", requiresPriceAdjustmentForms, hasPriceAdjustment ? "本期存在材料价格调差" : `季度调差月：${rules.jlPriceAdjustmentMonths.join(",")}`],
+    ["JL108-1", "原材料明细表", requiresPriceAdjustmentForms, hasPriceAdjustment ? "随JL108提供原材料消耗明细" : `季度调差月：${rules.jlPriceAdjustmentMonths.join(",")}`],
+    ["JL109", "工程材料到达现场计量表", requiresMaterialAdvance, requiresMaterialAdvance ? "本期存在材料到场或材料设备垫付款" : "本期无材料到场预付"],
+    ["JL110", "扣回材料垫付款一览表", requiresMaterialDeduction, requiresMaterialDeduction ? "材料预付未完全扣回或本期有扣回" : "无未扣回材料垫付款"],
+    ["JL111", "扣回动员预付款一览表", requiresMobilizationDeduction, requiresMobilizationDeduction ? "累计小计已超过动员扣回门槛且尚未扣完" : `累计小计未进入${rules.mobilizationDeductionStartRate}%-${rules.mobilizationDeductionEndRate}%扣回区间`],
+    ["JL112", "工程量表汇编", true, "每期计量汇总封面"],
+    ["JL113", "计量支付数量汇总表", true, "按细目汇总本期JL114"],
+    ["JL114", "工程计量表", true, "本期计量基础明细"],
+    ["JL115", "开工动员预付款支付证书", periodOrder > 0 && periodOrder <= rules.jl115EndPeriod, `仅第1-${rules.jl115EndPeriod}期出现`],
+    ["JL116", "合同价格调表", requiresPriceAdjustmentForms, hasPriceAdjustment ? "本期存在价格调整金额" : `季度调差月：${rules.jlPriceAdjustmentMonths.join(",")}`]
+  ].map(([code, name, expected, reason]) => ({
+    code,
+    name,
+    expected: Boolean(expected),
+    status: expected ? "应出现" : "本期可不出现",
+    reason
+  }));
+  const requiredCount = forms.filter((row) => row.expected).length;
+  return {
+    periodId,
+    periodDesc: certificate.periodDesc,
+    sectionId,
+    periodOrder,
+    periodMonth,
+    summary: {
+      formCount: forms.length,
+      requiredCount,
+      optionalCount: forms.length - requiredCount,
+      lifecycleRules: {
+        jl115EndPeriod: rules.jl115EndPeriod,
+        jlPriceAdjustmentMonths: rules.jlPriceAdjustmentMonths,
+        mobilizationDeductionStartRate: rules.mobilizationDeductionStartRate,
+        mobilizationDeductionEndRate: rules.mobilizationDeductionEndRate
+      },
+      signals: {
+        priceAdjustmentMoney: certificate.priceAdjustment,
+        materialArrivalMoney: certificate.materialArrivalMoney,
+        materialAdvanceMoney: certificate.materialAdvanceMoney,
+        materialDeductionMoney: certificate.materialDeductionMoney,
+        cumulativeMaterialAdvance,
+        cumulativeMaterialDeduction,
+        cumulativeSubtotal: certificate.cumulativeSubtotal,
+        contractTotal: certificate.contractTotal,
+        mobilizationAdvance,
+        currentMobilizationDeduction,
+        previousMobilizationDeduction,
+        variationCount: currentVariationRows.length
+      }
+    },
+    forms
+  };
+}
+
 function planRows() {
   const contract = contractSummary();
   let total = 0;
@@ -1310,6 +1413,7 @@ module.exports = {
   paymentCertificateForPeriod,
   jlPaymentValidation,
   jlPaymentReferenceCases,
+  jlFormLifecycle,
   billLedgerRows,
   reportProjectRows,
   auditMoneyRows,

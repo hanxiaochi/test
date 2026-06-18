@@ -969,6 +969,14 @@ function numberFromBody(value, fallback, min, max) {
   return Math.max(min, Math.min(max, number));
 }
 
+function monthListFromBody(value, fallback = [1, 4, 7, 10]) {
+  const raw = Array.isArray(value) ? value : String(value ?? "").split(/[,\s，、]+/);
+  const months = raw
+    .map((item) => Number(item))
+    .filter((item) => Number.isInteger(item) && item >= 1 && item <= 12);
+  return Array.from(new Set(months.length ? months : fallback)).sort((a, b) => a - b);
+}
+
 function saveCalculationRules(body = {}) {
   const current = engine.calculationRules();
   const next = {
@@ -997,7 +1005,9 @@ function saveCalculationRules(body = {}) {
     penaltyMoney: numberFromBody(body.penaltyMoney, current.penaltyMoney, -999999999999, 999999999999),
     interestMoney: numberFromBody(body.interestMoney, current.interestMoney, -999999999999, 999999999999),
     otherAdjustmentMoney: numberFromBody(body.otherAdjustmentMoney, current.otherAdjustmentMoney, -999999999999, 999999999999),
-    provisionalCurrentMoney: numberFromBody(body.provisionalCurrentMoney, current.provisionalCurrentMoney, -999999999999, 999999999999)
+    provisionalCurrentMoney: numberFromBody(body.provisionalCurrentMoney, current.provisionalCurrentMoney, -999999999999, 999999999999),
+    jl115EndPeriod: numberFromBody(body.jl115EndPeriod, current.jl115EndPeriod, 0, 999),
+    jlPriceAdjustmentMonths: monthListFromBody(body.jlPriceAdjustmentMonths, current.jlPriceAdjustmentMonths)
   };
   engine.db.calculationRules = next;
   return {
@@ -1039,7 +1049,7 @@ function calculationRulesPageHtml() {
         .calc-admin-head p { margin:6px 0 0; color:#64748b; }
         .calc-admin-grid { display:grid; grid-template-columns:repeat(3, minmax(160px, 1fr)); gap:12px; }
         .calc-admin-field label { display:block; margin-bottom:6px; color:#475569; }
-        .calc-admin-field input[type="number"] { width:100%; height:34px; border:1px solid #cbd5e1; border-radius:4px; padding:0 8px; box-sizing:border-box; }
+        .calc-admin-field input[type="number"], .calc-admin-field input[type="text"] { width:100%; height:34px; border:1px solid #cbd5e1; border-radius:4px; padding:0 8px; box-sizing:border-box; }
         .calc-admin-checks { display:grid; grid-template-columns:repeat(2, minmax(180px, 1fr)); gap:10px; margin:12px 0; }
         .calc-admin-checks label { display:flex; align-items:center; gap:8px; border:1px solid #dbe4f0; border-radius:4px; padding:10px; }
         .calc-admin-formula { margin:12px 0; padding:10px 12px; background:#f8fafc; border:1px solid #dbe4f0; color:#0369a1; }
@@ -1069,6 +1079,8 @@ function calculationRulesPageHtml() {
               <div class="calc-admin-field"><label>动员预付款率(%)</label><input type="number" step="0.01" name="mobilizationAdvanceRate" value="${rules.mobilizationAdvanceRate}"></div>
               <div class="calc-admin-field"><label>动员扣回起点(%)</label><input type="number" step="0.01" name="mobilizationDeductionStartRate" value="${rules.mobilizationDeductionStartRate}"></div>
               <div class="calc-admin-field"><label>动员扣回完成点(%)</label><input type="number" step="0.01" name="mobilizationDeductionEndRate" value="${rules.mobilizationDeductionEndRate}"></div>
+              <div class="calc-admin-field"><label>JL115出现至第几期</label><input type="number" step="1" min="0" name="jl115EndPeriod" value="${rules.jl115EndPeriod}"></div>
+              <div class="calc-admin-field"><label>JL108/JL116调差月份</label><input type="text" name="jlPriceAdjustmentMonths" value="${htmlEscape(rules.jlPriceAdjustmentMonths.join(","))}"></div>
               <div class="calc-admin-field"><label>本期材料扣回</label><input type="number" step="0.01" name="materialDeductionMoney" value="${rules.materialDeductionMoney}"></div>
               <div class="calc-admin-field"><label>到上期末材料扣回</label><input type="number" step="0.01" name="previousMaterialDeductionMoney" value="${rules.previousMaterialDeductionMoney}"></div>
               <div class="calc-admin-field"><label>到本期末材料扣回</label><input type="number" step="0.01" name="cumulativeMaterialDeductionMoney" value="${rules.cumulativeMaterialDeductionMoney}"></div>
@@ -6905,6 +6917,7 @@ function jlPaymentReportPageHtml(req) {
   const sectionId = Number(req.query.sectionId || req.body.sectionId || 0);
   const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
+  const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
   const rules = engine.calculationRules();
   const sectionOptionsHtml = coreSectionOptions(sectionId, "全部合同段");
   const periodOptionsHtml = corePeriodOptions(periodId, "选择计量期");
@@ -7017,6 +7030,19 @@ function jlPaymentReportPageHtml(req) {
         <td class="left">${htmlEscape(row.detail || "")}</td>
       </tr>`).join("")
     : `<tr><td colspan="6" class="core-empty">当前期横向、纵向、期次和样表基准校验全部通过</td></tr>`;
+  const lifecycleRows = lifecycle.forms.map((row) => `
+    <tr>
+      <td>${htmlEscape(row.expected ? "应出现" : "可不出现")}</td>
+      <td>${htmlEscape(row.code)}</td>
+      <td class="left">${htmlEscape(row.name)}</td>
+      <td class="left">${htmlEscape(row.reason)}</td>
+    </tr>`).join("");
+  const lifecycleCards = coreCardsHtml([
+    ["JL表单总数", String(lifecycle.summary.formCount), `本期应出现 ${lifecycle.summary.requiredCount}`],
+    ["JL115规则", `1-${lifecycle.summary.lifecycleRules.jl115EndPeriod}期`, "开工动员预付款支付证书"],
+    ["调差月份", lifecycle.summary.lifecycleRules.jlPriceAdjustmentMonths.join(","), "JL108/JL108-1/JL116"],
+    ["动员扣回区间", `${lifecycle.summary.lifecycleRules.mobilizationDeductionStartRate}%-${lifecycle.summary.lifecycleRules.mobilizationDeductionEndRate}%`, "JL111出现条件"]
+  ]);
   return `
     <div class="core-page jl-report-page" data-core-page="jl-report-page">
       ${corePageStyle("#155e75")}
@@ -7038,6 +7064,7 @@ function jlPaymentReportPageHtml(req) {
             <select onchange="location.href='/payment/jl_report_page?periodId='+this.value+'&sectionId=${encodeURIComponent(sectionId || "")}'">${periodOptionsHtml}</select>
             <select onchange="location.href='/payment/jl_report_page?periodId=${encodeURIComponent(periodId || "")}&sectionId='+this.value">${sectionOptionsHtml}</select>
             <a class="layui-btn layui-btn-sm" href="/reportManager/dashboard_page${sectionId ? `?sectionId=${sectionId}` : ""}">报表中心</a>
+            <a class="layui-btn layui-btn-sm" href="/api/payment/jl_lifecycle?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">生命周期JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_validation?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">校验JSON</a>
             <a class="layui-btn layui-btn-sm layui-btn-primary" href="/api/payment/certificate?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">证书JSON</a>
           </div>
@@ -7067,6 +7094,14 @@ function jlPaymentReportPageHtml(req) {
             <table class="layui-table" lay-size="sm">
               <thead><tr><th>类型</th><th>校验项</th><th>应为</th><th>实际</th><th>差额</th><th>依据</th></tr></thead>
               <tbody>${validationRows}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>JL表单生命周期</h3>
+            <div class="core-cards">${lifecycleCards}</div>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>状态</th><th>表号</th><th>名称</th><th>判断依据</th></tr></thead>
+              <tbody>${lifecycleRows}</tbody>
             </table>
           </div>
           <div class="core-panel">
@@ -11504,6 +11539,7 @@ app.get("/api/payment/jl105", (req, res) => table(res, req, engine.jl105LedgerRo
 app.get("/api/payment/jl104_chapters", (req, res) => table(res, req, engine.jl104ChapterRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/certificate", (req, res) => operationOk(res, engine.paymentCertificateForPeriod(queryNumber(req, "periodId") || queryNumber(req, "gatherId"), { sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_validation", (req, res) => operationOk(res, engine.jlPaymentValidation({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl_lifecycle", (req, res) => operationOk(res, engine.jlFormLifecycle({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/cost/reconciliation", (req, res) => operationOk(res, costReconciliationData()));
 app.get("/api/cost/5d_model", (req, res) => operationOk(res, fiveDCostModelData()));
 app.get("/api/cost/boq_validation", (req, res) => operationOk(res, boqValidationData()));
