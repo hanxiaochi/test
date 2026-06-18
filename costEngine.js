@@ -54,6 +54,196 @@ function calculatePayable(parts, rules = calculationRules()) {
   return round(total, rules.moneyDigits);
 }
 
+function numberOr(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function positive(value) {
+  return Math.abs(numberOr(value, 0));
+}
+
+const chapterNames = {
+  100: "总则",
+  200: "路基土石方",
+  300: "路面",
+  400: "桥梁",
+  500: "隧道",
+  600: "排水及涵洞",
+  700: "防护",
+  800: "安全设施及预埋管线",
+  900: "绿化及环境保护"
+};
+
+const jlPaymentDefaults = {
+  ...defaultCalculationRules,
+  includeMaterialAdvance: true,
+  includeRetention: true,
+  materialAdvanceRate: 60,
+  retentionRate: 10,
+  mobilizationAdvanceRate: 10,
+  mobilizationDeductionStartRate: 30,
+  mobilizationDeductionEndRate: 80,
+  materialDeductionMoney: 0,
+  previousMaterialDeductionMoney: 0,
+  cumulativeMaterialDeductionMoney: 0,
+  mobilizationAdvanceMoney: 0,
+  claimsMoney: 0,
+  penaltyMoney: 0,
+  interestMoney: 0,
+  otherAdjustmentMoney: 0,
+  provisionalCurrentMoney: 0
+};
+
+function calculationRules() {
+  const saved = db.calculationRules && typeof db.calculationRules === "object" ? db.calculationRules : {};
+  const bounded = (key, fallback, min, max) => Math.max(min, Math.min(max, numberOr(saved[key] ?? fallback, fallback)));
+  return {
+    ...jlPaymentDefaults,
+    ...saved,
+    moneyDigits: bounded("moneyDigits", jlPaymentDefaults.moneyDigits, 0, 6),
+    quantityDigits: bounded("quantityDigits", jlPaymentDefaults.quantityDigits, 0, 6),
+    priceDigits: bounded("priceDigits", jlPaymentDefaults.priceDigits, 0, 6),
+    includeBillMeasure: saved.includeBillMeasure !== false,
+    includeMaterialAdjust: saved.includeMaterialAdjust !== false,
+    includeMaterialArrival: saved.includeMaterialArrival === true,
+    includeMaterialAdvance: saved.includeMaterialAdvance !== false,
+    includeManualMeasure: saved.includeManualMeasure !== false,
+    includeRetention: saved.includeRetention !== false,
+    auditSupervisorRate: bounded("auditSupervisorRate", jlPaymentDefaults.auditSupervisorRate, 0, 100),
+    auditOwnerRate: bounded("auditOwnerRate", jlPaymentDefaults.auditOwnerRate, 0, 100),
+    auditFinalRate: bounded("auditFinalRate", jlPaymentDefaults.auditFinalRate, 0, 100),
+    materialAdvanceRate: bounded("materialAdvanceRate", jlPaymentDefaults.materialAdvanceRate, 0, 100),
+    retentionRate: bounded("retentionRate", jlPaymentDefaults.retentionRate, 0, 100),
+    mobilizationAdvanceRate: bounded("mobilizationAdvanceRate", jlPaymentDefaults.mobilizationAdvanceRate, 0, 100),
+    mobilizationDeductionStartRate: bounded("mobilizationDeductionStartRate", jlPaymentDefaults.mobilizationDeductionStartRate, 0, 100),
+    mobilizationDeductionEndRate: bounded("mobilizationDeductionEndRate", jlPaymentDefaults.mobilizationDeductionEndRate, 0, 100),
+    materialDeductionMoney: numberOr(saved.materialDeductionMoney, jlPaymentDefaults.materialDeductionMoney),
+    previousMaterialDeductionMoney: numberOr(saved.previousMaterialDeductionMoney, jlPaymentDefaults.previousMaterialDeductionMoney),
+    cumulativeMaterialDeductionMoney: numberOr(saved.cumulativeMaterialDeductionMoney, jlPaymentDefaults.cumulativeMaterialDeductionMoney),
+    mobilizationAdvanceMoney: numberOr(saved.mobilizationAdvanceMoney, jlPaymentDefaults.mobilizationAdvanceMoney),
+    claimsMoney: numberOr(saved.claimsMoney, jlPaymentDefaults.claimsMoney),
+    penaltyMoney: numberOr(saved.penaltyMoney, jlPaymentDefaults.penaltyMoney),
+    interestMoney: numberOr(saved.interestMoney, jlPaymentDefaults.interestMoney),
+    otherAdjustmentMoney: numberOr(saved.otherAdjustmentMoney, jlPaymentDefaults.otherAdjustmentMoney),
+    provisionalCurrentMoney: numberOr(saved.provisionalCurrentMoney, jlPaymentDefaults.provisionalCurrentMoney)
+  };
+}
+
+function payableFormulaText(rules = calculationRules()) {
+  const subtotalParts = [];
+  if (rules.includeBillMeasure) subtotalParts.push("清单计量");
+  if (rules.includeManualMeasure) subtotalParts.push("手动计量/暂定金额");
+  const parts = [`小计(${subtotalParts.join(" + ") || "0"})`];
+  if (rules.includeMaterialAdjust) parts.push("价格调整(JL108)");
+  if (rules.includeMaterialAdvance) parts.push(`材料设备垫付款=材料到场金额×${rules.materialAdvanceRate}%`);
+  if (rules.includeRetention) parts.push(`-保留金=${rules.retentionRate}%×小计`);
+  parts.push("-扣回材料设备垫付款(JL110)");
+  parts.push("-扣回动员预付款(JL111)");
+  return `JL104本期实际支付 = ${parts.join(" + ")}`.replace(/\+ -/g, "- ");
+}
+
+function configuredMaterialDeduction(parts = {}, rules = calculationRules()) {
+  if (parts.materialDeductionMoney !== undefined) return positive(parts.materialDeductionMoney);
+  const cumulative = parts.cumulativeMaterialDeductionMoney ?? rules.cumulativeMaterialDeductionMoney;
+  const previous = parts.previousMaterialDeductionMoney ?? rules.previousMaterialDeductionMoney;
+  if (cumulative !== undefined || previous !== undefined) {
+    return positive(numberOr(cumulative, 0) - numberOr(previous, 0));
+  }
+  return positive(rules.materialDeductionMoney);
+}
+
+function mobilizationAdvanceAmount(contractTotal, rules = calculationRules()) {
+  return round(numberOr(contractTotal, 0) * (numberOr(rules.mobilizationAdvanceRate, 0) / 100), rules.moneyDigits);
+}
+
+function cumulativeMobilizationDeduction(cumulativeSubtotal, contractTotal, rules = calculationRules()) {
+  const total = numberOr(contractTotal, 0);
+  if (total <= 0) return 0;
+  const advance = mobilizationAdvanceAmount(total, rules);
+  const start = total * (numberOr(rules.mobilizationDeductionStartRate, 30) / 100);
+  const end = total * (numberOr(rules.mobilizationDeductionEndRate, 80) / 100);
+  const cumulative = numberOr(cumulativeSubtotal, 0);
+  if (cumulative <= start) return 0;
+  if (cumulative >= end) return advance;
+  return round(Math.min(advance, ((cumulative - start) / total) * 2 * advance), rules.moneyDigits);
+}
+
+function calculatePaymentCertificate(parts = {}, rules = calculationRules()) {
+  const moneyDigits = rules.moneyDigits;
+  const billMeasureMoney = rules.includeBillMeasure ? numberOr(parts.measuredMoney ?? parts.billMeasureMoney, 0) : 0;
+  const manualMoney = rules.includeManualMeasure ? numberOr(parts.manualMoney ?? parts.manualMeasureMoney, 0) : 0;
+  const provisionalCurrentMoney = numberOr(parts.provisionalCurrentMoney ?? rules.provisionalCurrentMoney, 0);
+  const subtotal = round(billMeasureMoney + manualMoney + provisionalCurrentMoney, moneyDigits);
+  const priceAdjustment = rules.includeMaterialAdjust ? numberOr(parts.materialDiasMoney ?? parts.materialAdjustMoney, 0) : 0;
+  const materialArrivalMoney = numberOr(parts.materialArrivalMoney, 0);
+  const materialAdvanceMoney = parts.materialAdvanceMoney !== undefined
+    ? numberOr(parts.materialAdvanceMoney, 0)
+    : (rules.includeMaterialAdvance ? round(materialArrivalMoney * (rules.materialAdvanceRate / 100), moneyDigits) : 0);
+  const materialDeductionMoney = configuredMaterialDeduction(parts, rules);
+  const retentionMoney = rules.includeRetention
+    ? positive(parts.retentionMoney !== undefined ? parts.retentionMoney : round(subtotal * (rules.retentionRate / 100), moneyDigits))
+    : 0;
+  const contractTotal = numberOr(parts.contractTotal ?? parts.finalMoney ?? parts.contractSumMoney, 0);
+  const previousCumulativeSubtotal = numberOr(parts.previousCumulativeSubtotal, 0);
+  const cumulativeSubtotal = numberOr(parts.cumulativeSubtotal, previousCumulativeSubtotal + subtotal);
+  const cumulativeMobilizationDeductionMoney = cumulativeMobilizationDeduction(cumulativeSubtotal, contractTotal, rules);
+  const previousMobilizationDeductionMoney = parts.previousMobilizationDeductionMoney !== undefined
+    ? positive(parts.previousMobilizationDeductionMoney)
+    : cumulativeMobilizationDeduction(previousCumulativeSubtotal, contractTotal, rules);
+  const mobilizationDeductionMoney = parts.mobilizationDeductionMoney !== undefined
+    ? positive(parts.mobilizationDeductionMoney)
+    : positive(cumulativeMobilizationDeductionMoney - previousMobilizationDeductionMoney);
+  const mobilizationAdvanceMoney = numberOr(parts.mobilizationAdvanceMoney ?? rules.mobilizationAdvanceMoney, 0);
+  const claimsMoney = numberOr(parts.claimsMoney ?? rules.claimsMoney, 0);
+  const penaltyMoney = positive(parts.penaltyMoney ?? rules.penaltyMoney);
+  const interestMoney = numberOr(parts.interestMoney ?? rules.interestMoney, 0);
+  const otherAdjustmentMoney = numberOr(parts.otherAdjustmentMoney ?? rules.otherAdjustmentMoney, 0);
+  const finalPayment = round(
+    subtotal +
+      priceAdjustment +
+      claimsMoney +
+      interestMoney +
+      materialAdvanceMoney +
+      mobilizationAdvanceMoney +
+      otherAdjustmentMoney -
+      penaltyMoney -
+      materialDeductionMoney -
+      retentionMoney -
+      mobilizationDeductionMoney,
+    moneyDigits
+  );
+  return {
+    billMeasureMoney: round(billMeasureMoney, moneyDigits),
+    manualMoney: round(manualMoney, moneyDigits),
+    provisionalCurrentMoney: round(provisionalCurrentMoney, moneyDigits),
+    subtotal,
+    priceAdjustment: round(priceAdjustment, moneyDigits),
+    materialArrivalMoney: round(materialArrivalMoney, moneyDigits),
+    materialAdvanceMoney: round(materialAdvanceMoney, moneyDigits),
+    materialDeductionMoney: round(materialDeductionMoney, moneyDigits),
+    retentionMoney: round(retentionMoney, moneyDigits),
+    mobilizationAdvanceMoney: round(mobilizationAdvanceMoney, moneyDigits),
+    mobilizationDeductionMoney: round(mobilizationDeductionMoney, moneyDigits),
+    cumulativeMobilizationDeductionMoney: round(cumulativeMobilizationDeductionMoney, moneyDigits),
+    previousMobilizationDeductionMoney: round(previousMobilizationDeductionMoney, moneyDigits),
+    claimsMoney: round(claimsMoney, moneyDigits),
+    penaltyMoney: round(penaltyMoney, moneyDigits),
+    interestMoney: round(interestMoney, moneyDigits),
+    otherAdjustmentMoney: round(otherAdjustmentMoney, moneyDigits),
+    previousCumulativeSubtotal: round(previousCumulativeSubtotal, moneyDigits),
+    cumulativeSubtotal: round(cumulativeSubtotal, moneyDigits),
+    contractTotal: round(contractTotal, moneyDigits),
+    finalPayment,
+    payableMoney: finalPayment,
+    formula: payableFormulaText(rules)
+  };
+}
+
+function calculatePayable(parts, rules = calculationRules()) {
+  return calculatePaymentCertificate(parts, rules).finalPayment;
+}
+
 function table(data, req) {
   const rows = Array.isArray(data) ? data : [];
   const page = Math.max(Number((req.query && req.query.page) || (req.body && req.body.page) || 1), 1);
@@ -119,8 +309,12 @@ function measureDetailRows(measure) {
       billMeasureDetailId: detail.detailId || `${measure.measureId}-${detail.billId}-${index + 1}`,
       detailIndex: index,
       measureNo: measure.measureNo,
+      sheetNo: measure.measureNo,
+      periodId: measure.periodId || measure.gatherId || 0,
+      gatherId: measure.gatherId || measure.periodId || 0,
       sectionName: section(measure.sectionId).sectionName,
       measureDate: measure.measureDate,
+      formulaText: detail.formulaText || detail.calcFormula || "",
       measureNum: detail.measureNum,
       currentNum: detail.measureNum,
       currentMoney: amount,
@@ -132,6 +326,197 @@ function measureDetailRows(measure) {
 
 function allMeasureDetails() {
   return db.measures.flatMap(measureDetailRows);
+}
+
+function dateOnly(value) {
+  const text = String(value || "");
+  const match = text.match(/\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : "";
+}
+
+function periodRows() {
+  return (db.measurePeriods || []).map((item, index) => ({
+    ...item,
+    periodId: Number(item.gatherId || item.periodId || item.id || index + 1),
+    orderNo: Number(item.gatherId || item.periodId || item.id || index + 1),
+    startDate: item.startDate || item.gatherStartDate || "",
+    endDate: item.endDate || item.gatherEndDate || ""
+  })).sort((a, b) => a.orderNo - b.orderNo);
+}
+
+function findPeriod(periodId) {
+  const id = Number(periodId || 0);
+  if (!id) return null;
+  return periodRows().find((item) => Number(item.periodId || item.gatherId || item.id) === id) || null;
+}
+
+function rowBelongsToPeriod(row, period) {
+  if (!period) return true;
+  const periodId = Number(period.periodId || period.gatherId || period.id || 0);
+  const rowPeriodId = Number(row.periodId || row.gatherId || 0);
+  if (periodId && rowPeriodId) return rowPeriodId === periodId;
+  const date = dateOnly(row.measureDate || row.diffYearMonth || row.createDate || row.updateDate);
+  if (!date) return false;
+  const start = dateOnly(period.startDate || period.gatherStartDate);
+  const end = dateOnly(period.endDate || period.gatherEndDate);
+  if (start && date < start) return false;
+  if (end && date > end) return false;
+  return true;
+}
+
+function rowBeforePeriod(row, period) {
+  if (!period) return false;
+  const periodId = Number(period.periodId || period.gatherId || period.id || 0);
+  const rowPeriodId = Number(row.periodId || row.gatherId || 0);
+  if (periodId && rowPeriodId) return rowPeriodId < periodId;
+  const date = dateOnly(row.measureDate || row.diffYearMonth || row.createDate || row.updateDate);
+  const start = dateOnly(period.startDate || period.gatherStartDate);
+  return Boolean(date && start && date < start);
+}
+
+function filterByPeriod(rows, periodId) {
+  const period = findPeriod(periodId);
+  return rows.filter((row) => rowBelongsToPeriod(row, period));
+}
+
+function groupMeasureDetails(details) {
+  const grouped = new Map();
+  details.forEach((detail) => {
+    const key = String(detail.billId || detail.billNo || detail.billPayId || "");
+    if (!key) return;
+    const current = grouped.get(key) || {
+      billId: detail.billId,
+      billNo: detail.billNo,
+      billName: detail.billName,
+      itemCode: detail.billNo,
+      itemName: detail.billName,
+      chapter: detail.chapter || String(detail.billNo || "").slice(0, 1) + "00",
+      measureUnit: detail.measureUnit,
+      unit: detail.measureUnit,
+      price: Number(detail.price || 0),
+      quantity: 0,
+      amount: 0,
+      measureNos: [],
+      formulaTexts: []
+    };
+    current.quantity += Number(detail.measureNum || detail.currentNum || 0);
+    current.amount += Number(detail.measureMoney || detail.currentMoney || 0);
+    if (detail.measureNo && !current.measureNos.includes(detail.measureNo)) current.measureNos.push(detail.measureNo);
+    if (detail.formulaText) current.formulaTexts.push(detail.formulaText);
+    grouped.set(key, current);
+  });
+  return Array.from(grouped.values()).map((row) => ({
+    ...row,
+    quantity: round(row.quantity, calculationRules().quantityDigits),
+    currentQuantity: round(row.quantity, calculationRules().quantityDigits),
+    amount: round(row.amount),
+    currentAmount: round(row.amount),
+    measureRefs: row.measureNos.join("、"),
+    formulaText: row.formulaTexts.join("\n")
+  })).sort((a, b) => String(a.billNo).localeCompare(String(b.billNo), "zh-CN"));
+}
+
+function jl113Rows(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const period = findPeriod(opts.periodId);
+  const sectionId = Number(opts.sectionId || 0);
+  const details = allMeasureDetails().filter((row) => {
+    if (sectionId && Number(row.sectionId || 0) !== sectionId) return false;
+    return period ? rowBelongsToPeriod(row, period) : true;
+  });
+  return groupMeasureDetails(details);
+}
+
+function measuredQuantityFromDetails(details, billId) {
+  return details
+    .filter((item) => Number(item.billId || 0) === Number(billId || 0))
+    .reduce((sum, item) => sum + Number(item.measureNum || item.currentNum || 0), 0);
+}
+
+function jl105LedgerRows(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const period = findPeriod(opts.periodId);
+  const sectionId = Number(opts.sectionId || 0);
+  const allDetails = allMeasureDetails().filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId);
+  const currentDetails = period ? allDetails.filter((row) => rowBelongsToPeriod(row, period)) : allDetails;
+  const previousDetails = period ? allDetails.filter((row) => rowBeforePeriod(row, period)) : [];
+  return billRows()
+    .filter((item) => !sectionId || Number(item.sectionId || 0) === sectionId)
+    .map((item) => {
+      const previousQuantity = round(measuredQuantityFromDetails(previousDetails, item.billId), calculationRules().quantityDigits);
+      const currentQuantity = round(measuredQuantityFromDetails(currentDetails, item.billId), calculationRules().quantityDigits);
+      const cumulativeQuantity = round(previousQuantity + currentQuantity, calculationRules().quantityDigits);
+      const previousAmount = round(previousQuantity * Number(item.price || 0));
+      const currentAmount = round(currentQuantity * Number(item.price || 0));
+      const cumulativeAmount = round(previousAmount + currentAmount);
+      return {
+        billPayId: item.billId,
+        billId: item.billId,
+        sectionId: item.sectionId,
+        sectionName: item.sectionName,
+        chapter: item.chapter || String(item.billNo || "").slice(0, 1) + "00",
+        billNo: item.billNo,
+        billName: item.billName,
+        itemCode: item.billNo,
+        itemName: item.billName,
+        measureUnit: item.measureUnit,
+        contractQuantity: item.contractNum,
+        contractPrice: item.price,
+        contractAmount: item.contractMoney,
+        adjustedQuantity: item.finalNum,
+        adjustedAmount: item.finalMoney,
+        previousQuantity,
+        previousAmount,
+        currentQuantity,
+        currentAmount,
+        cumulativeQuantity,
+        cumulativeAmount,
+        progressPct: item.finalMoney ? round((cumulativeAmount / item.finalMoney) * 100, 2) : 0
+      };
+    });
+}
+
+function jl104ChapterRows(options = {}) {
+  const ledger = jl105LedgerRows(options);
+  const groups = new Map(Object.keys(chapterNames).map((chapter) => [chapter, {
+    chapter,
+    chapterName: chapterNames[chapter],
+    contractAmount: 0,
+    changeAmount: 0,
+    adjustedAmount: 0,
+    previousAmount: 0,
+    currentAmount: 0,
+    cumulativeAmount: 0
+  }]));
+  ledger.forEach((row) => {
+    const chapter = String(row.chapter || "").padEnd(3, "0").slice(0, 3);
+    const current = groups.get(chapter) || {
+      chapter,
+      chapterName: chapterNames[chapter] || `${chapter}章`,
+      contractAmount: 0,
+      changeAmount: 0,
+      adjustedAmount: 0,
+      previousAmount: 0,
+      currentAmount: 0,
+      cumulativeAmount: 0
+    };
+    current.contractAmount += Number(row.contractAmount || 0);
+    current.adjustedAmount += Number(row.adjustedAmount || row.contractAmount || 0);
+    current.changeAmount = current.adjustedAmount - current.contractAmount;
+    current.previousAmount += Number(row.previousAmount || 0);
+    current.currentAmount += Number(row.currentAmount || 0);
+    current.cumulativeAmount += Number(row.cumulativeAmount || 0);
+    groups.set(chapter, current);
+  });
+  return Array.from(groups.values()).map((row) => ({
+    ...row,
+    contractAmount: round(row.contractAmount),
+    changeAmount: round(row.changeAmount),
+    adjustedAmount: round(row.adjustedAmount),
+    previousAmount: round(row.previousAmount),
+    currentAmount: round(row.currentAmount),
+    cumulativeAmount: round(row.cumulativeAmount)
+  })).sort((a, b) => String(a.chapter).localeCompare(String(b.chapter), "zh-CN"));
 }
 
 function measuredByBillId(billId) {
@@ -184,7 +569,15 @@ function contractSummary() {
   const materialDiasMoney = round(materialDiasRows().reduce((sum, item) => sum + item.adjustMoney, 0));
   const materialArrivalMoney = round(materialArrivalRows().reduce((sum, item) => sum + item.money, 0));
   const manualMoney = round(manualMeasureRows().reduce((sum, item) => sum + item.measureMoney, 0));
-  const payableMoney = calculatePayable({ measuredMoney, materialDiasMoney, materialArrivalMoney, manualMoney }, rules);
+  const paymentCertificate = calculatePaymentCertificate({
+    measuredMoney,
+    materialDiasMoney,
+    materialArrivalMoney,
+    manualMoney,
+    contractTotal: finalMoney,
+    cumulativeSubtotal: measuredMoney + manualMoney
+  }, rules);
+  const payableMoney = paymentCertificate.finalPayment;
   return {
     contractSumMoney,
     varyMoney,
@@ -192,10 +585,16 @@ function contractSummary() {
     measuredMoney,
     materialDiasMoney,
     materialArrivalMoney,
+    materialAdvanceMoney: paymentCertificate.materialAdvanceMoney,
+    materialDeductionMoney: paymentCertificate.materialDeductionMoney,
+    retentionMoney: paymentCertificate.retentionMoney,
+    mobilizationAdvanceMoney: paymentCertificate.mobilizationAdvanceMoney,
+    mobilizationDeductionMoney: paymentCertificate.mobilizationDeductionMoney,
     manualMoney,
     payableMoney,
     payRate: finalMoney ? round((payableMoney / finalMoney) * 100, 2) : 0,
     payableFormula: payableFormulaText(rules),
+    paymentCertificate,
     calculationRules: rules
   };
 }
@@ -271,9 +670,11 @@ function materialRows() {
 }
 
 function materialArrivalRows() {
+  const rules = calculationRules();
   return db.materialArrivals.map((item) => {
     const m = material(item.materialId, item);
     const price = m.currentPrice;
+    const money = round(item.quantity * price);
     return {
       ...item,
       meterialInMeasureId: item.arrivalId || item.id,
@@ -289,9 +690,35 @@ function materialArrivalRows() {
       taskUser: item.taskUser ?? true,
       processInstanceId: item.processInstanceId || "",
       lineColor: item.lineColor || "",
-      money: round(item.quantity * price)
+      money,
+      arrivalMoney: money,
+      advanceRate: rules.materialAdvanceRate,
+      advanceMoney: round(money * (rules.materialAdvanceRate / 100))
     };
   });
+}
+
+function materialDeductionRows() {
+  return (db.materialDeductions || []).map((item, index) => ({
+    ...item,
+    materialDeductionId: item.materialDeductionId || item.deductionId || item.id || index + 1,
+    sectionName: item.sectionId ? section(item.sectionId).sectionName : "",
+    previousDeductedMoney: positive(item.previousDeductedMoney ?? item.previousMoney ?? item.prevDeductedMoney),
+    cumulativeDeductedMoney: positive(item.cumulativeDeductedMoney ?? item.cumulativeMoney ?? item.currentDeductedMoney),
+    deductionMoney: positive(item.deductionMoney ?? item.currentDeductMoney ?? (numberOr(item.cumulativeDeductedMoney ?? item.cumulativeMoney, 0) - numberOr(item.previousDeductedMoney ?? item.previousMoney, 0))),
+    periodId: item.periodId || item.gatherId || 0,
+    gatherId: item.gatherId || item.periodId || 0
+  }));
+}
+
+function materialDeductionMoneyForPeriod(periodId) {
+  const rows = filterByPeriod(materialDeductionRows(), periodId);
+  if (rows.length) return round(rows.reduce((sum, row) => sum + Number(row.deductionMoney || 0), 0));
+  const period = findPeriod(periodId);
+  if (period && (period.materialDeductionMoney !== undefined || period.cumulativeMaterialDeductionMoney !== undefined)) {
+    return configuredMaterialDeduction(period, calculationRules());
+  }
+  return configuredMaterialDeduction({}, calculationRules());
 }
 
 function manualMeasureRows() {
@@ -306,6 +733,62 @@ function manualMeasureRows() {
     measureMoney: round(item.measureNum * item.price),
     money: round(item.measureNum * item.price)
   }));
+}
+
+function sumMoney(rows, key) {
+  return round(rows.reduce((sum, row) => sum + Number(row[key] || 0), 0));
+}
+
+function paymentCertificateForPeriod(periodId, options = {}) {
+  const rules = calculationRules();
+  const period = findPeriod(periodId);
+  const sectionId = Number(options.sectionId || 0);
+  const chapters = jl104ChapterRows({ periodId, sectionId });
+  const billMeasureMoney = sumMoney(chapters, "currentAmount");
+  const previousBillMeasureMoney = sumMoney(chapters, "previousAmount");
+  const cumulativeBillMeasureMoney = sumMoney(chapters, "cumulativeAmount");
+  const manualRows = filterByPeriod(manualMeasureRows(), periodId)
+    .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId);
+  const previousManualRows = manualMeasureRows().filter((row) => {
+    if (sectionId && Number(row.sectionId || 0) !== sectionId) return false;
+    return rowBeforePeriod(row, period);
+  });
+  const manualMoney = sumMoney(manualRows, "measureMoney");
+  const previousManualMoney = sumMoney(previousManualRows, "measureMoney");
+  const materialAdjustMoney = sumMoney(filterByPeriod(materialDiasRows(), periodId)
+    .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId), "adjustMoney");
+  const materialArrivalMoney = sumMoney(filterByPeriod(materialArrivalRows(), periodId)
+    .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId), "money");
+  const materialDeductionMoney = materialDeductionMoneyForPeriod(periodId);
+  const contractTotal = sectionId
+    ? round(billRows().filter((row) => Number(row.sectionId || 0) === sectionId).reduce((sum, row) => sum + Number(row.finalMoney || 0), 0))
+    : contractSummary().finalMoney;
+  const parts = {
+    measuredMoney: billMeasureMoney,
+    manualMoney,
+    materialDiasMoney: materialAdjustMoney,
+    materialArrivalMoney,
+    materialDeductionMoney,
+    contractTotal,
+    previousCumulativeSubtotal: previousBillMeasureMoney + previousManualMoney,
+    cumulativeSubtotal: cumulativeBillMeasureMoney + previousManualMoney + manualMoney,
+    mobilizationDeductionMoney: period && period.mobilizationDeductionMoney !== undefined ? period.mobilizationDeductionMoney : undefined,
+    previousMobilizationDeductionMoney: period && period.previousMobilizationDeductionMoney !== undefined ? period.previousMobilizationDeductionMoney : undefined,
+    claimsMoney: period && period.claimsMoney !== undefined ? period.claimsMoney : undefined,
+    penaltyMoney: period && period.penaltyMoney !== undefined ? period.penaltyMoney : undefined,
+    interestMoney: period && period.interestMoney !== undefined ? period.interestMoney : undefined,
+    otherAdjustmentMoney: period && period.otherAdjustmentMoney !== undefined ? period.otherAdjustmentMoney : undefined,
+    provisionalCurrentMoney: period && period.provisionalCurrentMoney !== undefined ? period.provisionalCurrentMoney : undefined
+  };
+  return {
+    periodId: period ? period.periodId : Number(periodId || 0),
+    periodDesc: period ? (period.periodDesc || period.gatherNo || "") : "",
+    sectionId,
+    chapters,
+    jl113Rows: jl113Rows({ periodId, sectionId }),
+    jl105Rows: jl105LedgerRows({ periodId, sectionId }),
+    ...calculatePaymentCertificate(parts, rules)
+  };
 }
 
 function planRows() {
@@ -441,7 +924,15 @@ function reportProjectRows() {
     const manualMoney = round(manuals
       .filter((row) => Number(row.sectionId) === Number(item.sectionId))
       .reduce((sum, row) => sum + Number(row.measureMoney || 0), 0));
-    const totalPayMoney = calculatePayable({ measuredMoney, materialDiasMoney, materialArrivalMoney, manualMoney }, rules);
+    const paymentCertificate = calculatePaymentCertificate({
+      measuredMoney,
+      materialDiasMoney,
+      materialArrivalMoney,
+      manualMoney,
+      contractTotal: finalMoney,
+      cumulativeSubtotal: measuredMoney + manualMoney
+    }, rules);
+    const totalPayMoney = paymentCertificate.finalPayment;
     return {
       sectionId: item.sectionId,
       sectionName: item.sectionName,
@@ -451,12 +942,17 @@ function reportProjectRows() {
       measureMoney: measuredMoney,
       materialDiasMoney,
       materialArrivalMoney,
+      materialAdvanceMoney: paymentCertificate.materialAdvanceMoney,
+      materialDeductionMoney: paymentCertificate.materialDeductionMoney,
+      retentionMoney: paymentCertificate.retentionMoney,
+      mobilizationDeductionMoney: paymentCertificate.mobilizationDeductionMoney,
       manualMoney,
       currentPayMoney: measuredMoney,
       totalPayMoney,
       payRate: finalMoney ? round((totalPayMoney / finalMoney) * 100, 2) : 0,
       projectTotalPayMoney: summary.payableMoney,
-      payableFormula: payableFormulaText(rules)
+      payableFormula: payableFormulaText(rules),
+      paymentCertificate
     };
   });
 }
@@ -522,7 +1018,29 @@ function auditMoneyRows() {
       submitMoney: item.measureMoney,
       finishMoney: item.measureMoney
     }));
-  return billAuditRows.concat(materialAuditRows, manualAuditRows);
+  const baseRows = billAuditRows.concat(materialAuditRows, manualAuditRows);
+  const baseSubmit = round(baseRows.reduce((sum, row) => sum + Number(row.submitMoney || row.usertask1 || 0), 0));
+  const certificate = contractSummary().paymentCertificate;
+  const financeAdjustmentMoney = round(Number(certificate.finalPayment || 0) - baseSubmit);
+  const financeRows = Math.abs(financeAdjustmentMoney) > 0.004
+    ? [buildAuditRow({
+      billNo: "JL104",
+      billName: "中期财务支付证书调整",
+      measureUnit: "元",
+      measureMoney: financeAdjustmentMoney,
+      money: financeAdjustmentMoney
+    }, {
+      auditType: "JL104支付调整",
+      chapterNo: "JL104",
+      chapterName: "材料预付/扣回/保留金/动员预付款",
+      billNo: "JL104",
+      billName: "材料预付/扣回/保留金/动员预付款",
+      measureUnit: "元",
+      submitMoney: financeAdjustmentMoney,
+      finishMoney: financeAdjustmentMoney
+    })]
+    : [];
+  return baseRows.concat(financeRows);
 }
 
 function documentRows() {
@@ -566,13 +1084,19 @@ module.exports = {
   table,
   dashboard,
   billRows,
+  periodRows,
   materialRows,
   planRows,
   measureRows,
   materialDiasRows,
   materialArrivalRows,
+  materialDeductionRows,
   manualMeasureRows,
   variationRows,
+  jl113Rows,
+  jl105LedgerRows,
+  jl104ChapterRows,
+  paymentCertificateForPeriod,
   billLedgerRows,
   reportProjectRows,
   auditMoneyRows,
@@ -580,6 +1104,9 @@ module.exports = {
   contractSummary,
   calculationRules,
   calculatePayable,
+  calculatePaymentCertificate,
+  cumulativeMobilizationDeduction,
+  mobilizationAdvanceAmount,
   payableFormulaText,
   allMeasureDetails
 };

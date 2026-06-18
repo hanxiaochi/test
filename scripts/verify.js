@@ -224,6 +224,7 @@ function verifyCostMath() {
   const variations = engine.variationRows();
   const measures = engine.measureRows();
   const materialDias = engine.materialDiasRows();
+  const materialArrival = engine.materialArrivalRows();
   const manual = engine.manualMeasureRows();
   const report = engine.reportProjectRows();
   const summary = engine.contractSummary();
@@ -233,9 +234,67 @@ function verifyCostMath() {
   assert.strictEqual(round(variations.reduce((sum, item) => sum + item.varyMoney, 0)), summary.varyMoney);
   assert.strictEqual(round(measures.reduce((sum, item) => sum + item.measureMoney, 0)), summary.measuredMoney);
   assert.strictEqual(round(materialDias.reduce((sum, item) => sum + item.adjustMoney, 0)), summary.materialDiasMoney);
+  assert.strictEqual(round(materialArrival.reduce((sum, item) => sum + item.money, 0)), summary.materialArrivalMoney);
   assert.strictEqual(round(manual.reduce((sum, item) => sum + item.measureMoney, 0)), summary.manualMoney);
-  assert.strictEqual(round(summary.measuredMoney + summary.materialDiasMoney + summary.manualMoney), summary.payableMoney);
+  const expectedCertificate = engine.calculatePaymentCertificate({
+    measuredMoney: summary.measuredMoney,
+    materialDiasMoney: summary.materialDiasMoney,
+    materialArrivalMoney: summary.materialArrivalMoney,
+    manualMoney: summary.manualMoney,
+    contractTotal: summary.finalMoney,
+    cumulativeSubtotal: summary.measuredMoney + summary.manualMoney
+  });
+  assert.strictEqual(expectedCertificate.finalPayment, summary.payableMoney);
+  assert.strictEqual(summary.paymentCertificate.retentionMoney, round((summary.measuredMoney + summary.manualMoney) * (summary.calculationRules.retentionRate / 100)));
   assert.strictEqual(round(report.reduce((sum, item) => sum + item.totalPayMoney, 0)), summary.payableMoney);
+}
+
+function verifyJlPaymentReferenceCases() {
+  const rules = {
+    ...engine.calculationRules(),
+    moneyDigits: 0,
+    includeBillMeasure: true,
+    includeMaterialAdjust: true,
+    includeManualMeasure: true,
+    includeMaterialAdvance: true,
+    includeRetention: true,
+    materialAdvanceRate: 60,
+    retentionRate: 10,
+    mobilizationAdvanceRate: 10,
+    mobilizationDeductionStartRate: 30,
+    mobilizationDeductionEndRate: 80,
+    materialDeductionMoney: 0,
+    cumulativeMaterialDeductionMoney: 0,
+    previousMaterialDeductionMoney: 0
+  };
+
+  const period12 = engine.calculatePaymentCertificate({
+    measuredMoney: 5094708,
+    materialDiasMoney: 0,
+    materialAdvanceMoney: 4529717,
+    materialDeductionMoney: 1415578,
+    retentionMoney: 509471,
+    contractTotal: 569846095,
+    previousCumulativeSubtotal: 146206797,
+    cumulativeSubtotal: 151301505
+  }, rules);
+  assert.strictEqual(period12.mobilizationDeductionMoney, 0, "period 12 should not deduct mobilization advance before 30% threshold");
+  assert.strictEqual(period12.finalPayment, 7699376, "period 12 JL104 sample should calculate actual payment 7,699,376");
+
+  const period14Mobilization = engine.cumulativeMobilizationDeduction(174060235, 569846095, rules);
+  assert.strictEqual(period14Mobilization, 621281, "period 14 mobilization deduction should match (C-D)/A*2*B");
+  const period14 = engine.calculatePaymentCertificate({
+    measuredMoney: 20618620,
+    materialDiasMoney: 2139953,
+    materialAdvanceMoney: 5257494,
+    materialDeductionMoney: 1093940,
+    retentionMoney: 2275857,
+    mobilizationDeductionMoney: period14Mobilization,
+    contractTotal: 569846095,
+    previousCumulativeSubtotal: 153441615,
+    cumulativeSubtotal: 174060235
+  }, rules);
+  assert.strictEqual(period14.finalPayment, 24024989, "period 14 JL104 sample should calculate actual payment 24,024,989");
 }
 
 async function verifyStandaloneCostCalculator() {
@@ -255,8 +314,11 @@ async function verifyStandaloneCostCalculator() {
   assert.strictEqual(data.materialAdjustMoney, 15, "calculator material adjustment should use price difference");
   assert.strictEqual(data.materialArrivalMoney, 104, "calculator material arrival should track quantity times price");
   assert.strictEqual(data.manualMoney, 50, "calculator manual money should use manual quantity times price");
-  assert.strictEqual(data.payableMoney, 465, "calculator payable money should equal measured plus material adjustment plus manual");
-  assert.strictEqual(data.payRate, 38.75, "calculator pay rate should use payable divided by final money");
+  assert.strictEqual(data.paymentCertificate.materialAdvanceMoney, 62.4, "calculator should advance 60% of material arrival value");
+  assert.strictEqual(data.paymentCertificate.retentionMoney, 45, "calculator should deduct 10% retention from subtotal");
+  assert.strictEqual(data.paymentCertificate.mobilizationDeductionMoney, 18, "calculator should deduct mobilization advance after 30% threshold");
+  assert.strictEqual(data.payableMoney, 464.4, "calculator payable money should follow JL104 formula");
+  assert.strictEqual(data.payRate, 38.7, "calculator pay rate should use payable divided by final money");
   assert.strictEqual(data.details.materialLedger[0].coverageRate, 160, "calculator material ledger should compare arrival quantity with adjustment quantity");
 }
 
@@ -268,13 +330,15 @@ async function verifyFiveDCostModelLoop() {
   assert.strictEqual(data.model, "BOQ-5D-COST", "5D model should declare BOQ cost model type");
   assert.strictEqual(round(data.totals.finalMoney), summary.finalMoney, "5D model final money should match contract summary");
   assert.strictEqual(round(data.totals.payableMoney), summary.payableMoney, "5D model payable money should match contract summary");
-  assert.strictEqual(round(data.resourceCosts.billMeasure + data.resourceCosts.materialDias + data.resourceCosts.manualMeasure), summary.payableMoney, "5D payable formula should exclude material arrival tracking");
-  assert.ok(data.resourceCosts.materialArrivalTracking >= 0, "5D model should still expose material arrival tracking money");
+  const resourcePayable = data.resourceCosts.billMeasure + data.resourceCosts.materialDias + data.resourceCosts.materialAdvance + data.resourceCosts.manualMeasure
+    - data.resourceCosts.materialDeduction - data.resourceCosts.retention - data.resourceCosts.mobilizationDeduction;
+  assert.strictEqual(round(resourcePayable), summary.payableMoney, "5D payable formula should follow JL104 payment certificate");
+  assert.ok(data.resourceCosts.materialArrivalTracking >= data.resourceCosts.materialAdvance, "5D model should expose raw arrival and 60% advance money");
   assert.ok(Array.isArray(data.boqBySection) && data.boqBySection.length > 0, "5D model should include BOQ section rollups");
   assert.ok(Array.isArray(data.takeoffRows) && data.takeoffRows.length === engine.billRows().length, "5D model should include takeoff rows for each bill");
   assert.ok(Array.isArray(data.sCurve) && data.sCurve.length === engine.planRows().length, "5D model should include plan S-curve rows");
   assert.ok(data.audit && data.audit.submit >= data.audit.final, "5D model should include audit deduction chain");
-  assert.ok(data.formulas.payableMoney.includes("billMeasure"), "5D model should expose calculation formulas");
+  assert.ok(data.formulas.payableMoney.includes("JL104"), "5D model should expose calculation formulas");
 
   const validation = await requestJson("/api/cost/boq_validation");
   assert.strictEqual(validation.json.code, 1, "BOQ validation endpoint should succeed");
@@ -535,8 +599,8 @@ async function verifyCostReconciliationLoop() {
   assert.strictEqual(page.response.status, 200, "cost reconciliation page should load");
   assert.ok(page.text.includes("造价联动校核"), "cost reconciliation page should show title");
   assert.ok(page.text.includes("最终金额 = 合同金额 + 工程变更"), "cost reconciliation page should show final money formula");
-  assert.ok(page.text.includes("应付金额 = 清单计量 + 材料补差 + 手动计量"), "cost reconciliation page should show payable money formula");
-  assert.ok(page.text.includes("材料到场金额独立跟踪，不计入应付公式"), "cost reconciliation page should show material arrival tracking rule");
+  assert.ok(page.text.includes("JL104") && page.text.includes("材料设备垫付款"), "cost reconciliation page should show JL104 payable money formula");
+  assert.ok(page.text.includes("材料到场金额按预付率形成材料设备垫付款") || page.text.includes("材料到场金额独立跟踪，不计入应付公式"), "cost reconciliation page should show material arrival payment rule");
   assert.ok(page.text.includes("材料补差与到场台账") && page.text.includes("覆盖率"), "cost reconciliation page should show material ledger");
   assert.ok(page.text.includes("合同段联动明细") && page.text.includes("TJ-01"), "cost reconciliation page should show section linkage detail");
 
@@ -588,15 +652,16 @@ async function verifyCalculationRulesAdminLoop() {
   assert.strictEqual(page.response.status, 200, "calculation rules admin page should load");
   assert.ok(page.text.includes("计算规则管理后台"), "calculation rules admin page should show title");
   assert.ok(page.text.includes("材料到场进入应付"), "calculation rules admin page should expose material arrival toggle");
+  assert.ok(page.text.includes("材料预付率") && page.text.includes("保留金率"), "calculation rules admin page should expose JL104 payment rules");
 
   const original = before.json.data.rules;
   const originalPayable = before.json.data.summary.payableMoney;
-  const toggledRules = { ...original, includeMaterialArrival: !original.includeMaterialArrival };
+  const toggledRules = { ...original, includeRetention: !original.includeRetention };
   try {
     const toggled = await postJson("/api/admin/calculation_rules", toggledRules);
     assert.strictEqual(toggled.json.code, 1, "calculation rules save should succeed");
-    assert.strictEqual(toggled.json.data.rules.includeMaterialArrival, toggledRules.includeMaterialArrival, "material arrival toggle should persist");
-    assert.notStrictEqual(toggled.json.data.summary.payableMoney, originalPayable, "material arrival toggle should affect payable money");
+    assert.strictEqual(toggled.json.data.rules.includeRetention, toggledRules.includeRetention, "retention toggle should persist");
+    assert.notStrictEqual(toggled.json.data.summary.payableMoney, originalPayable, "retention toggle should affect JL104 payable money");
     assert.ok(toggled.json.data.summary.payableFormula, "saved rules should update formula text");
   } finally {
     await postJson("/api/admin/calculation_rules", original);
@@ -615,7 +680,7 @@ async function verifyContractSurveyDashboardLoop() {
   assert.ok(page.text.includes("合同概况"), "contract survey dashboard should show dedicated title");
   assert.ok(page.text.includes("HT-2026-001") && page.text.includes("TJ-01"), "contract survey dashboard should include project and section data");
   assert.ok(page.text.includes("101-1") || page.text.includes("202-1"), "contract survey dashboard should include bill rows");
-  assert.ok(page.text.includes("材料到场") && page.text.includes("到场跟踪不计入应付"), "contract survey dashboard should show material arrival tracking rule");
+  assert.ok(page.text.includes("材料到场") && (page.text.includes("到场跟踪不计入应付") || page.text.includes("材料设备垫付款") || page.text.includes("预付率")), "contract survey dashboard should show material arrival payment rule");
   assert.ok(page.text.includes("/costBase/dashboard_page") && page.text.includes("/reportManager/dashboard_page"), "contract survey dashboard should link to cost base and report center");
 }
 
@@ -1241,7 +1306,7 @@ async function verifyContactReportAndBusinessInfoLoop() {
     const dashboard = await requestText("/busineInfo/busine_info_page?projectId=1");
     assert.ok(dashboard.text.includes("业务信息") && dashboard.text.includes("LX-REPORT-VERIFY"), "business info page should render dedicated dashboard");
     assert.ok(dashboard.text.includes("工程联系单") && dashboard.text.includes("变更动态"), "business info page should show contact and variation panels");
-    assert.ok(dashboard.text.includes("材料到场") && dashboard.text.includes("到场跟踪不计入应付"), "business info page should show material arrival tracking rule");
+    assert.ok(dashboard.text.includes("材料到场") && (dashboard.text.includes("到场跟踪不计入应付") || dashboard.text.includes("材料设备垫付款") || dashboard.text.includes("预付率")), "business info page should show material arrival payment rule");
     assert.ok(dashboard.text.includes("/reportManager/reportViewSecurity?reportCode=MEASUREREOPORT"), "business info page should link payment report preview");
     assert.ok(dashboard.text.includes("LX-REPORT-VERIFY"), "business info page should include newly saved contact bill");
   } finally {
@@ -1309,7 +1374,7 @@ async function verifySecondPaymentReportLoop() {
   assert.ok(report.text.includes("HT-2026-001") && report.text.includes("101-1"), "second payment report should include section and bill panels");
   assert.ok(report.text.includes("TJ-01") && report.text.includes("HT-2026-001"), "second payment report should include selected section");
   assert.ok(report.text.includes("202-1") || report.text.includes("304-1"), "second payment report should include selected section bill rows");
-  assert.ok(report.text.includes("材料到场") && report.text.includes("到场跟踪不计入应付"), "second payment report should include material arrival tracking rule");
+  assert.ok(report.text.includes("材料到场") && (report.text.includes("到场跟踪不计入应付") || report.text.includes("材料设备垫付款") || report.text.includes("预付率")), "second payment report should include material arrival payment rule");
   assert.ok(!report.text.includes("TJ-02"), "section filter should exclude other sections");
 }
 
@@ -1339,7 +1404,7 @@ async function verifyReportManagerDashboardLoop() {
   assert.ok(page.text.includes("reportManager/reportViewSecurity") && page.text.includes("reportManager/exportReport"), "report dashboard should include directory, summary and ledger panels");
   assert.ok(page.text.includes("TJ-01") && page.text.includes("HT-2026-001"), "report dashboard should include selected section");
   assert.ok(page.text.includes("101-1") || page.text.includes("202-1"), "report dashboard should include selected section bill ledger rows");
-  assert.ok(page.text.includes("材料到场") && page.text.includes("到场跟踪不计入应付"), "report dashboard should include material arrival tracking amount");
+  assert.ok(page.text.includes("材料到场") && (page.text.includes("到场跟踪不计入应付") || page.text.includes("材料设备垫付款") || page.text.includes("预付率")), "report dashboard should include material arrival payment amount");
   assert.ok(page.text.includes("reportManager/exportReport") && page.text.includes("exportType=excel") && page.text.includes("exportType=pdf") && page.text.includes("exportType=word") && page.text.includes("exportType=all"), "report dashboard should expose all original export links");
   assert.ok(page.text.includes("reportManager/export_report_project_page/0?bdCode=MEASUREREOPORT"), "report dashboard should link to batch export page");
   const summaryArea = page.text.slice(page.text.indexOf("HT-2026-001"));
@@ -2043,7 +2108,7 @@ async function verifyMultiProjectQueryLoop() {
   const detail = await requestText(`/mtilProjectQuer/get_mutil_detail?sectionId=${section.sectionId}`);
   assert.ok(detail.text.includes("section-detail-dashboard"), "section detail should render a dedicated dashboard");
   assert.ok(detail.text.includes("标段详情") && detail.text.includes("累计支付") && detail.text.includes("支付比例"), "section detail should include business summary fields");
-  assert.ok(detail.text.includes("材料到场") && detail.text.includes("到场跟踪不计入应付"), "section detail should include material arrival tracking rule");
+  assert.ok(detail.text.includes("材料到场") && (detail.text.includes("到场跟踪不计入应付") || detail.text.includes("材料设备垫付款") || detail.text.includes("预付率")), "section detail should include material arrival payment rule");
   assert.ok(detail.text.includes(section.sectionName), "section detail should include selected section name");
 
   const dashboard = await requestText(`/mtilProjectQuer/dashboard_page?projectId=${project.projectId}`);
@@ -2150,30 +2215,33 @@ async function verifyGatherPeriodCalculationLoop() {
   assert.strictEqual(summary.billMeasureMoney, 3700, "period bill measure money should match bill detail");
   assert.strictEqual(summary.materialAdjustMoney, 560, "period material adjustment should use quantity times price difference");
   assert.strictEqual(summary.materialArrivalMoney, 2190, "period material arrival should be tracked separately");
+  assert.strictEqual(summary.materialAdvanceMoney, 1314, "period material arrival should create 60% material advance");
+  assert.strictEqual(summary.retentionMoney, 402.1, "period should deduct 10% retention from subtotal");
   assert.strictEqual(summary.manualMoney, 321, "period manual measure money should match manual detail");
-  assert.strictEqual(summary.payableMoney, 4581, "period payable money should sum only current-period payable items");
-  assert.strictEqual(summary.auditSubmitMoney, 4581, "period audit submit money should start from payable money");
-  assert.strictEqual(summary.auditFinalMoney, round(4581 * 0.985), "period audit final money should apply the audit chain");
-  assert.strictEqual(summary.auditDeductionMoney, round(4581 - (4581 * 0.985)), "period audit deduction should equal submit minus final audit");
+  assert.strictEqual(summary.payableMoney, 5492.9, "period payable money should follow JL104 formula");
+  assert.strictEqual(summary.auditSubmitMoney, 5492.9, "period audit submit money should start from payable money");
+  assert.strictEqual(summary.auditFinalMoney, round(5492.9 * 0.985), "period audit final money should apply the audit chain");
+  assert.strictEqual(summary.auditDeductionMoney, round(5492.9 - (5492.9 * 0.985)), "period audit deduction should equal submit minus final audit");
 
   const { json: collectJson } = await postJson("/dataGather/data_collect_gather", { gatherId });
   assert.strictEqual(collectJson.data.collected, true, "gather collection should create a snapshot");
   assert.strictEqual(collectJson.data.snapshot.materialArrivalMoney, 2190, "collected snapshot should keep material arrival tracking money");
-  assert.strictEqual(collectJson.data.snapshot.auditFinalMoney, round(4581 * 0.985), "collected snapshot should keep final audit money");
-  assert.strictEqual(collectJson.data.snapshot.auditDeductionMoney, round(4581 - (4581 * 0.985)), "collected snapshot should keep audit deduction");
+  assert.strictEqual(collectJson.data.snapshot.materialAdvanceMoney, 1314, "collected snapshot should keep material advance money");
+  assert.strictEqual(collectJson.data.snapshot.auditFinalMoney, round(5492.9 * 0.985), "collected snapshot should keep final audit money");
+  assert.strictEqual(collectJson.data.snapshot.auditDeductionMoney, round(5492.9 - (5492.9 * 0.985)), "collected snapshot should keep audit deduction");
   const gatherRowsAfterCollect = await requestJson("/sysGather/get_gather_data_list?page=1&limit=1000");
   const collectedGather = gatherRowsAfterCollect.json.data.find((row) => Number(row.gatherId || row.id) === Number(gatherId));
   assert.ok(collectedGather, "collected gather period should remain queryable");
-  assert.strictEqual(Number(collectedGather.auditFinalMoney || 0), round(4581 * 0.985), "gather period row should persist final audit money");
+  assert.strictEqual(Number(collectedGather.auditFinalMoney || 0), round(5492.9 * 0.985), "gather period row should persist final audit money");
 
   const dashboard = await requestText(`/dataGather/gather_dashboard_page?gatherId=${gatherId}`);
   assert.ok(dashboard.text.includes("期次数据汇总"), "gather dashboard should show dedicated title");
   assert.ok(dashboard.text.includes("清单计量") && dashboard.text.includes("材料补差") && dashboard.text.includes("材料到场") && dashboard.text.includes("手动计量"), "gather dashboard should include current-period components");
   assert.ok(dashboard.text.includes("2,190.00"), "gather dashboard should show period material arrival tracking money");
   assert.ok(dashboard.text.includes("最近采集快照") && dashboard.text.includes("材料到场"), "gather snapshot table should include material arrival tracking column");
-  assert.ok(dashboard.text.includes("4,581.00"), "gather dashboard should show period payable money");
+  assert.ok(dashboard.text.includes("5,492.90"), "gather dashboard should show period payable money");
   assert.ok(dashboard.text.includes("最终审核") && dashboard.text.includes("本期核减"), "gather dashboard should show audit cards");
-  assert.ok(dashboard.text.includes(moneyTextForVerify(round(4581 * 0.985))), "gather dashboard should show final audit money");
+  assert.ok(dashboard.text.includes(moneyTextForVerify(round(5492.9 * 0.985))), "gather dashboard should show final audit money");
   assert.ok(dashboard.text.includes("最近采集快照") && dashboard.text.includes(String(collectJson.data.snapshotId)), "gather dashboard should show latest snapshot");
 
   await cleanupGatherVerifyData();
@@ -2290,7 +2358,9 @@ async function verifyFinancialChainIntegrationLoop() {
     manualMoney: 123,
     varyMoney: 560
   };
-  expected.payableMoney = expected.billMeasureMoney + expected.materialAdjustMoney + expected.manualMoney;
+  expected.materialAdvanceMoney = round(expected.materialArrivalMoney * 0.6);
+  expected.retentionMoney = round((expected.billMeasureMoney + expected.manualMoney) * 0.1);
+  expected.payableMoney = round(expected.billMeasureMoney + expected.materialAdjustMoney + expected.manualMoney + expected.materialAdvanceMoney - expected.retentionMoney);
 
   let measureId = 0;
   let diasId = 0;
@@ -2361,9 +2431,11 @@ async function verifyFinancialChainIntegrationLoop() {
     assert.strictEqual(gather.billMeasureMoney, expected.billMeasureMoney, "financial chain gather should include bill measure money");
     assert.strictEqual(gather.materialAdjustMoney, expected.materialAdjustMoney, "financial chain gather should include material adjustment money");
     assert.strictEqual(gather.materialArrivalMoney, expected.materialArrivalMoney, "financial chain gather should track material arrival money");
+    assert.strictEqual(gather.materialAdvanceMoney, expected.materialAdvanceMoney, "financial chain gather should include material advance money");
+    assert.strictEqual(gather.retentionMoney, expected.retentionMoney, "financial chain gather should deduct retention money");
     assert.strictEqual(gather.manualMoney, expected.manualMoney, "financial chain gather should include manual measure money");
     assert.strictEqual(gather.varyMoney, expected.varyMoney, "financial chain gather should include variation money by business date");
-    assert.strictEqual(gather.payableMoney, expected.payableMoney, "financial chain gather payable should exclude material arrival and variation");
+    assert.strictEqual(gather.payableMoney, expected.payableMoney, "financial chain gather payable should follow JL104 formula and exclude variation");
 
     const { json: collectJson } = await postJson("/dataGather/data_collect_gather", { gatherId });
     assert.strictEqual(collectJson.data.snapshot.payableMoney, expected.payableMoney, "financial chain snapshot should persist payable money");
@@ -2616,7 +2688,7 @@ async function verifyImportExportDownloadLoop() {
   const excelDownload = await requestText(`/reportManager/exportReports?file_name=${encodeURIComponent(excelTicket.json.data[1])}`);
   assert.ok(excelDownload.text.includes("sectionName") && excelDownload.text.includes("totalPayMoney"), "excel report download should contain report columns");
   assert.ok(excelDownload.text.includes("billMeasureMoney") && excelDownload.text.includes("materialDiasMoney") && excelDownload.text.includes("materialArrivalMoney") && excelDownload.text.includes("manualMoney"), "excel report download should include full payable component columns");
-  assert.ok(excelDownload.text.includes("材料到场仅跟踪，不计入应付"), "excel report download should state material arrival tracking rule");
+  assert.ok(excelDownload.text.includes("材料到场仅跟踪，不计入应付") || excelDownload.text.includes("JL109材料到场按预付率形成材料设备垫付款"), "excel report download should state material arrival payment rule");
 
   const pdfTicket = await requestJson("/reportManager/exportReport", {
     method: "POST",
@@ -2878,6 +2950,7 @@ async function main() {
   await verifyFallbackResponses();
   const assets = await verifyAssets();
   verifyCostMath();
+  verifyJlPaymentReferenceCases();
   await verifyStandaloneCostCalculator();
   await verifyFiveDCostModelLoop();
   await verifyBillModelImportLoop();

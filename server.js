@@ -374,8 +374,12 @@ function reportPaymentRows(ids = []) {
         billMeasureMoney: Number(row.measureMoney || row.currentPayMoney || 0),
         materialArrivalMoney: Number(arrival.materialArrivalMoney || 0),
         materialArrivalCount: Number(arrival.materialArrivalCount || 0),
-        payableFormula: "清单计量 + 材料补差 + 手动计量",
-        arrivalRule: "材料到场仅跟踪，不计入应付"
+        materialAdvanceMoney: Number(row.materialAdvanceMoney || 0),
+        materialDeductionMoney: Number(row.materialDeductionMoney || 0),
+        retentionMoney: Number(row.retentionMoney || 0),
+        mobilizationDeductionMoney: Number(row.mobilizationDeductionMoney || 0),
+        payableFormula: row.payableFormula || engine.payableFormulaText(),
+        arrivalRule: "JL109材料到场按预付率形成材料设备垫付款"
       };
     });
 }
@@ -955,10 +959,26 @@ function saveCalculationRules(body = {}) {
     includeBillMeasure: boolFromBody(body.includeBillMeasure, false),
     includeMaterialAdjust: boolFromBody(body.includeMaterialAdjust, false),
     includeMaterialArrival: boolFromBody(body.includeMaterialArrival, false),
+    includeMaterialAdvance: boolFromBody(body.includeMaterialAdvance, current.includeMaterialAdvance),
     includeManualMeasure: boolFromBody(body.includeManualMeasure, false),
+    includeRetention: boolFromBody(body.includeRetention, current.includeRetention),
     auditSupervisorRate: numberFromBody(body.auditSupervisorRate, current.auditSupervisorRate, 0, 100),
     auditOwnerRate: numberFromBody(body.auditOwnerRate, current.auditOwnerRate, 0, 100),
-    auditFinalRate: numberFromBody(body.auditFinalRate, current.auditFinalRate, 0, 100)
+    auditFinalRate: numberFromBody(body.auditFinalRate, current.auditFinalRate, 0, 100),
+    materialAdvanceRate: numberFromBody(body.materialAdvanceRate, current.materialAdvanceRate, 0, 100),
+    retentionRate: numberFromBody(body.retentionRate, current.retentionRate, 0, 100),
+    mobilizationAdvanceRate: numberFromBody(body.mobilizationAdvanceRate, current.mobilizationAdvanceRate, 0, 100),
+    mobilizationDeductionStartRate: numberFromBody(body.mobilizationDeductionStartRate, current.mobilizationDeductionStartRate, 0, 100),
+    mobilizationDeductionEndRate: numberFromBody(body.mobilizationDeductionEndRate, current.mobilizationDeductionEndRate, 0, 100),
+    materialDeductionMoney: numberFromBody(body.materialDeductionMoney, current.materialDeductionMoney, -999999999999, 999999999999),
+    previousMaterialDeductionMoney: numberFromBody(body.previousMaterialDeductionMoney, current.previousMaterialDeductionMoney, -999999999999, 999999999999),
+    cumulativeMaterialDeductionMoney: numberFromBody(body.cumulativeMaterialDeductionMoney, current.cumulativeMaterialDeductionMoney, -999999999999, 999999999999),
+    mobilizationAdvanceMoney: numberFromBody(body.mobilizationAdvanceMoney, current.mobilizationAdvanceMoney, -999999999999, 999999999999),
+    claimsMoney: numberFromBody(body.claimsMoney, current.claimsMoney, -999999999999, 999999999999),
+    penaltyMoney: numberFromBody(body.penaltyMoney, current.penaltyMoney, -999999999999, 999999999999),
+    interestMoney: numberFromBody(body.interestMoney, current.interestMoney, -999999999999, 999999999999),
+    otherAdjustmentMoney: numberFromBody(body.otherAdjustmentMoney, current.otherAdjustmentMoney, -999999999999, 999999999999),
+    provisionalCurrentMoney: numberFromBody(body.provisionalCurrentMoney, current.provisionalCurrentMoney, -999999999999, 999999999999)
   };
   engine.db.calculationRules = next;
   return {
@@ -981,8 +1001,12 @@ function calculationRulesPageHtml() {
     ["清单计量", moneyText(summary.measuredMoney)],
     ["材料补差", moneyText(summary.materialDiasMoney)],
     ["材料到场", moneyText(summary.materialArrivalMoney)],
+    ["材料设备垫付款", moneyText(summary.materialAdvanceMoney)],
+    ["扣回材料设备垫付款", moneyText(summary.materialDeductionMoney)],
+    ["保留金", moneyText(summary.retentionMoney)],
+    ["扣回动员预付款", moneyText(summary.mobilizationDeductionMoney)],
     ["手动计量", moneyText(summary.manualMoney)],
-    ["应付金额", moneyText(summary.payableMoney)],
+    ["JL104本期实际支付", moneyText(summary.payableMoney)],
     ["支付比例", percentText(summary.payRate)]
   ].map(([label, value]) => `<tr><td>${label}</td><td>${value}</td></tr>`).join("");
   return `
@@ -1021,11 +1045,24 @@ function calculationRulesPageHtml() {
               <div class="calc-admin-field"><label>监理审核比例(%)</label><input type="number" step="0.01" name="auditSupervisorRate" value="${rules.auditSupervisorRate}"></div>
               <div class="calc-admin-field"><label>业主审核比例(%)</label><input type="number" step="0.01" name="auditOwnerRate" value="${rules.auditOwnerRate}"></div>
               <div class="calc-admin-field"><label>最终审定比例(%)</label><input type="number" step="0.01" name="auditFinalRate" value="${rules.auditFinalRate}"></div>
+              <div class="calc-admin-field"><label>材料预付率(%)</label><input type="number" step="0.01" name="materialAdvanceRate" value="${rules.materialAdvanceRate}"></div>
+              <div class="calc-admin-field"><label>保留金率(%)</label><input type="number" step="0.01" name="retentionRate" value="${rules.retentionRate}"></div>
+              <div class="calc-admin-field"><label>动员预付款率(%)</label><input type="number" step="0.01" name="mobilizationAdvanceRate" value="${rules.mobilizationAdvanceRate}"></div>
+              <div class="calc-admin-field"><label>动员扣回起点(%)</label><input type="number" step="0.01" name="mobilizationDeductionStartRate" value="${rules.mobilizationDeductionStartRate}"></div>
+              <div class="calc-admin-field"><label>动员扣回完成点(%)</label><input type="number" step="0.01" name="mobilizationDeductionEndRate" value="${rules.mobilizationDeductionEndRate}"></div>
+              <div class="calc-admin-field"><label>本期材料扣回</label><input type="number" step="0.01" name="materialDeductionMoney" value="${rules.materialDeductionMoney}"></div>
+              <div class="calc-admin-field"><label>到上期末材料扣回</label><input type="number" step="0.01" name="previousMaterialDeductionMoney" value="${rules.previousMaterialDeductionMoney}"></div>
+              <div class="calc-admin-field"><label>到本期末材料扣回</label><input type="number" step="0.01" name="cumulativeMaterialDeductionMoney" value="${rules.cumulativeMaterialDeductionMoney}"></div>
+              <div class="calc-admin-field"><label>索赔金额</label><input type="number" step="0.01" name="claimsMoney" value="${rules.claimsMoney}"></div>
+              <div class="calc-admin-field"><label>违约罚金</label><input type="number" step="0.01" name="penaltyMoney" value="${rules.penaltyMoney}"></div>
+              <div class="calc-admin-field"><label>迟付款利息</label><input type="number" step="0.01" name="interestMoney" value="${rules.interestMoney}"></div>
             </div>
             <div class="calc-admin-checks">
               <label><input type="checkbox" name="includeBillMeasure" ${checked(rules.includeBillMeasure)}>清单计量进入应付</label>
               <label><input type="checkbox" name="includeMaterialAdjust" ${checked(rules.includeMaterialAdjust)}>材料补差进入应付</label>
               <label><input type="checkbox" name="includeMaterialArrival" ${checked(rules.includeMaterialArrival)}>材料到场进入应付</label>
+              <label><input type="checkbox" name="includeMaterialAdvance" ${checked(rules.includeMaterialAdvance)}>JL109材料到场按预付率进入JL104</label>
+              <label><input type="checkbox" name="includeRetention" ${checked(rules.includeRetention)}>按小计扣保留金</label>
               <label><input type="checkbox" name="includeManualMeasure" ${checked(rules.includeManualMeasure)}>手动计量进入应付</label>
             </div>
             <div class="calc-admin-formula">当前公式：<strong>${htmlEscape(summary.payableFormula)}</strong></div>
@@ -1229,7 +1266,9 @@ function adminDashboardHtml() {
     ["清单计量", moneyText(summary.measuredMoney), "累计清单计量金额"],
     ["材料补差", moneyText(summary.materialDiasMoney), "材料价差应付"],
     ["手动计量", moneyText(summary.manualMoney), "现场签证/零星工程"],
-    ["当前应付", moneyText(summary.payableMoney), summary.payableFormula]
+    ["材料设备垫付款", moneyText(summary.materialAdvanceMoney), "JL109到场金额按预付率计算"],
+    ["保留金", moneyText(summary.retentionMoney), "按小计预扣"],
+    ["JL104实际支付", moneyText(summary.payableMoney), summary.payableFormula]
   ]);
   const entries = [
     ["工期管理", "/sysGather/gatherData_page/0", "维护计量期次、采集本期数据、锁定/启用工期"],
@@ -7208,7 +7247,7 @@ function costReconciliationData() {
     },
     {
       key: "payable-money",
-      name: "应付金额 = 清单计量 + 材料补差 + 手动计量",
+      name: "JL104实际支付 = 小计 + 价格调整 + 材料设备垫付款 - 扣回/保留金",
       expected: expectedPayable,
       actual: round2(summary.payableMoney),
       passed: Math.abs(expectedPayable - round2(summary.payableMoney)) < 0.01
@@ -7250,9 +7289,9 @@ function costReconciliationData() {
     },
     {
       key: "material-arrival-tracking",
-      name: "材料到场金额独立跟踪，不计入应付公式",
+      name: "材料到场金额按预付率形成材料设备垫付款",
       expected: materialArrivalMoney,
-      actual: 0,
+      actual: round2(summary.materialAdvanceMoney || 0),
       passed: Math.abs(expectedPayable - round2(summary.payableMoney)) < 0.01 && materialArrivalMoney >= 0
     },
     {
@@ -7273,6 +7312,10 @@ function costReconciliationData() {
     finalMoney: round2(summary.finalMoney),
     measuredMoney: round2(summary.measuredMoney),
     materialDiasMoney: round2(summary.materialDiasMoney),
+    materialAdvanceMoney: round2(summary.materialAdvanceMoney),
+    materialDeductionMoney: round2(summary.materialDeductionMoney),
+    retentionMoney: round2(summary.retentionMoney),
+    mobilizationDeductionMoney: round2(summary.mobilizationDeductionMoney),
     manualMoney: round2(summary.manualMoney),
     payableMoney: round2(summary.payableMoney),
     payRate: round2(summary.payRate),
@@ -7365,6 +7408,10 @@ function fiveDCostModelData() {
     billMeasure: number2(summary.measuredMoney),
     materialDias: number2(summary.materialDiasMoney),
     materialArrivalTracking: number2(engine.materialArrivalRows().reduce((sum, row) => sum + Number(row.money || 0), 0)),
+    materialAdvance: number2(summary.materialAdvanceMoney),
+    materialDeduction: number2(summary.materialDeductionMoney),
+    retention: number2(summary.retentionMoney),
+    mobilizationDeduction: number2(summary.mobilizationDeductionMoney),
     manualMeasure: number2(summary.manualMoney),
     variation: number2(summary.varyMoney)
   };
@@ -7384,9 +7431,9 @@ function fiveDCostModelData() {
     model: "BOQ-5D-COST",
     formulas: {
       finalMoney: "contractMoney + variationMoney",
-      payableMoney: "billMeasure + materialDias + manualMeasure",
+      payableMoney: "JL104: subtotal + materialDias + materialAdvance - materialDeduction - retention - mobilizationDeduction",
       contactEstimateMoney: "engineering contact pre-change cost signal, excluded until formal variation/payment",
-      materialArrival: "tracking only, excluded from payableMoney",
+      materialArrival: "JL109 material arrival value * materialAdvanceRate -> materialAdvance",
       payRate: "payableMoney / finalMoney * 100"
     },
     totals: {
@@ -10642,12 +10689,8 @@ function buildGatherSnapshot(gatherId = 0) {
   const manualMoney = manuals.reduce((sum, row) => sum + Number(row.measureMoney || 0), 0);
   const varyMoney = variations.reduce((sum, row) => sum + Number(row.varyMoney || 0), 0);
   const rules = engine.calculationRules();
-  const payableMoney = engine.calculatePayable({
-    measuredMoney: measureMoney,
-    materialAdjustMoney,
-    materialArrivalMoney,
-    manualMoney
-  }, rules);
+  const certificate = engine.paymentCertificateForPeriod(selectedGatherId);
+  const payableMoney = certificate.finalPayment;
   const auditSubmitMoney = payableMoney;
   const auditSupervisorMoney = payableMoney * (rules.auditSupervisorRate / 100);
   const auditOwnerMoney = payableMoney * (rules.auditOwnerRate / 100);
@@ -10664,6 +10707,10 @@ function buildGatherSnapshot(gatherId = 0) {
     billMeasureMoney: Number(measureMoney.toFixed(2)),
     materialAdjustMoney: Number(materialAdjustMoney.toFixed(2)),
     materialArrivalMoney: Number(materialArrivalMoney.toFixed(2)),
+    materialAdvanceMoney: Number(certificate.materialAdvanceMoney.toFixed(2)),
+    materialDeductionMoney: Number(certificate.materialDeductionMoney.toFixed(2)),
+    retentionMoney: Number(certificate.retentionMoney.toFixed(2)),
+    mobilizationDeductionMoney: Number(certificate.mobilizationDeductionMoney.toFixed(2)),
     manualMoney: Number(manualMoney.toFixed(2)),
     varyMoney: Number(varyMoney.toFixed(2)),
     payableMoney: Number(payableMoney.toFixed(2)),
@@ -10675,7 +10722,8 @@ function buildGatherSnapshot(gatherId = 0) {
     contractMoney: summary.contractSumMoney,
     finalMoney: summary.finalMoney,
     payRate: summary.finalMoney ? Number(((payableMoney / summary.finalMoney) * 100).toFixed(2)) : 0,
-    payableFormula: engine.payableFormulaText(rules)
+    payableFormula: engine.payableFormulaText(rules),
+    paymentCertificate: certificate
   };
 }
 
@@ -11222,6 +11270,10 @@ app.post("/api/admin/calculation_rules", (req, res) => mutate(res, () => saveCal
 app.get("/api/cost/bills", (req, res) => table(res, req, engine.billRows()));
 app.get("/api/cost/measures", (req, res) => table(res, req, engine.measureRows()));
 app.get("/api/cost/ledger", (req, res) => table(res, req, engine.billLedgerRows()));
+app.get("/api/payment/jl113", (req, res) => table(res, req, engine.jl113Rows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl105", (req, res) => table(res, req, engine.jl105LedgerRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl104_chapters", (req, res) => table(res, req, engine.jl104ChapterRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/certificate", (req, res) => operationOk(res, engine.paymentCertificateForPeriod(queryNumber(req, "periodId") || queryNumber(req, "gatherId"), { sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/cost/reconciliation", (req, res) => operationOk(res, costReconciliationData()));
 app.get("/api/cost/5d_model", (req, res) => operationOk(res, fiveDCostModelData()));
 app.get("/api/cost/boq_validation", (req, res) => operationOk(res, boqValidationData()));
@@ -11362,12 +11414,15 @@ app.post("/api/cost/calculate", (req, res) => {
   const manualMoney = round(sum(manualDetails, (row) => row.measureMoney));
   const finalMoney = round(contractMoney + variationMoney);
   const rules = engine.calculationRules();
-  const payableMoney = engine.calculatePayable({
+  const paymentCertificate = engine.calculatePaymentCertificate({
     measuredMoney,
     materialAdjustMoney,
     materialArrivalMoney,
-    manualMoney
+    manualMoney,
+    contractTotal: finalMoney,
+    cumulativeSubtotal: measuredMoney + manualMoney
   }, rules);
+  const payableMoney = paymentCertificate.finalPayment;
   operationOk(res, {
     contractMoney,
     measuredMoney,
@@ -11377,6 +11432,7 @@ app.post("/api/cost/calculate", (req, res) => {
     manualMoney,
     finalMoney,
     payableMoney,
+    paymentCertificate,
     payRate: finalMoney ? round((payableMoney / finalMoney) * 100) : 0,
     payableFormula: engine.payableFormulaText(rules),
     calculationRules: rules,
