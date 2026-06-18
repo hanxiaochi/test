@@ -1442,6 +1442,44 @@ async function verifyReportManagerDashboardLoop() {
   assert.ok(["导出PDF格式报表", "导出WORD格式报表", "导出EXCEL格式报表", "一键打印"].every((label) => exportMenuPage.text.includes(label)), "report export menu page should expose original export choices");
 }
 
+async function verifyJlPaymentReportPageLoop() {
+  const certificate = await requestJson("/api/payment/certificate?periodId=2");
+  assert.strictEqual(certificate.response.status, 200, "JL payment certificate API should load");
+  assert.strictEqual(certificate.json.code, 1, "JL payment certificate API should return success");
+  const data = certificate.json.data;
+  const expectedFinal = round(
+    Number(data.subtotal || 0) +
+      Number(data.priceAdjustment || 0) +
+      Number(data.materialAdvanceMoney || 0) +
+      Number(data.mobilizationAdvanceMoney || 0) +
+      Number(data.claimsMoney || 0) +
+      Number(data.interestMoney || 0) +
+      Number(data.otherAdjustmentMoney || 0) -
+      Number(data.penaltyMoney || 0) -
+      Number(data.materialDeductionMoney || 0) -
+      Number(data.retentionMoney || 0) -
+      Number(data.mobilizationDeductionMoney || 0)
+  );
+  assert.strictEqual(round(data.finalPayment), expectedFinal, "JL certificate API should follow JL104 payment formula for current local period");
+
+  const page = await requestText("/payment/jl_report_page?periodId=2");
+  assert.strictEqual(page.response.status, 200, "JL payment report page should load");
+  assert.ok(page.text.includes("JL计量支付报表核对"), "JL payment report page should show dedicated title");
+  assert.ok(["JL104", "JL113", "JL105", "JL109"].every((label) => page.text.includes(label)), "JL payment report page should include core JL tables");
+  assert.ok(page.text.includes(moneyTextForVerify(data.finalPayment)) && page.text.includes(moneyTextForVerify(data.subtotal)), "JL payment report page should show current API values");
+  assert.ok(page.text.includes("7,699,376.00") && page.text.includes("24,024,989.00") && page.text.includes("621,281.00"), "JL payment report page should show PDF reference validation values");
+  assert.ok(page.text.includes("/api/payment/certificate"), "JL payment report page should link certificate JSON");
+
+  const menuPage = await requestText("/sbr/sbr_com/9004");
+  assert.strictEqual(menuPage.response.status, 200, "JL payment report menu page should load");
+  assert.ok(menuPage.text.includes("JL计量支付报表核对") && menuPage.text.includes("JL104"), "JL payment report menu page should render the report page");
+
+  const reportDashboard = await requestText("/reportManager/dashboard_page");
+  assert.ok(reportDashboard.text.includes("/payment/jl_report_page"), "report manager dashboard should link JL payment report");
+  const adminDashboard = await requestText("/admin/dashboard_page");
+  assert.ok(adminDashboard.text.includes("/payment/jl_report_page") && adminDashboard.text.includes("JL计量支付报表"), "admin dashboard should link JL payment report");
+}
+
 async function verifyAuditMoneyDashboardLoop() {
   const list = await requestJson("/measure_data/audit_money_list?page=1&limit=1000");
   assert.ok(list.json.data.length > 0, "audit money list should expose rows");
@@ -2921,7 +2959,8 @@ async function verifyOriginalMenuUrlAliasesLoop() {
     ["411", "oaDataNode/downLoadZipFile"],
     ["568", "试验资料"],
     ["9001", "后台管理"],
-    ["9002", "计算规则管理后台"]
+    ["9002", "计算规则管理后台"],
+    ["9004", "JL计量支付报表核对"]
   ];
   for (const [id, expected] of menuIds) {
     const page = await requestText(`/sbr/sbr_com/${id}`);
@@ -2937,6 +2976,7 @@ async function verifyOriginalMenuUrlAliasesLoop() {
   const systemMenuText = JSON.stringify(systemMenu.json.data);
   assert.ok(systemMenuText.includes("后台首页") && systemMenuText.includes("admin/dashboard_page"), "backend menu should expose backend dashboard");
   assert.ok(systemMenuText.includes("计算规则后台") && systemMenuText.includes("admin/calculation_rules_page"), "backend menu should expose calculation rules admin");
+  assert.ok(systemMenuText.includes("JL计量支付报表") && systemMenuText.includes("payment/jl_report_page"), "backend menu should expose JL payment report");
 }
 
 async function main() {
@@ -2975,6 +3015,7 @@ async function main() {
   await verifyEngineeringContactDashboardLoop();
   await verifySecondPaymentReportLoop();
   await verifyReportManagerDashboardLoop();
+  await verifyJlPaymentReportPageLoop();
   await verifyAuditMoneyDashboardLoop();
   await verifyProjectPlanDashboardLoop();
   await verifyWorkflowAdjustReturnLoop();
