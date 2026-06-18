@@ -658,10 +658,19 @@ async function verifyCalculationRulesAdminLoop() {
   assert.ok(page.text.includes("材料预付率") && page.text.includes("保留金率"), "calculation rules admin page should expose JL104 payment rules");
   assert.ok(page.text.includes("JL115出现至第几期") && page.text.includes("JL108/JL116调差月份"), "calculation rules admin page should expose JL form lifecycle rules");
   assert.ok(page.text.includes("JL116非调因子X"), "calculation rules admin page should expose JL116 price adjustment formula factor");
+  assert.ok(page.text.includes("JL108-1原材料折算系数") && page.text.includes("JL116材料权重系数"), "calculation rules admin page should expose JL108/JL116 configurable factor maps");
 
   const original = before.json.data.rules;
   const originalPayable = before.json.data.summary.payableMoney;
-  const toggledRules = { ...original, includeRetention: !original.includeRetention, jl115EndPeriod: Number(original.jl115EndPeriod || 2) + 1, jlPriceAdjustmentMonths: "2,5,8,11", jl116NonAdjustableFactor: 0.4 };
+  const toggledRules = {
+    ...original,
+    includeRetention: !original.includeRetention,
+    jl115EndPeriod: Number(original.jl115EndPeriod || 2) + 1,
+    jlPriceAdjustmentMonths: "2,5,8,11",
+    jl116NonAdjustableFactor: 0.4,
+    jl108RawMaterialConversionFactors: "CL-001=1.05; 钢筋 HRB400=1.05",
+    jl116MaterialWeights: "CL-001=0.35; CL-002=0.30"
+  };
   try {
     const toggled = await postJson("/api/admin/calculation_rules", toggledRules);
     assert.strictEqual(toggled.json.code, 1, "calculation rules save should succeed");
@@ -669,6 +678,8 @@ async function verifyCalculationRulesAdminLoop() {
     assert.strictEqual(toggled.json.data.rules.jl115EndPeriod, toggledRules.jl115EndPeriod, "JL115 lifecycle end period should persist");
     assert.deepStrictEqual(toggled.json.data.rules.jlPriceAdjustmentMonths, [2, 5, 8, 11], "JL price adjustment months should parse and persist");
     assert.strictEqual(toggled.json.data.rules.jl116NonAdjustableFactor, 0.4, "JL116 non-adjustable factor should persist");
+    assert.strictEqual(toggled.json.data.rules.jl108RawMaterialConversionFactors["CL-001"], 1.05, "JL108-1 conversion factor map should parse and persist");
+    assert.strictEqual(toggled.json.data.rules.jl116MaterialWeights["CL-001"], 0.35, "JL116 material weight map should parse and persist");
     assert.notStrictEqual(toggled.json.data.summary.payableMoney, originalPayable, "retention toggle should affect JL104 payable money");
     assert.ok(toggled.json.data.summary.payableFormula, "saved rules should update formula text");
   } finally {
@@ -1545,12 +1556,16 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(lifecycle.json.data.forms.some((row) => row.code === "JL111" && !row.expected), "JL111 should stay hidden before mobilization deduction threshold");
   assert.ok(lifecycle.json.data.summary.lifecycleRules.jlPriceAdjustmentMonths.length > 0, "JL lifecycle summary should expose configured price adjustment months");
   assert.ok(Object.prototype.hasOwnProperty.call(lifecycle.json.data.summary.lifecycleRules, "jl116NonAdjustableFactor"), "JL lifecycle summary should expose JL116 formula factor");
+  assert.ok(Object.prototype.hasOwnProperty.call(lifecycle.json.data.summary.lifecycleRules, "jl108RawMaterialConversionFactorCount"), "JL lifecycle summary should expose JL108-1 conversion factor config count");
+  assert.ok(Object.prototype.hasOwnProperty.call(lifecycle.json.data.summary.lifecycleRules, "jl116MaterialWeightCount"), "JL lifecycle summary should expose JL116 material weight config count");
 
   const priceAdjustment = await requestJson("/api/payment/jl_price_adjustment?periodId=2");
   assert.strictEqual(priceAdjustment.response.status, 200, "JL price adjustment API should load");
   assert.strictEqual(priceAdjustment.json.code, 1, "JL price adjustment API should return success");
   assert.ok(Array.isArray(priceAdjustment.json.data.detailRows), "JL108 price adjustment report should expose detail rows");
   assert.ok(priceAdjustment.json.data.formula && priceAdjustment.json.data.formula.formula.includes("T = F"), "JL116 price adjustment report should expose formula");
+  assert.ok(Array.isArray(priceAdjustment.json.data.formula.materialWeights), "JL116 price adjustment report should expose material weight rows");
+  assert.ok(Object.prototype.hasOwnProperty.call(priceAdjustment.json.data.formula, "formulaAdjustment"), "JL116 formula summary should expose formula adjustment amount");
   assert.strictEqual(round(priceAdjustment.json.data.formula.certificatePriceAdjustment), round(data.priceAdjustment), "JL116 formula summary should reconcile to JL104 price adjustment");
 
   const deductions = await requestJson("/api/payment/jl_deductions?periodId=2");

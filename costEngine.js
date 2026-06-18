@@ -63,6 +63,81 @@ function positive(value) {
   return Math.abs(numberOr(value, 0));
 }
 
+function normalizeRuleKey(value) {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, "");
+}
+
+function parseNumericRuleMap(value, fallback = {}, options = {}) {
+  const min = Number.isFinite(options.min) ? options.min : -Infinity;
+  const max = Number.isFinite(options.max) ? options.max : Infinity;
+  const result = {};
+  const add = (key, rawValue) => {
+    const cleanKey = String(key ?? "").trim();
+    const number = Number(rawValue);
+    if (!cleanKey || !Number.isFinite(number)) return;
+    result[cleanKey] = Math.max(min, Math.min(max, number));
+  };
+  if (value === undefined || value === null || value === "") {
+    return fallback && typeof fallback === "object" && !Array.isArray(fallback)
+      ? parseNumericRuleMap(fallback, {}, options)
+      : {};
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry) => {
+      if (entry && typeof entry === "object") {
+        const key = entry.key ?? entry.code ?? entry.materialNo ?? entry.materialName ?? entry.materialId ?? entry.id;
+        const rawValue = entry.value ?? entry.factor ?? entry.weight ?? entry.coefficient ?? entry.conversionFactor;
+        add(key, rawValue);
+      }
+    });
+    return result;
+  }
+  if (typeof value === "object") {
+    Object.entries(value).forEach(([key, rawValue]) => add(key, rawValue));
+    return result;
+  }
+  const text = String(value).trim();
+  if (!text) return {};
+  if (/^[\[{]/.test(text)) {
+    try {
+      return parseNumericRuleMap(JSON.parse(text), fallback, options);
+    } catch {
+      // Fall through to pair parsing.
+    }
+  }
+  text.split(/[;,\n\r，；、]+/).forEach((part) => {
+    const match = String(part).trim().match(/^(.+?)(?:=|:|：)\s*(-?\d+(?:\.\d+)?)/);
+    if (match) add(match[1], match[2]);
+  });
+  return result;
+}
+
+function lookupNumericRule(map, row = {}, fallback = 0) {
+  const parsed = parseNumericRuleMap(map, {});
+  const entries = Object.entries(parsed);
+  if (!entries.length) return fallback;
+  const candidates = [
+    row.materialNo,
+    row.materialName,
+    row.secMaterialName,
+    row.materialId,
+    row.id
+  ].map(normalizeRuleKey).filter(Boolean);
+  for (const candidate of candidates) {
+    const exact = entries.find(([key]) => normalizeRuleKey(key) === candidate);
+    if (exact) return exact[1];
+  }
+  const name = normalizeRuleKey(row.materialName || row.secMaterialName || "");
+  if (name) {
+    const fuzzy = entries.find(([key]) => {
+      const normalized = normalizeRuleKey(key);
+      return normalized && (name.includes(normalized) || normalized.includes(name));
+    });
+    if (fuzzy) return fuzzy[1];
+  }
+  return fallback;
+}
+
 const chapterNames = {
   100: "总则",
   200: "路基土石方",
@@ -95,7 +170,9 @@ const jlPaymentDefaults = {
   provisionalCurrentMoney: 0,
   jl115EndPeriod: 2,
   jlPriceAdjustmentMonths: [1, 4, 7, 10],
-  jl116NonAdjustableFactor: 0.35
+  jl116NonAdjustableFactor: 0.35,
+  jl108RawMaterialConversionFactors: {},
+  jl116MaterialWeights: {}
 };
 
 function calculationRules() {
@@ -139,7 +216,9 @@ function calculationRules() {
     provisionalCurrentMoney: numberOr(saved.provisionalCurrentMoney, jlPaymentDefaults.provisionalCurrentMoney),
     jl115EndPeriod: bounded("jl115EndPeriod", jlPaymentDefaults.jl115EndPeriod, 0, 999),
     jlPriceAdjustmentMonths: monthList(saved.jlPriceAdjustmentMonths, jlPaymentDefaults.jlPriceAdjustmentMonths),
-    jl116NonAdjustableFactor: bounded("jl116NonAdjustableFactor", jlPaymentDefaults.jl116NonAdjustableFactor, 0, 1)
+    jl116NonAdjustableFactor: bounded("jl116NonAdjustableFactor", jlPaymentDefaults.jl116NonAdjustableFactor, 0, 1),
+    jl108RawMaterialConversionFactors: parseNumericRuleMap(saved.jl108RawMaterialConversionFactors, jlPaymentDefaults.jl108RawMaterialConversionFactors, { min: 0, max: 1000 }),
+    jl116MaterialWeights: parseNumericRuleMap(saved.jl116MaterialWeights, jlPaymentDefaults.jl116MaterialWeights, { min: 0, max: 1 })
   };
 }
 
@@ -635,10 +714,14 @@ function measureRows() {
 }
 
 function materialDiasRows() {
+  const rules = calculationRules();
   return db.materialAdjustments.map((item) => {
     const m = material(item.materialId, item);
     const priceDiff = round(m.currentPrice - m.basePrice);
-    const adjustMoney = round(item.quantity * priceDiff);
+    const consumeQuantity = Number(item.consumeQuantity ?? item.quantity ?? 0);
+    const conversionFactor = lookupNumericRule(rules.jl108RawMaterialConversionFactors, { ...item, ...m }, 1);
+    const convertedQuantity = round(consumeQuantity * conversionFactor, rules.quantityDigits);
+    const adjustMoney = round(convertedQuantity * priceDiff);
     return {
       ...item,
       meterialDiasMeasureId: item.diasId || item.id,
@@ -654,7 +737,11 @@ function materialDiasRows() {
       basePrice: m.basePrice,
       currentPrice: m.currentPrice,
       priceDiff,
-      measureNum: item.quantity,
+      consumeQuantity,
+      conversionFactor,
+      convertedQuantity,
+      measureNum: convertedQuantity,
+      quantity: convertedQuantity,
       taskUser: item.taskUser ?? true,
       processInstanceId: item.processInstanceId || "",
       lineColor: item.lineColor || "",
@@ -686,6 +773,7 @@ function priceAdjustmentLedgerRows(options = {}) {
         sectionName: row.sectionName || section(row.sectionId).sectionName,
         measureNo: row.measureNo || row.approveNo || "",
         measureDate: row.measureDate || row.diffYearMonth || "",
+        materialId: row.materialId || "",
         materialNo: row.materialNo || "",
         materialName: row.materialName || row.secMaterialName || "",
         unit: row.unit || row.measureUnit || "",
@@ -693,9 +781,12 @@ function priceAdjustmentLedgerRows(options = {}) {
         currentPrice,
         priceDiff,
         priceRatio: basePrice ? round(currentPrice / basePrice, 6) : 0,
+        consumeQuantity: Number(row.consumeQuantity ?? quantity),
+        conversionFactor: Number(row.conversionFactor ?? 1),
+        convertedQuantity: Number(row.convertedQuantity ?? quantity),
         quantity,
         adjustMoney,
-        formula: "adjustMoney = quantity * (currentPrice - basePrice)"
+        formula: "adjustMoney = convertedQuantity * (currentPrice - basePrice); convertedQuantity = consumeQuantity * conversionFactor"
       };
     });
 }
@@ -705,30 +796,42 @@ function priceAdjustmentSummaryRows(options = {}) {
   priceAdjustmentLedgerRows(options).forEach((row) => {
     const key = `${row.materialNo || ""}|${row.materialName || ""}|${row.unit || ""}`;
     const current = grouped.get(key) || {
+      materialId: row.materialId,
       materialNo: row.materialNo,
       materialName: row.materialName,
       unit: row.unit,
       periods: new Set(),
+      consumeQuantity: 0,
       quantity: 0,
       adjustMoney: 0,
       minBasePrice: row.basePrice,
-      maxCurrentPrice: row.currentPrice
+      maxCurrentPrice: row.currentPrice,
+      minConversionFactor: row.conversionFactor,
+      maxConversionFactor: row.conversionFactor
     };
     if (row.periodDesc) current.periods.add(row.periodDesc);
+    current.consumeQuantity += Number(row.consumeQuantity || row.quantity || 0);
     current.quantity += Number(row.quantity || 0);
     current.adjustMoney += Number(row.adjustMoney || 0);
     current.minBasePrice = Math.min(Number(current.minBasePrice || 0), Number(row.basePrice || 0));
     current.maxCurrentPrice = Math.max(Number(current.maxCurrentPrice || 0), Number(row.currentPrice || 0));
+    current.minConversionFactor = Math.min(Number(current.minConversionFactor || 1), Number(row.conversionFactor || 1));
+    current.maxConversionFactor = Math.max(Number(current.maxConversionFactor || 1), Number(row.conversionFactor || 1));
     grouped.set(key, current);
   });
   return Array.from(grouped.values()).map((row) => ({
+    materialId: row.materialId,
     materialNo: row.materialNo,
     materialName: row.materialName,
     unit: row.unit,
     periods: Array.from(row.periods).join(","),
+    consumeQuantity: round(row.consumeQuantity, calculationRules().quantityDigits),
     quantity: round(row.quantity, calculationRules().quantityDigits),
+    minConversionFactor: round(row.minConversionFactor, 6),
+    maxConversionFactor: round(row.maxConversionFactor, 6),
     minBasePrice: round(row.minBasePrice, calculationRules().priceDigits),
     maxCurrentPrice: round(row.maxCurrentPrice, calculationRules().priceDigits),
+    priceRatio: row.minBasePrice ? round(row.maxCurrentPrice / row.minBasePrice, 6) : 0,
     adjustMoney: round(row.adjustMoney)
   }));
 }
@@ -741,27 +844,62 @@ function jl116FormulaSummary(options = {}) {
   const rules = calculationRules();
   const certificate = paymentCertificateForPeriod(periodId, { sectionId });
   const detailRows = priceAdjustmentLedgerRows({ periodId, sectionId });
+  const summaryRows = priceAdjustmentSummaryRows({ periodId, sectionId });
   const totalAdjustment = round(detailRows.reduce((sum, row) => sum + Number(row.adjustMoney || 0), 0));
   const formulaBase = Number(certificate.cumulativeSubtotal || certificate.subtotal || 0);
   const rawIndexFactor = formulaBase ? 1 + totalAdjustment / formulaBase : 1;
-  const indexFactor = round(rawIndexFactor, 6);
+  const effectiveIndexFactor = round(rawIndexFactor, 6);
   const nonAdjustableFactor = Number(rules.jl116NonAdjustableFactor || 0);
-  const variableFactor = round(indexFactor - nonAdjustableFactor, 6);
-  const formulaAdjustment = round(formulaBase * (rawIndexFactor - 1));
+  const hasConfiguredWeights = Object.keys(rules.jl116MaterialWeights || {}).length > 0;
+  const materialWeights = summaryRows.map((row) => {
+    const configuredValue = lookupNumericRule(rules.jl116MaterialWeights, row, null);
+    const configured = configuredValue !== null && configuredValue !== undefined && Number.isFinite(Number(configuredValue));
+    const weight = configured ? Number(configuredValue) : 0;
+    const priceRatio = Number(row.priceRatio || (row.minBasePrice ? Number(row.maxCurrentPrice || 0) / Number(row.minBasePrice || 1) : 0));
+    return {
+      materialId: row.materialId,
+      materialNo: row.materialNo,
+      materialName: row.materialName,
+      unit: row.unit,
+      weight,
+      configured,
+      basePrice: row.minBasePrice,
+      currentPrice: row.maxCurrentPrice,
+      priceRatio: round(priceRatio, 6),
+      weightedIndex: configured ? round(weight * priceRatio, 6) : 0,
+      adjustMoney: row.adjustMoney
+    };
+  });
+  const weightedIndexSum = round(materialWeights.reduce((sum, row) => sum + Number(row.weightedIndex || 0), 0), 6);
+  const weightTotal = round(materialWeights.reduce((sum, row) => sum + (row.configured ? Number(row.weight || 0) : 0), 0), 6);
+  const inferredMaterialIndexFactor = round(effectiveIndexFactor - nonAdjustableFactor, 6);
+  const variableFactor = hasConfiguredWeights ? weightedIndexSum : inferredMaterialIndexFactor;
+  const indexFactor = hasConfiguredWeights ? round(nonAdjustableFactor + weightedIndexSum, 6) : effectiveIndexFactor;
+  const formulaAdjustment = hasConfiguredWeights ? round(formulaBase * (indexFactor - 1)) : round(formulaBase * (rawIndexFactor - 1));
+  const detailDifference = round(Number(certificate.priceAdjustment || 0) - totalAdjustment);
+  const formulaDifference = round(Number(certificate.priceAdjustment || 0) - formulaAdjustment);
   return {
     periodId,
     periodDesc: certificate.periodDesc,
     sectionId,
-    formula: "T = F * [(X + materialIndexFactor) - 1]",
+    formula: "T = F * [(X + Σ(weight * currentIndex/baseIndex)) - 1]",
     formulaBase,
     nonAdjustableFactor,
     variableFactor,
     indexFactor,
+    effectiveIndexFactor,
+    configuredWeight: hasConfiguredWeights,
+    weightTotal,
+    weightBalance: round(nonAdjustableFactor + weightTotal, 6),
+    weightedIndexSum,
+    materialWeights,
     detailAdjustment: totalAdjustment,
     certificatePriceAdjustment: certificate.priceAdjustment,
     formulaAdjustment,
-    difference: round(Number(certificate.priceAdjustment || 0) - totalAdjustment),
-    passed: Math.abs(round(Number(certificate.priceAdjustment || 0) - totalAdjustment)) <= 0.01
+    detailDifference,
+    formulaDifference,
+    difference: detailDifference,
+    passed: Math.abs(detailDifference) <= 0.01 && (!hasConfiguredWeights || Math.abs(formulaDifference) <= 0.01)
   };
 }
 
@@ -992,10 +1130,10 @@ function jl108RawMaterialDetailRows(options = {}) {
   return priceAdjustmentLedgerRows(options).map((row) => ({
     ...row,
     formCode: "JL108-1",
-    consumeQuantity: row.quantity,
-    conversionFactor: 1,
-    convertedQuantity: row.quantity,
-    consumeMoney: round(Number(row.quantity || 0) * Number(row.currentPrice || 0)),
+    consumeQuantity: row.consumeQuantity,
+    conversionFactor: row.conversionFactor,
+    convertedQuantity: row.convertedQuantity,
+    consumeMoney: round(Number(row.convertedQuantity || row.quantity || 0) * Number(row.currentPrice || 0)),
     formula: "adjustMoney = convertedQuantity * (currentPrice - basePrice); convertedQuantity = consumeQuantity * conversionFactor"
   }));
 }
@@ -1472,6 +1610,7 @@ function jlPaymentValidation(options = {}) {
   });
   const priceAdjustment = jlPriceAdjustmentReport({ periodId, sectionId });
   addCheck("纵向校验", "JL108/JL116→JL104价格调整", priceAdjustment.totalAdjustment, certificate.priceAdjustment, "JL108调差=Σ(现行价-基价)*实际用量，JL116公式归档");
+  addCheck("纵向校验", "JL116权重公式→JL104价格调整", priceAdjustment.formula.formulaAdjustment, certificate.priceAdjustment, "JL116: T=F*[(X+Σ权重*价格指数)-1]");
   const rawMaterialAdjustment = round(jl108RawMaterialDetailRows({ periodId, sectionId }).reduce((sum, row) => sum + Number(row.adjustMoney || 0), 0));
   addCheck("纵向校验", "JL108-1→JL108原材料调差", rawMaterialAdjustment, priceAdjustment.totalAdjustment, "JL108-1原材料明细折算后汇总=JL108调差金额");
   const jl112Amount = round(jl112QuantityCompilationRows({ periodId, sectionId }).reduce((sum, row) => sum + Number(row.amount || 0), 0));
@@ -1528,7 +1667,7 @@ function jlPaymentValidation(options = {}) {
       jl105Continuity: "E=G+I, F=H+J, D=F/C",
       jl104Payment: "实际支付 = 小计 + 价格调整 + 材料设备垫付款 - 扣回材料设备垫付款 - 保留金 - 扣回动员预付款 ± 索赔/罚金/利息",
       jl106Jl107Variation: "JL104变更金额 = ΣJL106工程量变更金额 + ΣJL107单价变更金额",
-      jl108PriceAdjustment: "JL108价格调整 = Σ[实际用量 * (现行价-基价)]；JL116: T=F*[(X+index)-1]",
+      jl108PriceAdjustment: "JL108价格调整 = Σ[折算数量 * (现行价-基价)]；JL116: T=F*[(X+Σ权重*价格指数)-1]",
       jl108RawMaterial: "JL108-1折算数量 = 原材料消耗量 * 折算系数；调差金额 = 折算数量 * (现行价-基价)",
       jl112Compilation: "JL112工程量表汇编金额 = ΣJL114工程计量表金额 = JL113本期汇总金额",
       jl115MobilizationAdvance: `JL115动员预付款 = 合同总价 * ${rules.mobilizationAdvanceRate}%`,
@@ -1615,6 +1754,8 @@ function jlFormLifecycle(options = {}) {
         jl115EndPeriod: rules.jl115EndPeriod,
         jlPriceAdjustmentMonths: rules.jlPriceAdjustmentMonths,
         jl116NonAdjustableFactor: rules.jl116NonAdjustableFactor,
+        jl108RawMaterialConversionFactorCount: Object.keys(rules.jl108RawMaterialConversionFactors || {}).length,
+        jl116MaterialWeightCount: Object.keys(rules.jl116MaterialWeights || {}).length,
         mobilizationDeductionStartRate: rules.mobilizationDeductionStartRate,
         mobilizationDeductionEndRate: rules.mobilizationDeductionEndRate
       },

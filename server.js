@@ -977,6 +977,11 @@ function monthListFromBody(value, fallback = [1, 4, 7, 10]) {
   return Array.from(new Set(months.length ? months : fallback)).sort((a, b) => a - b);
 }
 
+function formatRuleMap(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return String(value || "");
+  return Object.entries(value).map(([key, number]) => `${key}=${number}`).join("; ");
+}
+
 function saveCalculationRules(body = {}) {
   const current = engine.calculationRules();
   const next = {
@@ -1008,7 +1013,9 @@ function saveCalculationRules(body = {}) {
     provisionalCurrentMoney: numberFromBody(body.provisionalCurrentMoney, current.provisionalCurrentMoney, -999999999999, 999999999999),
     jl115EndPeriod: numberFromBody(body.jl115EndPeriod, current.jl115EndPeriod, 0, 999),
     jlPriceAdjustmentMonths: monthListFromBody(body.jlPriceAdjustmentMonths, current.jlPriceAdjustmentMonths),
-    jl116NonAdjustableFactor: numberFromBody(body.jl116NonAdjustableFactor, current.jl116NonAdjustableFactor, 0, 1)
+    jl116NonAdjustableFactor: numberFromBody(body.jl116NonAdjustableFactor, current.jl116NonAdjustableFactor, 0, 1),
+    jl108RawMaterialConversionFactors: body.jl108RawMaterialConversionFactors ?? current.jl108RawMaterialConversionFactors,
+    jl116MaterialWeights: body.jl116MaterialWeights ?? current.jl116MaterialWeights
   };
   engine.db.calculationRules = next;
   return {
@@ -1050,13 +1057,16 @@ function calculationRulesPageHtml() {
         .calc-admin-head p { margin:6px 0 0; color:#64748b; }
         .calc-admin-grid { display:grid; grid-template-columns:repeat(3, minmax(160px, 1fr)); gap:12px; }
         .calc-admin-field label { display:block; margin-bottom:6px; color:#475569; }
-        .calc-admin-field input[type="number"], .calc-admin-field input[type="text"] { width:100%; height:34px; border:1px solid #cbd5e1; border-radius:4px; padding:0 8px; box-sizing:border-box; }
+        .calc-admin-field input[type="number"], .calc-admin-field input[type="text"], .calc-admin-field textarea { width:100%; border:1px solid #cbd5e1; border-radius:4px; padding:0 8px; box-sizing:border-box; }
+        .calc-admin-field input[type="number"], .calc-admin-field input[type="text"] { height:34px; }
+        .calc-admin-field textarea { min-height:64px; padding:8px; resize:vertical; line-height:1.5; }
+        .calc-admin-field-wide { grid-column:span 3; }
         .calc-admin-checks { display:grid; grid-template-columns:repeat(2, minmax(180px, 1fr)); gap:10px; margin:12px 0; }
         .calc-admin-checks label { display:flex; align-items:center; gap:8px; border:1px solid #dbe4f0; border-radius:4px; padding:10px; }
         .calc-admin-formula { margin:12px 0; padding:10px 12px; background:#f8fafc; border:1px solid #dbe4f0; color:#0369a1; }
         .calc-admin-actions { display:flex; gap:8px; align-items:center; margin-top:14px; }
         .calc-admin-summary table { margin:0; }
-        @media (max-width: 900px) { .calc-admin-shell { grid-template-columns:1fr; } .calc-admin-grid, .calc-admin-checks { grid-template-columns:1fr; } }
+        @media (max-width: 900px) { .calc-admin-shell { grid-template-columns:1fr; } .calc-admin-grid, .calc-admin-checks { grid-template-columns:1fr; } .calc-admin-field-wide { grid-column:auto; } }
       </style>
       <div class="calc-admin-shell">
         <div class="calc-admin-panel">
@@ -1083,6 +1093,8 @@ function calculationRulesPageHtml() {
               <div class="calc-admin-field"><label>JL115出现至第几期</label><input type="number" step="1" min="0" name="jl115EndPeriod" value="${rules.jl115EndPeriod}"></div>
               <div class="calc-admin-field"><label>JL108/JL116调差月份</label><input type="text" name="jlPriceAdjustmentMonths" value="${htmlEscape(rules.jlPriceAdjustmentMonths.join(","))}"></div>
               <div class="calc-admin-field"><label>JL116非调因子X</label><input type="number" step="0.01" min="0" max="1" name="jl116NonAdjustableFactor" value="${rules.jl116NonAdjustableFactor}"></div>
+              <div class="calc-admin-field calc-admin-field-wide"><label>JL108-1原材料折算系数</label><textarea name="jl108RawMaterialConversionFactors" placeholder="CL-001=1; 钢筋 HRB400=1">${htmlEscape(formatRuleMap(rules.jl108RawMaterialConversionFactors))}</textarea></div>
+              <div class="calc-admin-field calc-admin-field-wide"><label>JL116材料权重系数</label><textarea name="jl116MaterialWeights" placeholder="CL-001=0.35; CL-002=0.30">${htmlEscape(formatRuleMap(rules.jl116MaterialWeights))}</textarea></div>
               <div class="calc-admin-field"><label>本期材料扣回</label><input type="number" step="0.01" name="materialDeductionMoney" value="${rules.materialDeductionMoney}"></div>
               <div class="calc-admin-field"><label>到上期末材料扣回</label><input type="number" step="0.01" name="previousMaterialDeductionMoney" value="${rules.previousMaterialDeductionMoney}"></div>
               <div class="calc-admin-field"><label>到本期末材料扣回</label><input type="number" step="0.01" name="cumulativeMaterialDeductionMoney" value="${rules.cumulativeMaterialDeductionMoney}"></div>
@@ -1118,7 +1130,7 @@ function calculationRulesPageHtml() {
           var msg = document.getElementById('calc-rules-msg');
           btn.addEventListener('click', function(){
             var data = {};
-            Array.prototype.forEach.call(form.querySelectorAll('input'), function(input){
+            Array.prototype.forEach.call(form.querySelectorAll('input, textarea'), function(input){
               data[input.name] = input.type === 'checkbox' ? input.checked : input.value;
             });
             fetch('/api/admin/calculation_rules', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) })
@@ -7082,11 +7094,27 @@ function jlPaymentExportRows(req) {
     formula: priceAdjustmentReport.formula.formula,
     formulaBase: priceAdjustmentReport.formula.formulaBase,
     nonAdjustableFactor: priceAdjustmentReport.formula.nonAdjustableFactor,
+    configuredWeight: priceAdjustmentReport.formula.configuredWeight ? "已配置" : "按JL108推导",
+    weightTotal: priceAdjustmentReport.formula.weightTotal,
     variableFactor: priceAdjustmentReport.formula.variableFactor,
     indexFactor: priceAdjustmentReport.formula.indexFactor,
+    formulaAdjustment: priceAdjustmentReport.formula.formulaAdjustment,
     difference: priceAdjustmentReport.formula.difference,
+    formulaDifference: priceAdjustmentReport.formula.formulaDifference,
     passed: priceAdjustmentReport.formula.passed
   });
+  (priceAdjustmentReport.formula.materialWeights || []).forEach((row) => push("JL116材料权重明细", {
+    code: row.materialNo || row.materialId,
+    name: row.materialName,
+    unit: row.unit,
+    weightStatus: row.configured ? "已配置" : "未配置",
+    weight: row.weight,
+    basePrice: row.basePrice,
+    currentPrice: row.currentPrice,
+    priceRatio: row.priceRatio,
+    weightedIndex: row.weightedIndex,
+    amount: row.adjustMoney
+  }));
   jlMaterialArrivalRows(periodId, sectionId).forEach((row) => push("JL109材料到场", {
     code: row.measureNo || row.certifyNo,
     name: row.materialName,
@@ -7253,8 +7281,12 @@ function jlPaymentPrintableHtml(req) {
           ${rows(priceAdjustmentReport.detailRows, (row) => [row.materialName, row.unit, moneyText(row.basePrice), moneyText(row.currentPrice), moneyText(row.priceDiff), row.quantity, moneyText(row.adjustMoney)]) ||
             `<tr><td colspan="7">本期无材料调差明细</td></tr>`}
         </tbody></table>
-        <table style="margin-top:8px;"><thead><tr><th>公式</th><th>F</th><th>X</th><th>调差系数</th><th>调差金额</th><th>JL104金额</th><th>差额</th></tr></thead><tbody>
-          ${rows([priceAdjustmentReport.formula], (row) => [row.formula, moneyText(row.formulaBase), row.nonAdjustableFactor, row.indexFactor, moneyText(row.detailAdjustment), moneyText(row.certificatePriceAdjustment), moneyText(row.difference)])}
+        <table style="margin-top:8px;"><thead><tr><th>公式</th><th>F</th><th>X</th><th>权重状态</th><th>权重合计</th><th>综合指数</th><th>权重公式金额</th><th>JL104金额</th><th>公式差额</th></tr></thead><tbody>
+          ${rows([priceAdjustmentReport.formula], (row) => [row.formula, moneyText(row.formulaBase), row.nonAdjustableFactor, row.configuredWeight ? "已配置" : "按JL108推导", row.weightTotal, row.indexFactor, moneyText(row.formulaAdjustment), moneyText(row.certificatePriceAdjustment), moneyText(row.formulaDifference)])}
+        </tbody></table>
+        <table style="margin-top:8px;"><thead><tr><th>材料</th><th>权重状态</th><th>权重</th><th>价格指数</th><th>权重指数</th><th>JL108调差</th></tr></thead><tbody>
+          ${rows(priceAdjustmentReport.formula.materialWeights || [], (row) => [row.materialName, row.configured ? "已配置" : "未配置", row.weight, row.priceRatio, row.weightedIndex, moneyText(row.adjustMoney)]) ||
+            `<tr><td colspan="6">本期无材料权重明细</td></tr>`}
         </tbody></table>
       </div>
       <div class="jl-print-section">
@@ -7492,11 +7524,26 @@ function jlPaymentReportPageHtml(req) {
       <td class="left">${htmlEscape(row.formula)}</td>
       <td>${moneyText(row.formulaBase)}</td>
       <td>${htmlEscape(row.nonAdjustableFactor)}</td>
+      <td>${htmlEscape(row.configuredWeight ? "已配置" : "按JL108推导")}</td>
+      <td>${htmlEscape(row.weightTotal)}</td>
       <td>${htmlEscape(row.variableFactor)}</td>
       <td>${htmlEscape(row.indexFactor)}</td>
       <td>${moneyText(row.detailAdjustment)}</td>
+      <td>${moneyText(row.formulaAdjustment)}</td>
       <td>${moneyText(row.certificatePriceAdjustment)}</td>
-      <td>${moneyText(row.difference)}</td>
+      <td>${moneyText(row.formulaDifference)}</td>
+    </tr>`).join("");
+  const jl116WeightRows = (priceAdjustmentReport.formula.materialWeights || []).map((row) => `
+    <tr>
+      <td>${htmlEscape(row.materialNo || row.materialId || "")}</td>
+      <td class="left">${htmlEscape(row.materialName || "")}</td>
+      <td>${htmlEscape(row.configured ? "已配置" : "未配置")}</td>
+      <td>${htmlEscape(row.weight)}</td>
+      <td>${moneyText(row.basePrice)}</td>
+      <td>${moneyText(row.currentPrice)}</td>
+      <td>${htmlEscape(row.priceRatio)}</td>
+      <td>${htmlEscape(row.weightedIndex)}</td>
+      <td>${moneyText(row.adjustMoney)}</td>
     </tr>`).join("");
   const materialDeductionRows = materialDeductionLedger.map((row) => `
     <tr>
@@ -7521,7 +7568,7 @@ function jlPaymentReportPageHtml(req) {
     </tr>`).join("");
   const formulaLines = [
     `本期实际支付 = 小计 + 价格调整 + 材料设备垫付款 - 扣回材料设备垫付款 - 保留金 - 扣回动员预付款`,
-    `价格调整 = Σ[实际用量×(现行价-基价)]；JL116合同价格调表：T=F×[(X+index)-1]`,
+    `价格调整 = Σ[折算数量×(现行价-基价)]；JL116合同价格调表：T=F×[(X+Σ权重×价格指数)-1]`,
     `材料设备垫付款 = 材料到场金额 × ${rules.materialAdvanceRate}%`,
     `保留金 = 小计 × ${rules.retentionRate}%`,
     `动员预付款扣回：累计小计达到合同价 ${rules.mobilizationDeductionStartRate}% 后开始，${rules.mobilizationDeductionEndRate}% 时扣完`
@@ -7570,6 +7617,8 @@ function jlPaymentReportPageHtml(req) {
     ["JL115规则", `1-${lifecycle.summary.lifecycleRules.jl115EndPeriod}期`, "开工动员预付款支付证书"],
     ["调差月份", lifecycle.summary.lifecycleRules.jlPriceAdjustmentMonths.join(","), "JL108/JL108-1/JL116"],
     ["JL116非调因子X", String(lifecycle.summary.lifecycleRules.jl116NonAdjustableFactor), "合同价格调表"],
+    ["折算系数", `${lifecycle.summary.lifecycleRules.jl108RawMaterialConversionFactorCount}项`, "JL108-1原材料明细"],
+    ["材料权重", `${lifecycle.summary.lifecycleRules.jl116MaterialWeightCount}项`, "JL116公式参数"],
     ["动员扣回区间", `${lifecycle.summary.lifecycleRules.mobilizationDeductionStartRate}%-${lifecycle.summary.lifecycleRules.mobilizationDeductionEndRate}%`, "JL111出现条件"]
   ]);
   return `
@@ -7734,10 +7783,14 @@ function jlPaymentReportPageHtml(req) {
             </table>
           </div>
           <div class="core-panel">
-            <h3>JL116 合同价格调表 <span class="subtle">T=F*[(X+index)-1]</span></h3>
+            <h3>JL116 合同价格调表 <span class="subtle">T=F*[(X+Σ权重×价格指数)-1]</span></h3>
             <table class="layui-table" lay-size="sm">
-              <thead><tr><th>公式</th><th>F累计基数</th><th>X非调因子</th><th>可调因子</th><th>综合指数</th><th>JL108汇总</th><th>JL104价格调整</th><th>差额</th></tr></thead>
+              <thead><tr><th>公式</th><th>F累计基数</th><th>X非调因子</th><th>权重状态</th><th>权重合计</th><th>可调因子</th><th>综合指数</th><th>JL108汇总</th><th>权重公式金额</th><th>JL104价格调整</th><th>公式差额</th></tr></thead>
               <tbody>${jl116Rows}</tbody>
+            </table>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>材料编码</th><th>材料名称</th><th>权重状态</th><th>权重</th><th>基价</th><th>现行价</th><th>价格指数</th><th>权重指数</th><th>JL108调差金额</th></tr></thead>
+              <tbody>${jl116WeightRows || `<tr><td colspan="9" class="core-empty">本期无材料权重明细</td></tr>`}</tbody>
             </table>
           </div>
           <div class="core-panel">
