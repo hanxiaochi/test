@@ -1487,6 +1487,14 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(lifecycle.json.data.forms.some((row) => row.code === "JL111" && !row.expected), "JL111 should stay hidden before mobilization deduction threshold");
   assert.ok(lifecycle.json.data.summary.lifecycleRules.jlPriceAdjustmentMonths.length > 0, "JL lifecycle summary should expose configured price adjustment months");
 
+  const deductions = await requestJson("/api/payment/jl_deductions?periodId=2");
+  assert.strictEqual(deductions.response.status, 200, "JL deduction ledger API should load");
+  assert.strictEqual(deductions.json.code, 1, "JL deduction ledger API should return success");
+  assert.ok(Array.isArray(deductions.json.data.materialDeductionLedger) && deductions.json.data.materialDeductionLedger.length >= 1, "JL110 ledger should expose period rows");
+  assert.ok(Array.isArray(deductions.json.data.mobilizationDeductionLedger) && deductions.json.data.mobilizationDeductionLedger.length >= 1, "JL111 ledger should expose period rows");
+  assert.ok(deductions.json.data.materialDeductionLedger.some((row) => Object.prototype.hasOwnProperty.call(row, "remainingAdvance")), "JL110 ledger should expose remaining material advance");
+  assert.ok(deductions.json.data.mobilizationDeductionLedger.some((row) => row.formula && row.formula.includes("C-D")), "JL111 ledger should expose mobilization deduction formula");
+
   const page = await requestText("/payment/jl_report_page?periodId=2");
   assert.strictEqual(page.response.status, 200, "JL payment report page should load");
   assert.ok(page.text.includes("JL计量支付报表核对"), "JL payment report page should show dedicated title");
@@ -1495,17 +1503,20 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(page.text.includes("7,699,376.00") && page.text.includes("24,024,989.00") && page.text.includes("621,281.00"), "JL payment report page should show PDF reference validation values");
   assert.ok(page.text.includes("JL表单校验结果") && page.text.includes("当前期横向、纵向、期次和样表基准校验全部通过"), "JL payment report page should show validation results");
   assert.ok(page.text.includes("JL表单生命周期") && page.text.includes("JL115") && page.text.includes("JL116"), "JL payment report page should show lifecycle table");
+  assert.ok(page.text.includes("JL110 扣回材料垫付款一览表") && page.text.includes("JL111 扣回动员预付款一览表"), "JL payment report page should show JL110 and JL111 ledgers");
   assert.ok(page.text.includes("/api/payment/certificate") && page.text.includes("/api/payment/jl_validation") && page.text.includes("/api/payment/jl_lifecycle"), "JL payment report page should link certificate, validation and lifecycle JSON");
+  assert.ok(page.text.includes("/api/payment/jl_deductions"), "JL payment report page should link deduction ledger JSON");
   assert.ok(page.text.includes("/payment/jl_print_page") && page.text.includes("/payment/export_jl_report"), "JL payment report page should link print preview and CSV export");
 
   const printPage = await requestText("/payment/jl_print_page?periodId=2");
   assert.strictEqual(printPage.response.status, 200, "JL payment print page should load");
   assert.ok(printPage.text.includes("JL计量支付报表打印预览"), "JL payment print page should show dedicated title");
-  assert.ok(["JL104 中期财务支付证书", "JL113 计量支付数量汇总表", "JL105 清单中期财务支付报表", "JL表单校验与生命周期"].every((label) => printPage.text.includes(label)), "JL payment print page should include printable core sections");
+  assert.ok(["JL104 中期财务支付证书", "JL113 计量支付数量汇总表", "JL105 清单中期财务支付报表", "JL表单校验与生命周期", "JL110/JL111 专项扣款台账"].every((label) => printPage.text.includes(label)), "JL payment print page should include printable core sections");
 
   const exportCsv = await requestText("/payment/export_jl_report?periodId=2");
   assert.strictEqual(exportCsv.response.status, 200, "JL payment CSV export should load");
   assert.ok(exportCsv.text.includes("JL104支付证书") && exportCsv.text.includes("JL113数量汇总") && exportCsv.text.includes("JL表单生命周期"), "JL payment CSV export should include certificate, JL113 and lifecycle rows");
+  assert.ok(exportCsv.text.includes("JL110材料扣回台账") && exportCsv.text.includes("JL111动员扣回台账"), "JL payment CSV export should include JL110 and JL111 ledgers");
 
   const menuPage = await requestText("/sbr/sbr_com/9004");
   assert.strictEqual(menuPage.response.status, 200, "JL payment report menu page should load");

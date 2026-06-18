@@ -6995,6 +6995,29 @@ function jlPaymentExportRows(req) {
     amount: row.money,
     advanceAmount: row.advanceMoney
   }));
+  engine.materialDeductionLedgerRows({ periodId, sectionId }).forEach((row) => push("JL110材料扣回台账", {
+    period: row.periodDesc,
+    periodAdvance: row.periodAdvance,
+    cumulativeAdvance: row.cumulativeAdvance,
+    previousDeduction: row.previousDeduction,
+    periodDeduction: row.periodDeduction,
+    cumulativeDeduction: row.cumulativeDeduction,
+    remainingAdvance: row.remainingAdvance,
+    formula: row.formula
+  }));
+  engine.mobilizationDeductionLedgerRows({ periodId, sectionId }).forEach((row) => push("JL111动员扣回台账", {
+    period: row.periodDesc,
+    contractTotal: row.contractTotal,
+    advance: row.advance,
+    startThreshold: row.startThreshold,
+    endThreshold: row.endThreshold,
+    cumulativeSubtotal: row.cumulativeSubtotal,
+    periodDeduction: row.periodDeduction,
+    cumulativeDeduction: row.cumulativeDeduction,
+    remainingAdvance: row.remainingAdvance,
+    status: row.status,
+    formula: row.formula
+  }));
   validation.checks.forEach((row) => push("JL表单校验", {
     group: row.group,
     item: row.name,
@@ -7022,6 +7045,8 @@ function jlPaymentPrintableHtml(req) {
   const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
+  const materialDeductionLedger = engine.materialDeductionLedgerRows({ periodId, sectionId });
+  const mobilizationDeductionLedger = engine.mobilizationDeductionLedgerRows({ periodId, sectionId });
   const rows = (items, cells) => items.map((item) => `<tr>${cells(item).map((cell) => `<td>${htmlEscape(cell)}</td>`).join("")}</tr>`).join("");
   return `
     <div class="jl-print-page">
@@ -7090,6 +7115,13 @@ function jlPaymentPrintableHtml(req) {
           ${rows(lifecycle.forms, (row) => ["生命周期", `${row.code} ${row.name}`, row.status, row.reason])}
         </tbody></table>
       </div>
+      <div class="jl-print-section">
+        <h2>JL110/JL111 专项扣款台账</h2>
+        <table><thead><tr><th>表号</th><th>期次</th><th>累计基数</th><th>本期扣回</th><th>累计扣回</th><th>余额/状态</th></tr></thead><tbody>
+          ${rows(materialDeductionLedger, (row) => ["JL110", row.periodDesc, moneyText(row.cumulativeAdvance), moneyText(row.periodDeduction), moneyText(row.cumulativeDeduction), moneyText(row.remainingAdvance)])}
+          ${rows(mobilizationDeductionLedger, (row) => ["JL111", row.periodDesc, moneyText(row.cumulativeSubtotal), moneyText(row.periodDeduction), moneyText(row.cumulativeDeduction), row.status])}
+        </tbody></table>
+      </div>
     </div>`;
 }
 
@@ -7101,6 +7133,8 @@ function jlPaymentReportPageHtml(req) {
   const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
+  const materialDeductionLedger = engine.materialDeductionLedgerRows({ periodId, sectionId });
+  const mobilizationDeductionLedger = engine.mobilizationDeductionLedgerRows({ periodId, sectionId });
   const rules = engine.calculationRules();
   const sectionOptionsHtml = coreSectionOptions(sectionId, "全部合同段");
   const periodOptionsHtml = corePeriodOptions(periodId, "选择计量期");
@@ -7176,6 +7210,27 @@ function jlPaymentReportPageHtml(req) {
         <td>${moneyText(row.advanceMoney)}</td>
       </tr>`)
     .join("");
+  const materialDeductionRows = materialDeductionLedger.map((row) => `
+    <tr>
+      <td>${htmlEscape(row.periodDesc)}</td>
+      <td>${moneyText(row.periodAdvance)}</td>
+      <td>${moneyText(row.cumulativeAdvance)}</td>
+      <td>${moneyText(row.previousDeduction)}</td>
+      <td>${moneyText(row.periodDeduction)}</td>
+      <td>${moneyText(row.cumulativeDeduction)}</td>
+      <td>${moneyText(row.remainingAdvance)}</td>
+    </tr>`).join("");
+  const mobilizationDeductionRows = mobilizationDeductionLedger.map((row) => `
+    <tr>
+      <td>${htmlEscape(row.periodDesc)}</td>
+      <td>${moneyText(row.contractTotal)}</td>
+      <td>${moneyText(row.advance)}</td>
+      <td>${moneyText(row.startThreshold)}</td>
+      <td>${moneyText(row.cumulativeSubtotal)}</td>
+      <td>${moneyText(row.periodDeduction)}</td>
+      <td>${moneyText(row.cumulativeDeduction)}</td>
+      <td>${htmlEscape(row.status)}</td>
+    </tr>`).join("");
   const formulaLines = [
     `本期实际支付 = 小计 + 价格调整 + 材料设备垫付款 - 扣回材料设备垫付款 - 保留金 - 扣回动员预付款`,
     `材料设备垫付款 = 材料到场金额 × ${rules.materialAdvanceRate}%`,
@@ -7250,6 +7305,7 @@ function jlPaymentReportPageHtml(req) {
             <a class="layui-btn layui-btn-sm" href="/payment/jl_print_page?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">打印预览</a>
             <a class="layui-btn layui-btn-sm" href="/payment/export_jl_report?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">导出CSV</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_lifecycle?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">生命周期JSON</a>
+            <a class="layui-btn layui-btn-sm" href="/api/payment/jl_deductions?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">扣款台账JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_validation?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">校验JSON</a>
             <a class="layui-btn layui-btn-sm layui-btn-primary" href="/api/payment/certificate?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">证书JSON</a>
           </div>
@@ -7315,6 +7371,20 @@ function jlPaymentReportPageHtml(req) {
             <table class="layui-table" lay-size="sm">
               <thead><tr><th>计量单号</th><th>材料名称</th><th>单位</th><th>数量</th><th>单价</th><th>到场金额</th><th>预付金额</th></tr></thead>
               <tbody>${materialRows || `<tr><td colspan="7" class="core-empty">暂无本期材料到场</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>JL110 扣回材料垫付款一览表</h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>期次</th><th>本期预付</th><th>累计预付</th><th>上期扣回</th><th>本期扣回</th><th>累计扣回</th><th>未扣回余额</th></tr></thead>
+              <tbody>${materialDeductionRows || `<tr><td colspan="7" class="core-empty">暂无材料扣回台账</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>JL111 扣回动员预付款一览表</h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>期次</th><th>合同总价A</th><th>动员预付款B</th><th>30%门槛D</th><th>累计小计C</th><th>本期扣回</th><th>累计扣回</th><th>状态</th></tr></thead>
+              <tbody>${mobilizationDeductionRows || `<tr><td colspan="8" class="core-empty">暂无动员预付款扣回台账</td></tr>`}</tbody>
             </table>
           </div>
         </div>
@@ -11727,6 +11797,14 @@ app.get("/api/payment/jl104_chapters", (req, res) => table(res, req, engine.jl10
 app.get("/api/payment/certificate", (req, res) => operationOk(res, engine.paymentCertificateForPeriod(queryNumber(req, "periodId") || queryNumber(req, "gatherId"), { sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_validation", (req, res) => operationOk(res, engine.jlPaymentValidation({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_lifecycle", (req, res) => operationOk(res, engine.jlFormLifecycle({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl_deductions", (req, res) => {
+  const periodId = queryNumber(req, "periodId") || queryNumber(req, "gatherId");
+  const sectionId = queryNumber(req, "sectionId");
+  operationOk(res, {
+    materialDeductionLedger: engine.materialDeductionLedgerRows({ periodId, sectionId }),
+    mobilizationDeductionLedger: engine.mobilizationDeductionLedgerRows({ periodId, sectionId })
+  });
+});
 app.get("/api/cost/reconciliation", (req, res) => operationOk(res, costReconciliationData()));
 app.get("/api/cost/5d_model", (req, res) => operationOk(res, fiveDCostModelData()));
 app.get("/api/cost/boq_validation", (req, res) => operationOk(res, boqValidationData()));

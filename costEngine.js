@@ -732,6 +732,84 @@ function materialDeductionMoneyForPeriod(periodId) {
   return configuredMaterialDeduction({}, calculationRules());
 }
 
+function materialDeductionLedgerRows(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const sectionId = Number(opts.sectionId || 0);
+  const selectedPeriodId = Number(opts.periodId || 0);
+  let cumulativeAdvance = 0;
+  let cumulativeDeduction = 0;
+  return periodRows()
+    .filter((period) => !selectedPeriodId || Number(period.periodId || 0) <= selectedPeriodId)
+    .map((period) => {
+      const periodId = Number(period.periodId || period.gatherId || period.id || 0);
+      const arrivals = filterByPeriod(materialArrivalRows(), periodId)
+        .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId);
+      const periodAdvance = round(arrivals.reduce((sum, row) => sum + Number(row.advanceMoney || 0), 0));
+      cumulativeAdvance = round(cumulativeAdvance + periodAdvance);
+      const deductionRows = filterByPeriod(materialDeductionRows(), periodId)
+        .filter((row) => !sectionId || !row.sectionId || Number(row.sectionId || 0) === sectionId);
+      const periodDeduction = deductionRows.length
+        ? round(deductionRows.reduce((sum, row) => sum + Number(row.deductionMoney || 0), 0))
+        : (!sectionId ? materialDeductionMoneyForPeriod(periodId) : 0);
+      const previousDeduction = cumulativeDeduction;
+      cumulativeDeduction = round(cumulativeDeduction + periodDeduction);
+      return {
+        periodId,
+        periodDesc: period.periodDesc || period.gatherNo || `第 ${periodId} 期`,
+        sectionId,
+        periodAdvance,
+        cumulativeAdvance,
+        previousDeduction,
+        periodDeduction,
+        cumulativeDeduction,
+        remainingAdvance: round(cumulativeAdvance - cumulativeDeduction),
+        formula: "本期扣回=到本期末累计扣回-到上期末累计扣回"
+      };
+    });
+}
+
+function mobilizationDeductionLedgerRows(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const sectionId = Number(opts.sectionId || 0);
+  const selectedPeriodId = Number(opts.periodId || 0);
+  const rules = calculationRules();
+  return periodRows()
+    .filter((period) => !selectedPeriodId || Number(period.periodId || 0) <= selectedPeriodId)
+    .map((period) => {
+      const periodId = Number(period.periodId || period.gatherId || period.id || 0);
+      const certificate = paymentCertificateForPeriod(periodId, { sectionId });
+      const contractTotal = Number(certificate.contractTotal || 0);
+      const advance = mobilizationAdvanceAmount(contractTotal, rules);
+      const startThreshold = round(contractTotal * (rules.mobilizationDeductionStartRate / 100));
+      const endThreshold = round(contractTotal * (rules.mobilizationDeductionEndRate / 100));
+      const previousDeduction = cumulativeMobilizationDeduction(certificate.previousCumulativeSubtotal, contractTotal, rules);
+      const cumulativeDeduction = cumulativeMobilizationDeduction(certificate.cumulativeSubtotal, contractTotal, rules);
+      const periodDeduction = certificate.mobilizationDeductionMoney !== undefined
+        ? Number(certificate.mobilizationDeductionMoney || 0)
+        : round(Math.max(0, cumulativeDeduction - previousDeduction));
+      const status = certificate.cumulativeSubtotal < startThreshold
+        ? "未达扣回门槛"
+        : (cumulativeDeduction >= advance ? "已扣完" : "扣回中");
+      return {
+        periodId,
+        periodDesc: certificate.periodDesc || period.periodDesc || period.gatherNo || `第 ${periodId} 期`,
+        sectionId,
+        contractTotal,
+        advance,
+        startThreshold,
+        endThreshold,
+        previousSubtotal: certificate.previousCumulativeSubtotal,
+        cumulativeSubtotal: certificate.cumulativeSubtotal,
+        previousDeduction: round(previousDeduction),
+        periodDeduction: round(periodDeduction),
+        cumulativeDeduction: round(cumulativeDeduction),
+        remainingAdvance: round(Math.max(0, advance - cumulativeDeduction)),
+        status,
+        formula: "累计应扣回=(C-D)/A*2*B，30%后开始，80%时扣完"
+      };
+    });
+}
+
 function manualMeasureRows() {
   return db.manualMeasures.map((item) => ({
     ...item,
@@ -1405,6 +1483,8 @@ module.exports = {
   materialDiasRows,
   materialArrivalRows,
   materialDeductionRows,
+  materialDeductionLedgerRows,
+  mobilizationDeductionLedgerRows,
   manualMeasureRows,
   variationRows,
   jl113Rows,
