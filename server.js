@@ -6950,6 +6950,7 @@ function jlPaymentExportRows(req) {
   const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
   const jl101Report = engine.jl101MonthlyReport({ periodId, sectionId });
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
+  const inheritance = engine.jlPeriodInheritanceReport({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
   const supportReport = engine.jlPaymentSupportReport({ periodId, sectionId });
@@ -7177,6 +7178,20 @@ function jlPaymentExportRows(req) {
     passed: row.passed,
     basis: row.detail
   }));
+  inheritance.rows.forEach((row) => push("JL105期次继承校验", {
+    code: row.itemCode,
+    name: row.itemName,
+    previousPeriod: row.previousPeriodDesc,
+    period: row.periodDesc,
+    expectedPreviousQuantity: row.expectedPreviousQuantity,
+    actualPreviousQuantity: row.actualPreviousQuantity,
+    quantityDifference: row.quantityDifference,
+    expectedPreviousAmount: row.expectedPreviousAmount,
+    actualPreviousAmount: row.actualPreviousAmount,
+    amountDifference: row.amountDifference,
+    passed: row.passed,
+    formula: row.formula
+  }));
   lifecycle.forms.forEach((row) => push("JL表单生命周期", {
     code: row.code,
     name: row.name,
@@ -7195,6 +7210,7 @@ function jlPaymentPrintableHtml(req) {
   const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
   const jl101Report = engine.jl101MonthlyReport({ periodId, sectionId });
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
+  const inheritance = engine.jlPeriodInheritanceReport({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
   const supportReport = engine.jlPaymentSupportReport({ periodId, sectionId });
@@ -7329,6 +7345,13 @@ function jlPaymentPrintableHtml(req) {
         </tbody></table>
       </div>
       <div class="jl-print-section">
+        <h2>JL105期次继承校验</h2>
+        <table><thead><tr><th>细目编号</th><th>细目名称</th><th>上期</th><th>本期</th><th>应继承数量</th><th>实际上期数量</th><th>应继承金额</th><th>实际上期金额</th><th>状态</th></tr></thead><tbody>
+          ${rows(inheritance.rows.slice(0, 120), (row) => [row.itemCode || "", row.itemName || "", row.previousPeriodDesc, row.periodDesc, row.expectedPreviousQuantity, row.actualPreviousQuantity, moneyText(row.expectedPreviousAmount), moneyText(row.actualPreviousAmount), row.passed ? "通过" : "需复核"]) ||
+            `<tr><td colspan="9">首期无上期继承或暂无清单台账</td></tr>`}
+        </tbody></table>
+      </div>
+      <div class="jl-print-section">
         <h2>JL110/JL111 专项扣款台账</h2>
         <table><thead><tr><th>表号</th><th>期次</th><th>累计基数</th><th>本期扣回</th><th>累计扣回</th><th>余额/状态</th></tr></thead><tbody>
           ${rows(materialDeductionLedger, (row) => ["JL110", row.periodDesc, moneyText(row.cumulativeAdvance), moneyText(row.periodDeduction), moneyText(row.cumulativeDeduction), moneyText(row.remainingAdvance)])}
@@ -7346,6 +7369,7 @@ function jlPaymentReportPageHtml(req) {
   const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
   const jl101Report = engine.jl101MonthlyReport({ periodId, sectionId });
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
+  const inheritance = engine.jlPeriodInheritanceReport({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
   const supportReport = engine.jlPaymentSupportReport({ periodId, sectionId });
@@ -7605,6 +7629,25 @@ function jlPaymentReportPageHtml(req) {
         <td class="left">${htmlEscape(row.detail || "")}</td>
       </tr>`).join("")
     : `<tr><td colspan="6" class="core-empty">当前期横向、纵向、期次和样表基准校验全部通过</td></tr>`;
+  const inheritanceCards = coreCardsHtml([
+    ["继承结论", inheritance.ok ? "通过" : "需复核", inheritance.message],
+    ["校验细目", `${inheritance.summary.passedRows}/${inheritance.summary.totalRows}`, `${inheritance.previousPeriodDesc || "首期"} → ${inheritance.periodDesc || ""}`],
+    ["数量差异", String(inheritance.summary.quantityFailedRows), "第N期到上期末数量"],
+    ["金额差异", String(inheritance.summary.amountFailedRows), "第N期到上期末金额"]
+  ]);
+  const inheritanceRows = inheritance.rows.slice(0, 120).map((row) => `
+    <tr>
+      <td>${htmlEscape(row.itemCode || "")}</td>
+      <td class="left">${htmlEscape(row.itemName || "")}</td>
+      <td>${htmlEscape(row.previousPeriodDesc || "")}</td>
+      <td>${htmlEscape(row.periodDesc || "")}</td>
+      <td>${htmlEscape(row.expectedPreviousQuantity)}</td>
+      <td>${htmlEscape(row.actualPreviousQuantity)}</td>
+      <td>${moneyText(row.expectedPreviousAmount)}</td>
+      <td>${moneyText(row.actualPreviousAmount)}</td>
+      <td>${moneyText(row.amountDifference)}</td>
+      <td>${htmlEscape(row.passed ? "通过" : "需复核")}</td>
+    </tr>`).join("");
   const lifecycleRows = lifecycle.forms.map((row) => `
     <tr>
       <td>${htmlEscape(row.expected ? "应出现" : "可不出现")}</td>
@@ -7656,6 +7699,7 @@ function jlPaymentReportPageHtml(req) {
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_price_adjustment?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">调差JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_deductions?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">扣款台账JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_validation?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">校验JSON</a>
+            <a class="layui-btn layui-btn-sm" href="/api/payment/jl_period_inheritance?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">期次继承JSON</a>
             <a class="layui-btn layui-btn-sm layui-btn-primary" href="/api/payment/certificate?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">证书JSON</a>
           </div>
         </div>
@@ -7723,6 +7767,14 @@ function jlPaymentReportPageHtml(req) {
             <table class="layui-table" lay-size="sm">
               <thead><tr><th>类型</th><th>校验项</th><th>应为</th><th>实际</th><th>差额</th><th>依据</th></tr></thead>
               <tbody>${validationRows}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>JL105期次继承校验 <span class="subtle">第N期到上期末 = 第N-1期到本期末</span></h3>
+            <div class="core-cards">${inheritanceCards}</div>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>细目编号</th><th>细目名称</th><th>上期</th><th>本期</th><th>应继承数量</th><th>实际上期数量</th><th>应继承金额</th><th>实际上期金额</th><th>金额差额</th><th>状态</th></tr></thead>
+              <tbody>${inheritanceRows || `<tr><td colspan="10" class="core-empty">首期无上期继承或暂无清单台账</td></tr>`}</tbody>
             </table>
           </div>
           <div class="core-panel">
@@ -12239,6 +12291,7 @@ app.get("/api/payment/jl115", (req, res) => operationOk(res, engine.jl115Mobiliz
 app.get("/api/payment/jl_support", (req, res) => operationOk(res, engine.jlPaymentSupportReport({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/certificate", (req, res) => operationOk(res, engine.paymentCertificateForPeriod(queryNumber(req, "periodId") || queryNumber(req, "gatherId"), { sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_validation", (req, res) => operationOk(res, engine.jlPaymentValidation({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl_period_inheritance", (req, res) => operationOk(res, engine.jlPeriodInheritanceReport({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_lifecycle", (req, res) => operationOk(res, engine.jlFormLifecycle({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_deductions", (req, res) => {
   const periodId = queryNumber(req, "periodId") || queryNumber(req, "gatherId");

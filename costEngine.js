@@ -1682,6 +1682,101 @@ function jlPaymentValidation(options = {}) {
   };
 }
 
+function jlPeriodInheritanceReport(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const periods = periodRows();
+  const period = findPeriod(opts.periodId) || periods[periods.length - 1] || null;
+  const periodId = period ? Number(period.periodId || period.gatherId || period.id || 0) : Number(opts.periodId || 0);
+  const sectionId = Number(opts.sectionId || 0);
+  const tolerance = Number(opts.tolerance ?? 0.01);
+  const moneyDigits = calculationRules().moneyDigits;
+  const quantityDigits = calculationRules().quantityDigits;
+  const periodIndex = periods.findIndex((item) => Number(item.periodId || item.gatherId || item.id || 0) === periodId);
+  const previousPeriod = periodIndex > 0 ? periods[periodIndex - 1] : null;
+
+  if (!period || !previousPeriod) {
+    return {
+      ok: true,
+      periodId,
+      periodDesc: period?.periodDesc || period?.gatherName || "",
+      previousPeriodId: 0,
+      previousPeriodDesc: "",
+      sectionId,
+      tolerance,
+      message: "首期无上期继承",
+      summary: {
+        totalRows: 0,
+        passedRows: 0,
+        failedRows: 0,
+        quantityFailedRows: 0,
+        amountFailedRows: 0
+      },
+      rows: [],
+      failed: []
+    };
+  }
+
+  const previousPeriodId = Number(previousPeriod.periodId || previousPeriod.gatherId || previousPeriod.id || 0);
+  const previousRows = jl105LedgerRows({ periodId: previousPeriodId, sectionId });
+  const currentRows = jl105LedgerRows({ periodId, sectionId });
+  const previousMap = new Map(previousRows.map((row) => [String(row.billId || row.itemCode || row.billNo), row]));
+  const rows = currentRows.map((row) => {
+    const key = String(row.billId || row.itemCode || row.billNo);
+    const previous = previousMap.get(key);
+    const expectedQuantity = round(previous?.cumulativeQuantity || 0, quantityDigits);
+    const actualQuantity = round(row.previousQuantity || 0, quantityDigits);
+    const expectedAmount = round(previous?.cumulativeAmount || 0, moneyDigits);
+    const actualAmount = round(row.previousAmount || 0, moneyDigits);
+    const quantityDifference = round(actualQuantity - expectedQuantity, quantityDigits);
+    const amountDifference = round(actualAmount - expectedAmount, moneyDigits);
+    const quantityPassed = Math.abs(quantityDifference) <= tolerance;
+    const amountPassed = Math.abs(amountDifference) <= tolerance;
+    return {
+      billId: row.billId,
+      sectionId: row.sectionId,
+      sectionName: row.sectionName,
+      chapter: row.chapter,
+      itemCode: row.itemCode || row.billNo,
+      itemName: row.itemName || row.billName,
+      unit: row.measureUnit,
+      previousPeriodId,
+      previousPeriodDesc: previousPeriod.periodDesc || previousPeriod.gatherName || `Period ${previousPeriodId}`,
+      periodId,
+      periodDesc: period.periodDesc || period.gatherName || `Period ${periodId}`,
+      expectedPreviousQuantity: expectedQuantity,
+      actualPreviousQuantity: actualQuantity,
+      quantityDifference,
+      expectedPreviousAmount: expectedAmount,
+      actualPreviousAmount: actualAmount,
+      amountDifference,
+      quantityPassed,
+      amountPassed,
+      passed: quantityPassed && amountPassed,
+      formula: "第N期到上期末 = 第N-1期到本期末"
+    };
+  });
+  const failed = rows.filter((row) => !row.passed);
+  return {
+    ok: failed.length === 0,
+    periodId,
+    periodDesc: period.periodDesc || period.gatherName || `Period ${periodId}`,
+    previousPeriodId,
+    previousPeriodDesc: previousPeriod.periodDesc || previousPeriod.gatherName || `Period ${previousPeriodId}`,
+    sectionId,
+    tolerance,
+    message: failed.length ? "存在期次继承差异" : "期次继承校验通过",
+    summary: {
+      totalRows: rows.length,
+      passedRows: rows.length - failed.length,
+      failedRows: failed.length,
+      quantityFailedRows: rows.filter((row) => !row.quantityPassed).length,
+      amountFailedRows: rows.filter((row) => !row.amountPassed).length
+    },
+    rows,
+    failed
+  };
+}
+
 function jlFormLifecycle(options = {}) {
   const opts = typeof options === "object" ? options : { periodId: options };
   const period = findPeriod(opts.periodId) || periodRows()[periodRows().length - 1] || null;
@@ -2170,6 +2265,7 @@ module.exports = {
   jl104ChapterRows,
   paymentCertificateForPeriod,
   jlPaymentValidation,
+  jlPeriodInheritanceReport,
   jlPaymentReferenceCases,
   jlFormLifecycle,
   billLedgerRows,
