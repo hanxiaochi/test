@@ -1007,7 +1007,8 @@ function saveCalculationRules(body = {}) {
     otherAdjustmentMoney: numberFromBody(body.otherAdjustmentMoney, current.otherAdjustmentMoney, -999999999999, 999999999999),
     provisionalCurrentMoney: numberFromBody(body.provisionalCurrentMoney, current.provisionalCurrentMoney, -999999999999, 999999999999),
     jl115EndPeriod: numberFromBody(body.jl115EndPeriod, current.jl115EndPeriod, 0, 999),
-    jlPriceAdjustmentMonths: monthListFromBody(body.jlPriceAdjustmentMonths, current.jlPriceAdjustmentMonths)
+    jlPriceAdjustmentMonths: monthListFromBody(body.jlPriceAdjustmentMonths, current.jlPriceAdjustmentMonths),
+    jl116NonAdjustableFactor: numberFromBody(body.jl116NonAdjustableFactor, current.jl116NonAdjustableFactor, 0, 1)
   };
   engine.db.calculationRules = next;
   return {
@@ -1081,6 +1082,7 @@ function calculationRulesPageHtml() {
               <div class="calc-admin-field"><label>动员扣回完成点(%)</label><input type="number" step="0.01" name="mobilizationDeductionEndRate" value="${rules.mobilizationDeductionEndRate}"></div>
               <div class="calc-admin-field"><label>JL115出现至第几期</label><input type="number" step="1" min="0" name="jl115EndPeriod" value="${rules.jl115EndPeriod}"></div>
               <div class="calc-admin-field"><label>JL108/JL116调差月份</label><input type="text" name="jlPriceAdjustmentMonths" value="${htmlEscape(rules.jlPriceAdjustmentMonths.join(","))}"></div>
+              <div class="calc-admin-field"><label>JL116非调因子X</label><input type="number" step="0.01" min="0" max="1" name="jl116NonAdjustableFactor" value="${rules.jl116NonAdjustableFactor}"></div>
               <div class="calc-admin-field"><label>本期材料扣回</label><input type="number" step="0.01" name="materialDeductionMoney" value="${rules.materialDeductionMoney}"></div>
               <div class="calc-admin-field"><label>到上期末材料扣回</label><input type="number" step="0.01" name="previousMaterialDeductionMoney" value="${rules.previousMaterialDeductionMoney}"></div>
               <div class="calc-admin-field"><label>到本期末材料扣回</label><input type="number" step="0.01" name="cumulativeMaterialDeductionMoney" value="${rules.cumulativeMaterialDeductionMoney}"></div>
@@ -6936,6 +6938,7 @@ function jlPaymentExportRows(req) {
   const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
+  const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
   const rows = [];
   const push = (table, row) => rows.push({
     periodId: certificate.periodId,
@@ -6986,6 +6989,30 @@ function jlPaymentExportRows(req) {
     cumulativeAmount: row.cumulativeAmount,
     progressPct: row.progressPct
   }));
+  priceAdjustmentReport.detailRows.forEach((row) => push("JL108材料调差明细", {
+    code: row.measureNo,
+    name: row.materialName,
+    unit: row.unit,
+    price: row.currentPrice,
+    quantity: row.quantity,
+    amount: row.adjustMoney,
+    basePrice: row.basePrice,
+    currentPrice: row.currentPrice,
+    priceDiff: row.priceDiff,
+    formula: row.formula
+  }));
+  push("JL116合同价格调表", {
+    item: "合同价格调整公式",
+    amount: priceAdjustmentReport.formula.certificatePriceAdjustment,
+    source: "JL116",
+    formula: priceAdjustmentReport.formula.formula,
+    formulaBase: priceAdjustmentReport.formula.formulaBase,
+    nonAdjustableFactor: priceAdjustmentReport.formula.nonAdjustableFactor,
+    variableFactor: priceAdjustmentReport.formula.variableFactor,
+    indexFactor: priceAdjustmentReport.formula.indexFactor,
+    difference: priceAdjustmentReport.formula.difference,
+    passed: priceAdjustmentReport.formula.passed
+  });
   jlMaterialArrivalRows(periodId, sectionId).forEach((row) => push("JL109材料到场", {
     code: row.measureNo || row.certifyNo,
     name: row.materialName,
@@ -7045,6 +7072,7 @@ function jlPaymentPrintableHtml(req) {
   const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
+  const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
   const materialDeductionLedger = engine.materialDeductionLedgerRows({ periodId, sectionId });
   const mobilizationDeductionLedger = engine.mobilizationDeductionLedgerRows({ periodId, sectionId });
   const rows = (items, cells) => items.map((item) => `<tr>${cells(item).map((cell) => `<td>${htmlEscape(cell)}</td>`).join("")}</tr>`).join("");
@@ -7091,6 +7119,16 @@ function jlPaymentPrintableHtml(req) {
         </tbody></table>
       </div>
       <div class="jl-print-section">
+        <h2>JL108/JL116 价格调差</h2>
+        <table><thead><tr><th>材料</th><th>单位</th><th>基价</th><th>现行价</th><th>价差</th><th>数量</th><th>调差金额</th></tr></thead><tbody>
+          ${rows(priceAdjustmentReport.detailRows, (row) => [row.materialName, row.unit, moneyText(row.basePrice), moneyText(row.currentPrice), moneyText(row.priceDiff), row.quantity, moneyText(row.adjustMoney)]) ||
+            `<tr><td colspan="7">本期无材料调差明细</td></tr>`}
+        </tbody></table>
+        <table style="margin-top:8px;"><thead><tr><th>公式</th><th>F</th><th>X</th><th>调差系数</th><th>调差金额</th><th>JL104金额</th><th>差额</th></tr></thead><tbody>
+          ${rows([priceAdjustmentReport.formula], (row) => [row.formula, moneyText(row.formulaBase), row.nonAdjustableFactor, row.indexFactor, moneyText(row.detailAdjustment), moneyText(row.certificatePriceAdjustment), moneyText(row.difference)])}
+        </tbody></table>
+      </div>
+      <div class="jl-print-section">
         <h2>JL104 章级汇总</h2>
         <table><thead><tr><th>章号</th><th>项目内容</th><th>合同金额</th><th>本期完成</th><th>累计完成</th></tr></thead><tbody>
           ${rows(certificate.chapters, (row) => [row.chapter, row.chapterName, moneyText(row.contractAmount), moneyText(row.currentAmount), moneyText(row.cumulativeAmount)])}
@@ -7133,6 +7171,7 @@ function jlPaymentReportPageHtml(req) {
   const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
+  const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
   const materialDeductionLedger = engine.materialDeductionLedgerRows({ periodId, sectionId });
   const mobilizationDeductionLedger = engine.mobilizationDeductionLedgerRows({ periodId, sectionId });
   const rules = engine.calculationRules();
@@ -7210,6 +7249,29 @@ function jlPaymentReportPageHtml(req) {
         <td>${moneyText(row.advanceMoney)}</td>
       </tr>`)
     .join("");
+  const priceAdjustmentRows = priceAdjustmentReport.detailRows.slice(0, 80).map((row) => `
+    <tr>
+      <td>${htmlEscape(row.measureNo || "")}</td>
+      <td>${htmlEscape(row.measureDate || "")}</td>
+      <td class="left">${htmlEscape(row.materialName || "")}</td>
+      <td>${htmlEscape(row.unit || "")}</td>
+      <td>${moneyText(row.basePrice)}</td>
+      <td>${moneyText(row.currentPrice)}</td>
+      <td>${moneyText(row.priceDiff)}</td>
+      <td>${htmlEscape(row.quantity)}</td>
+      <td>${moneyText(row.adjustMoney)}</td>
+    </tr>`).join("");
+  const jl116Rows = [priceAdjustmentReport.formula].map((row) => `
+    <tr>
+      <td class="left">${htmlEscape(row.formula)}</td>
+      <td>${moneyText(row.formulaBase)}</td>
+      <td>${htmlEscape(row.nonAdjustableFactor)}</td>
+      <td>${htmlEscape(row.variableFactor)}</td>
+      <td>${htmlEscape(row.indexFactor)}</td>
+      <td>${moneyText(row.detailAdjustment)}</td>
+      <td>${moneyText(row.certificatePriceAdjustment)}</td>
+      <td>${moneyText(row.difference)}</td>
+    </tr>`).join("");
   const materialDeductionRows = materialDeductionLedger.map((row) => `
     <tr>
       <td>${htmlEscape(row.periodDesc)}</td>
@@ -7233,6 +7295,7 @@ function jlPaymentReportPageHtml(req) {
     </tr>`).join("");
   const formulaLines = [
     `本期实际支付 = 小计 + 价格调整 + 材料设备垫付款 - 扣回材料设备垫付款 - 保留金 - 扣回动员预付款`,
+    `价格调整 = Σ[实际用量×(现行价-基价)]；JL116合同价格调表：T=F×[(X+index)-1]`,
     `材料设备垫付款 = 材料到场金额 × ${rules.materialAdvanceRate}%`,
     `保留金 = 小计 × ${rules.retentionRate}%`,
     `动员预付款扣回：累计小计达到合同价 ${rules.mobilizationDeductionStartRate}% 后开始，${rules.mobilizationDeductionEndRate}% 时扣完`
@@ -7279,6 +7342,7 @@ function jlPaymentReportPageHtml(req) {
     ["JL表单总数", String(lifecycle.summary.formCount), `本期应出现 ${lifecycle.summary.requiredCount}`],
     ["JL115规则", `1-${lifecycle.summary.lifecycleRules.jl115EndPeriod}期`, "开工动员预付款支付证书"],
     ["调差月份", lifecycle.summary.lifecycleRules.jlPriceAdjustmentMonths.join(","), "JL108/JL108-1/JL116"],
+    ["JL116非调因子X", String(lifecycle.summary.lifecycleRules.jl116NonAdjustableFactor), "合同价格调表"],
     ["动员扣回区间", `${lifecycle.summary.lifecycleRules.mobilizationDeductionStartRate}%-${lifecycle.summary.lifecycleRules.mobilizationDeductionEndRate}%`, "JL111出现条件"]
   ]);
   return `
@@ -7305,6 +7369,7 @@ function jlPaymentReportPageHtml(req) {
             <a class="layui-btn layui-btn-sm" href="/payment/jl_print_page?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">打印预览</a>
             <a class="layui-btn layui-btn-sm" href="/payment/export_jl_report?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">导出CSV</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_lifecycle?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">生命周期JSON</a>
+            <a class="layui-btn layui-btn-sm" href="/api/payment/jl_price_adjustment?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">调差JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_deductions?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">扣款台账JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_validation?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">校验JSON</a>
             <a class="layui-btn layui-btn-sm layui-btn-primary" href="/api/payment/certificate?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">证书JSON</a>
@@ -7364,6 +7429,20 @@ function jlPaymentReportPageHtml(req) {
             <table class="layui-table" lay-size="sm">
               <thead><tr><th>细目编号</th><th>细目名称</th><th>单位</th><th>合同数量</th><th>单价</th><th>合同金额</th><th>上期数量</th><th>上期金额</th><th>本期数量</th><th>本期金额</th><th>累计数量</th><th>累计金额</th><th>进度</th></tr></thead>
               <tbody>${jl105Rows || `<tr><td colspan="13" class="core-empty">暂无清单支付台账</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>JL108 永久性工程材料差价金额一览表</h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>调差单号</th><th>日期</th><th>材料名称</th><th>单位</th><th>基价</th><th>现行价</th><th>价差</th><th>实际用量</th><th>调差金额</th></tr></thead>
+              <tbody>${priceAdjustmentRows || `<tr><td colspan="9" class="core-empty">本期无材料价格调差</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>JL116 合同价格调表 <span class="subtle">T=F*[(X+index)-1]</span></h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>公式</th><th>F累计基数</th><th>X非调因子</th><th>可调因子</th><th>综合指数</th><th>JL108汇总</th><th>JL104价格调整</th><th>差额</th></tr></thead>
+              <tbody>${jl116Rows}</tbody>
             </table>
           </div>
           <div class="core-panel">
@@ -11804,6 +11883,11 @@ app.get("/api/payment/jl_deductions", (req, res) => {
     materialDeductionLedger: engine.materialDeductionLedgerRows({ periodId, sectionId }),
     mobilizationDeductionLedger: engine.mobilizationDeductionLedgerRows({ periodId, sectionId })
   });
+});
+app.get("/api/payment/jl_price_adjustment", (req, res) => {
+  const periodId = queryNumber(req, "periodId") || queryNumber(req, "gatherId");
+  const sectionId = queryNumber(req, "sectionId");
+  operationOk(res, engine.jlPriceAdjustmentReport({ periodId, sectionId }));
 });
 app.get("/api/cost/reconciliation", (req, res) => operationOk(res, costReconciliationData()));
 app.get("/api/cost/5d_model", (req, res) => operationOk(res, fiveDCostModelData()));

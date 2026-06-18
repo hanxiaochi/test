@@ -657,16 +657,18 @@ async function verifyCalculationRulesAdminLoop() {
   assert.ok(page.text.includes("材料到场进入应付"), "calculation rules admin page should expose material arrival toggle");
   assert.ok(page.text.includes("材料预付率") && page.text.includes("保留金率"), "calculation rules admin page should expose JL104 payment rules");
   assert.ok(page.text.includes("JL115出现至第几期") && page.text.includes("JL108/JL116调差月份"), "calculation rules admin page should expose JL form lifecycle rules");
+  assert.ok(page.text.includes("JL116非调因子X"), "calculation rules admin page should expose JL116 price adjustment formula factor");
 
   const original = before.json.data.rules;
   const originalPayable = before.json.data.summary.payableMoney;
-  const toggledRules = { ...original, includeRetention: !original.includeRetention, jl115EndPeriod: Number(original.jl115EndPeriod || 2) + 1, jlPriceAdjustmentMonths: "2,5,8,11" };
+  const toggledRules = { ...original, includeRetention: !original.includeRetention, jl115EndPeriod: Number(original.jl115EndPeriod || 2) + 1, jlPriceAdjustmentMonths: "2,5,8,11", jl116NonAdjustableFactor: 0.4 };
   try {
     const toggled = await postJson("/api/admin/calculation_rules", toggledRules);
     assert.strictEqual(toggled.json.code, 1, "calculation rules save should succeed");
     assert.strictEqual(toggled.json.data.rules.includeRetention, toggledRules.includeRetention, "retention toggle should persist");
     assert.strictEqual(toggled.json.data.rules.jl115EndPeriod, toggledRules.jl115EndPeriod, "JL115 lifecycle end period should persist");
     assert.deepStrictEqual(toggled.json.data.rules.jlPriceAdjustmentMonths, [2, 5, 8, 11], "JL price adjustment months should parse and persist");
+    assert.strictEqual(toggled.json.data.rules.jl116NonAdjustableFactor, 0.4, "JL116 non-adjustable factor should persist");
     assert.notStrictEqual(toggled.json.data.summary.payableMoney, originalPayable, "retention toggle should affect JL104 payable money");
     assert.ok(toggled.json.data.summary.payableFormula, "saved rules should update formula text");
   } finally {
@@ -1486,6 +1488,14 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(lifecycle.json.data.forms.some((row) => row.code === "JL116" && row.expected), "JL116 should follow price adjustment lifecycle");
   assert.ok(lifecycle.json.data.forms.some((row) => row.code === "JL111" && !row.expected), "JL111 should stay hidden before mobilization deduction threshold");
   assert.ok(lifecycle.json.data.summary.lifecycleRules.jlPriceAdjustmentMonths.length > 0, "JL lifecycle summary should expose configured price adjustment months");
+  assert.ok(Object.prototype.hasOwnProperty.call(lifecycle.json.data.summary.lifecycleRules, "jl116NonAdjustableFactor"), "JL lifecycle summary should expose JL116 formula factor");
+
+  const priceAdjustment = await requestJson("/api/payment/jl_price_adjustment?periodId=2");
+  assert.strictEqual(priceAdjustment.response.status, 200, "JL price adjustment API should load");
+  assert.strictEqual(priceAdjustment.json.code, 1, "JL price adjustment API should return success");
+  assert.ok(Array.isArray(priceAdjustment.json.data.detailRows), "JL108 price adjustment report should expose detail rows");
+  assert.ok(priceAdjustment.json.data.formula && priceAdjustment.json.data.formula.formula.includes("T = F"), "JL116 price adjustment report should expose formula");
+  assert.strictEqual(round(priceAdjustment.json.data.formula.certificatePriceAdjustment), round(data.priceAdjustment), "JL116 formula summary should reconcile to JL104 price adjustment");
 
   const deductions = await requestJson("/api/payment/jl_deductions?periodId=2");
   assert.strictEqual(deductions.response.status, 200, "JL deduction ledger API should load");
@@ -1503,19 +1513,22 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(page.text.includes("7,699,376.00") && page.text.includes("24,024,989.00") && page.text.includes("621,281.00"), "JL payment report page should show PDF reference validation values");
   assert.ok(page.text.includes("JL表单校验结果") && page.text.includes("当前期横向、纵向、期次和样表基准校验全部通过"), "JL payment report page should show validation results");
   assert.ok(page.text.includes("JL表单生命周期") && page.text.includes("JL115") && page.text.includes("JL116"), "JL payment report page should show lifecycle table");
+  assert.ok(page.text.includes("JL108 永久性工程材料差价金额一览表") && page.text.includes("JL116 合同价格调表"), "JL payment report page should show JL108/JL116 price adjustment ledgers");
   assert.ok(page.text.includes("JL110 扣回材料垫付款一览表") && page.text.includes("JL111 扣回动员预付款一览表"), "JL payment report page should show JL110 and JL111 ledgers");
   assert.ok(page.text.includes("/api/payment/certificate") && page.text.includes("/api/payment/jl_validation") && page.text.includes("/api/payment/jl_lifecycle"), "JL payment report page should link certificate, validation and lifecycle JSON");
+  assert.ok(page.text.includes("/api/payment/jl_price_adjustment"), "JL payment report page should link price adjustment JSON");
   assert.ok(page.text.includes("/api/payment/jl_deductions"), "JL payment report page should link deduction ledger JSON");
   assert.ok(page.text.includes("/payment/jl_print_page") && page.text.includes("/payment/export_jl_report"), "JL payment report page should link print preview and CSV export");
 
   const printPage = await requestText("/payment/jl_print_page?periodId=2");
   assert.strictEqual(printPage.response.status, 200, "JL payment print page should load");
   assert.ok(printPage.text.includes("JL计量支付报表打印预览"), "JL payment print page should show dedicated title");
-  assert.ok(["JL104 中期财务支付证书", "JL113 计量支付数量汇总表", "JL105 清单中期财务支付报表", "JL表单校验与生命周期", "JL110/JL111 专项扣款台账"].every((label) => printPage.text.includes(label)), "JL payment print page should include printable core sections");
+  assert.ok(["JL104 中期财务支付证书", "JL108/JL116 价格调差", "JL113 计量支付数量汇总表", "JL105 清单中期财务支付报表", "JL表单校验与生命周期", "JL110/JL111 专项扣款台账"].every((label) => printPage.text.includes(label)), "JL payment print page should include printable core sections");
 
   const exportCsv = await requestText("/payment/export_jl_report?periodId=2");
   assert.strictEqual(exportCsv.response.status, 200, "JL payment CSV export should load");
   assert.ok(exportCsv.text.includes("JL104支付证书") && exportCsv.text.includes("JL113数量汇总") && exportCsv.text.includes("JL表单生命周期"), "JL payment CSV export should include certificate, JL113 and lifecycle rows");
+  assert.ok(exportCsv.text.includes("JL108材料调差明细") && exportCsv.text.includes("JL116合同价格调表"), "JL payment CSV export should include JL108 and JL116 price adjustment rows");
   assert.ok(exportCsv.text.includes("JL110材料扣回台账") && exportCsv.text.includes("JL111动员扣回台账"), "JL payment CSV export should include JL110 and JL111 ledgers");
 
   const menuPage = await requestText("/sbr/sbr_com/9004");

@@ -94,7 +94,8 @@ const jlPaymentDefaults = {
   otherAdjustmentMoney: 0,
   provisionalCurrentMoney: 0,
   jl115EndPeriod: 2,
-  jlPriceAdjustmentMonths: [1, 4, 7, 10]
+  jlPriceAdjustmentMonths: [1, 4, 7, 10],
+  jl116NonAdjustableFactor: 0.35
 };
 
 function calculationRules() {
@@ -137,7 +138,8 @@ function calculationRules() {
     otherAdjustmentMoney: numberOr(saved.otherAdjustmentMoney, jlPaymentDefaults.otherAdjustmentMoney),
     provisionalCurrentMoney: numberOr(saved.provisionalCurrentMoney, jlPaymentDefaults.provisionalCurrentMoney),
     jl115EndPeriod: bounded("jl115EndPeriod", jlPaymentDefaults.jl115EndPeriod, 0, 999),
-    jlPriceAdjustmentMonths: monthList(saved.jlPriceAdjustmentMonths, jlPaymentDefaults.jlPriceAdjustmentMonths)
+    jlPriceAdjustmentMonths: monthList(saved.jlPriceAdjustmentMonths, jlPaymentDefaults.jlPriceAdjustmentMonths),
+    jl116NonAdjustableFactor: bounded("jl116NonAdjustableFactor", jlPaymentDefaults.jl116NonAdjustableFactor, 0, 1)
   };
 }
 
@@ -662,6 +664,126 @@ function materialDiasRows() {
   });
 }
 
+function priceAdjustmentLedgerRows(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const sectionId = Number(opts.sectionId || 0);
+  const periodId = Number(opts.periodId || 0);
+  const selectedPeriod = findPeriod(periodId);
+  const rows = periodId ? filterByPeriod(materialDiasRows(), periodId) : materialDiasRows();
+  return rows
+    .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId)
+    .map((row) => {
+      const rowPeriod = findPeriod(row.periodId || row.gatherId) || selectedPeriod;
+      const basePrice = Number(row.basePrice || 0);
+      const currentPrice = Number(row.currentPrice || 0);
+      const quantity = Number(row.measureNum ?? row.quantity ?? 0);
+      const priceDiff = round(currentPrice - basePrice);
+      const adjustMoney = round(quantity * priceDiff);
+      return {
+        periodId: rowPeriod ? Number(rowPeriod.periodId || rowPeriod.gatherId || rowPeriod.id || 0) : Number(row.periodId || row.gatherId || 0),
+        periodDesc: rowPeriod ? (rowPeriod.periodDesc || rowPeriod.gatherNo || "") : "",
+        sectionId: Number(row.sectionId || 0),
+        sectionName: row.sectionName || section(row.sectionId).sectionName,
+        measureNo: row.measureNo || row.approveNo || "",
+        measureDate: row.measureDate || row.diffYearMonth || "",
+        materialNo: row.materialNo || "",
+        materialName: row.materialName || row.secMaterialName || "",
+        unit: row.unit || row.measureUnit || "",
+        basePrice,
+        currentPrice,
+        priceDiff,
+        priceRatio: basePrice ? round(currentPrice / basePrice, 6) : 0,
+        quantity,
+        adjustMoney,
+        formula: "adjustMoney = quantity * (currentPrice - basePrice)"
+      };
+    });
+}
+
+function priceAdjustmentSummaryRows(options = {}) {
+  const grouped = new Map();
+  priceAdjustmentLedgerRows(options).forEach((row) => {
+    const key = `${row.materialNo || ""}|${row.materialName || ""}|${row.unit || ""}`;
+    const current = grouped.get(key) || {
+      materialNo: row.materialNo,
+      materialName: row.materialName,
+      unit: row.unit,
+      periods: new Set(),
+      quantity: 0,
+      adjustMoney: 0,
+      minBasePrice: row.basePrice,
+      maxCurrentPrice: row.currentPrice
+    };
+    if (row.periodDesc) current.periods.add(row.periodDesc);
+    current.quantity += Number(row.quantity || 0);
+    current.adjustMoney += Number(row.adjustMoney || 0);
+    current.minBasePrice = Math.min(Number(current.minBasePrice || 0), Number(row.basePrice || 0));
+    current.maxCurrentPrice = Math.max(Number(current.maxCurrentPrice || 0), Number(row.currentPrice || 0));
+    grouped.set(key, current);
+  });
+  return Array.from(grouped.values()).map((row) => ({
+    materialNo: row.materialNo,
+    materialName: row.materialName,
+    unit: row.unit,
+    periods: Array.from(row.periods).join(","),
+    quantity: round(row.quantity, calculationRules().quantityDigits),
+    minBasePrice: round(row.minBasePrice, calculationRules().priceDigits),
+    maxCurrentPrice: round(row.maxCurrentPrice, calculationRules().priceDigits),
+    adjustMoney: round(row.adjustMoney)
+  }));
+}
+
+function jl116FormulaSummary(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const period = findPeriod(opts.periodId) || periodRows()[periodRows().length - 1] || null;
+  const periodId = period ? Number(period.periodId || period.gatherId || period.id || 0) : Number(opts.periodId || 0);
+  const sectionId = Number(opts.sectionId || 0);
+  const rules = calculationRules();
+  const certificate = paymentCertificateForPeriod(periodId, { sectionId });
+  const detailRows = priceAdjustmentLedgerRows({ periodId, sectionId });
+  const totalAdjustment = round(detailRows.reduce((sum, row) => sum + Number(row.adjustMoney || 0), 0));
+  const formulaBase = Number(certificate.cumulativeSubtotal || certificate.subtotal || 0);
+  const rawIndexFactor = formulaBase ? 1 + totalAdjustment / formulaBase : 1;
+  const indexFactor = round(rawIndexFactor, 6);
+  const nonAdjustableFactor = Number(rules.jl116NonAdjustableFactor || 0);
+  const variableFactor = round(indexFactor - nonAdjustableFactor, 6);
+  const formulaAdjustment = round(formulaBase * (rawIndexFactor - 1));
+  return {
+    periodId,
+    periodDesc: certificate.periodDesc,
+    sectionId,
+    formula: "T = F * [(X + materialIndexFactor) - 1]",
+    formulaBase,
+    nonAdjustableFactor,
+    variableFactor,
+    indexFactor,
+    detailAdjustment: totalAdjustment,
+    certificatePriceAdjustment: certificate.priceAdjustment,
+    formulaAdjustment,
+    difference: round(Number(certificate.priceAdjustment || 0) - totalAdjustment),
+    passed: Math.abs(round(Number(certificate.priceAdjustment || 0) - totalAdjustment)) <= 0.01
+  };
+}
+
+function jlPriceAdjustmentReport(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const period = findPeriod(opts.periodId) || periodRows()[periodRows().length - 1] || null;
+  const periodId = period ? Number(period.periodId || period.gatherId || period.id || 0) : Number(opts.periodId || 0);
+  const sectionId = Number(opts.sectionId || 0);
+  const detailRows = priceAdjustmentLedgerRows({ periodId, sectionId });
+  const summaryRows = priceAdjustmentSummaryRows({ periodId, sectionId });
+  const formula = jl116FormulaSummary({ periodId, sectionId });
+  return {
+    periodId,
+    periodDesc: formula.periodDesc,
+    sectionId,
+    totalAdjustment: round(detailRows.reduce((sum, row) => sum + Number(row.adjustMoney || 0), 0)),
+    detailRows,
+    summaryRows,
+    formula
+  };
+}
+
 function materialRows() {
   return db.materials.map((item) => ({
     ...item,
@@ -1035,6 +1157,9 @@ function jlPaymentValidation(options = {}) {
   });
   addCheck("纵向校验", "JL109→JL104材料设备垫付款", certificate.materialArrivalMoney * (rules.materialAdvanceRate / 100), certificate.materialAdvanceMoney, `材料到场金额*${rules.materialAdvanceRate}%`);
   addCheck("纵向校验", "JL110→JL104扣回材料设备垫付款", materialDeductionMoneyForPeriod(periodId), certificate.materialDeductionMoney, "本期扣回=到本期末累计扣回-到上期末累计扣回");
+  const priceAdjustment = jlPriceAdjustmentReport({ periodId, sectionId });
+  addCheck("纵向校验", "JL108/JL116→JL104价格调整", priceAdjustment.totalAdjustment, certificate.priceAdjustment, "JL108调差=Σ(现行价-基价)*实际用量，JL116公式归档");
+
   const expectedMobilization = period && period.mobilizationDeductionMoney !== undefined
     ? Number(period.mobilizationDeductionMoney || 0)
     : Math.max(0, cumulativeMobilizationDeduction(certificate.cumulativeSubtotal, certificate.contractTotal, rules) - cumulativeMobilizationDeduction(certificate.previousCumulativeSubtotal, certificate.contractTotal, rules));
@@ -1081,6 +1206,7 @@ function jlPaymentValidation(options = {}) {
       jl113Amount: "JL113金额 = ΣJL114数量 * 合同单价",
       jl105Continuity: "E=G+I, F=H+J, D=F/C",
       jl104Payment: "实际支付 = 小计 + 价格调整 + 材料设备垫付款 - 扣回材料设备垫付款 - 保留金 - 扣回动员预付款 ± 索赔/罚金/利息",
+      jl108PriceAdjustment: "JL108价格调整 = Σ[实际用量 * (现行价-基价)]；JL116: T=F*[(X+index)-1]",
       materialAdvance: `JL109材料设备垫付款 = 到场金额 * ${rules.materialAdvanceRate}%`,
       mobilizationDeduction: "JL111累计应扣回 = (C-D)/A*2*B，30%后开始，80%时扣完"
     },
@@ -1161,6 +1287,7 @@ function jlFormLifecycle(options = {}) {
       lifecycleRules: {
         jl115EndPeriod: rules.jl115EndPeriod,
         jlPriceAdjustmentMonths: rules.jlPriceAdjustmentMonths,
+        jl116NonAdjustableFactor: rules.jl116NonAdjustableFactor,
         mobilizationDeductionStartRate: rules.mobilizationDeductionStartRate,
         mobilizationDeductionEndRate: rules.mobilizationDeductionEndRate
       },
@@ -1481,6 +1608,10 @@ module.exports = {
   planRows,
   measureRows,
   materialDiasRows,
+  priceAdjustmentLedgerRows,
+  priceAdjustmentSummaryRows,
+  jl116FormulaSummary,
+  jlPriceAdjustmentReport,
   materialArrivalRows,
   materialDeductionRows,
   materialDeductionLedgerRows,
