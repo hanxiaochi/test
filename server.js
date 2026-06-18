@@ -6936,6 +6936,7 @@ function jlPaymentExportRows(req) {
   const periodId = requestedPeriodId || Number(latestPeriod.gatherId || latestPeriod.id || 0);
   const sectionId = Number(req.query.sectionId || req.body.sectionId || 0);
   const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
+  const jl101Report = engine.jl101MonthlyReport({ periodId, sectionId });
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
@@ -6946,6 +6947,17 @@ function jlPaymentExportRows(req) {
     sectionId,
     table,
     ...row
+  });
+  push("JL101月报摘要", {
+    code: jl101Report.formCode,
+    name: jl101Report.formName,
+    item: "本期支付金额",
+    amount: jl101Report.currentPayment,
+    source: jl101Report.source,
+    contractTotal: jl101Report.contractTotal,
+    cumulativeSubtotal: jl101Report.cumulativeSubtotal,
+    progressPct: jl101Report.cumulativePaymentRate,
+    formula: jl101Report.formula
   });
   [
     ["本期实际支付", certificate.finalPayment, "JL104"],
@@ -7070,6 +7082,7 @@ function jlPaymentPrintableHtml(req) {
   const periodId = requestedPeriodId || Number(latestPeriod.gatherId || latestPeriod.id || 0);
   const sectionId = Number(req.query.sectionId || req.body.sectionId || 0);
   const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
+  const jl101Report = engine.jl101MonthlyReport({ periodId, sectionId });
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
@@ -7103,6 +7116,12 @@ function jlPaymentPrintableHtml(req) {
           <a href="/payment/export_jl_report?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">导出CSV</a>
           <button onclick="window.print()">打印</button>
         </div>
+      </div>
+      <div class="jl-print-section">
+        <h2>JL101 计量支付月报表</h2>
+        <table><thead><tr><th>项目</th><th>合同段</th><th>期次</th><th>本期支付</th><th>累计小计</th><th>支付比例</th><th>来源</th></tr></thead><tbody>
+          ${rows([jl101Report], (row) => [row.projectName, row.sectionName, row.periodDesc, moneyText(row.currentPayment), moneyText(row.cumulativeSubtotal), percentText(row.cumulativePaymentRate), row.source])}
+        </tbody></table>
       </div>
       <div class="jl-print-section">
         <h2>JL104 中期财务支付证书</h2>
@@ -7169,6 +7188,7 @@ function jlPaymentReportPageHtml(req) {
   const periodId = requestedPeriodId || Number(latestPeriod.gatherId || latestPeriod.id || 0);
   const sectionId = Number(req.query.sectionId || req.body.sectionId || 0);
   const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
+  const jl101Report = engine.jl101MonthlyReport({ periodId, sectionId });
   const validation = engine.jlPaymentValidation({ periodId, sectionId });
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
@@ -7368,6 +7388,7 @@ function jlPaymentReportPageHtml(req) {
             <a class="layui-btn layui-btn-sm" href="/reportManager/dashboard_page${sectionId ? `?sectionId=${sectionId}` : ""}">报表中心</a>
             <a class="layui-btn layui-btn-sm" href="/payment/jl_print_page?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">打印预览</a>
             <a class="layui-btn layui-btn-sm" href="/payment/export_jl_report?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">导出CSV</a>
+            <a class="layui-btn layui-btn-sm" href="/api/payment/jl101?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL101 JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_lifecycle?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">生命周期JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_price_adjustment?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">调差JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_deductions?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">扣款台账JSON</a>
@@ -7376,6 +7397,22 @@ function jlPaymentReportPageHtml(req) {
           </div>
         </div>
         <div class="core-cards">${cards}</div>
+        <div class="core-panel" style="margin-bottom:12px; overflow:auto;">
+          <h3>JL101 计量支付月报表</h3>
+          <table class="layui-table" lay-size="sm">
+            <thead><tr><th>项目名称</th><th>合同段</th><th>期次</th><th>起止日期</th><th>本期支付</th><th>累计小计</th><th>支付比例</th><th>来源</th></tr></thead>
+            <tbody><tr>
+              <td class="left">${htmlEscape(jl101Report.projectName)}</td>
+              <td>${htmlEscape(jl101Report.sectionName)}</td>
+              <td>${htmlEscape(jl101Report.periodDesc)}</td>
+              <td>${htmlEscape(jl101Report.startDate)} ~ ${htmlEscape(jl101Report.endDate)}</td>
+              <td>${moneyText(jl101Report.currentPayment)}</td>
+              <td>${moneyText(jl101Report.cumulativeSubtotal)}</td>
+              <td>${percentText(jl101Report.cumulativePaymentRate)}</td>
+              <td>${htmlEscape(jl101Report.source)}</td>
+            </tr></tbody>
+          </table>
+        </div>
         <div class="core-grid">
           <div class="core-panel">
             <h3>JL104 中期财务支付证书</h3>
@@ -11873,6 +11910,7 @@ app.get("/api/cost/ledger", (req, res) => table(res, req, engine.billLedgerRows(
 app.get("/api/payment/jl113", (req, res) => table(res, req, engine.jl113Rows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl105", (req, res) => table(res, req, engine.jl105LedgerRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl104_chapters", (req, res) => table(res, req, engine.jl104ChapterRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl101", (req, res) => operationOk(res, engine.jl101MonthlyReport({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/certificate", (req, res) => operationOk(res, engine.paymentCertificateForPeriod(queryNumber(req, "periodId") || queryNumber(req, "gatherId"), { sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_validation", (req, res) => operationOk(res, engine.jlPaymentValidation({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_lifecycle", (req, res) => operationOk(res, engine.jlFormLifecycle({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));

@@ -784,6 +784,46 @@ function jlPriceAdjustmentReport(options = {}) {
   };
 }
 
+function jl101MonthlyReport(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const period = findPeriod(opts.periodId) || periodRows()[periodRows().length - 1] || null;
+  const periodId = period ? Number(period.periodId || period.gatherId || period.id || 0) : Number(opts.periodId || 0);
+  const sectionId = Number(opts.sectionId || 0);
+  const certificate = paymentCertificateForPeriod(periodId, { sectionId });
+  const selectedSections = db.sections.filter((item) => !sectionId || Number(item.sectionId || item.id || 0) === sectionId);
+  const project = db.projects[0] || {};
+  const client = db.client || {};
+  const sectionNames = selectedSections.map((item) => item.sectionName || item.name).filter(Boolean).join(",") || "全部合同段";
+  const contractors = selectedSections.map((item) => item.contractor).filter(Boolean).join(",");
+  const supervisors = selectedSections.map((item) => item.supervisor).filter(Boolean).join(",");
+  return {
+    formCode: "JL101",
+    formName: "计量支付月报表",
+    projectName: project.projectName || client.clientName || "",
+    clientName: client.clientName || "",
+    sectionId,
+    sectionName: sectionNames,
+    contractor: contractors,
+    supervisor: supervisors,
+    periodId,
+    periodDesc: certificate.periodDesc || (period ? period.periodDesc : ""),
+    startDate: period ? (period.startDate || period.gatherStartDate || "") : "",
+    endDate: period ? (period.endDate || period.gatherEndDate || "") : "",
+    contractTotal: certificate.contractTotal,
+    subtotal: certificate.subtotal,
+    priceAdjustment: certificate.priceAdjustment,
+    materialAdvanceMoney: certificate.materialAdvanceMoney,
+    materialDeductionMoney: certificate.materialDeductionMoney,
+    retentionMoney: certificate.retentionMoney,
+    mobilizationDeductionMoney: certificate.mobilizationDeductionMoney,
+    currentPayment: certificate.finalPayment,
+    cumulativeSubtotal: certificate.cumulativeSubtotal,
+    cumulativePaymentRate: certificate.contractTotal ? round((certificate.cumulativeSubtotal / certificate.contractTotal) * 100, 2) : 0,
+    source: "JL104",
+    formula: "JL101.currentPayment = JL104.finalPayment"
+  };
+}
+
 function materialRows() {
   return db.materials.map((item) => ({
     ...item,
@@ -1159,6 +1199,8 @@ function jlPaymentValidation(options = {}) {
   addCheck("纵向校验", "JL110→JL104扣回材料设备垫付款", materialDeductionMoneyForPeriod(periodId), certificate.materialDeductionMoney, "本期扣回=到本期末累计扣回-到上期末累计扣回");
   const priceAdjustment = jlPriceAdjustmentReport({ periodId, sectionId });
   addCheck("纵向校验", "JL108/JL116→JL104价格调整", priceAdjustment.totalAdjustment, certificate.priceAdjustment, "JL108调差=Σ(现行价-基价)*实际用量，JL116公式归档");
+  const jl101 = jl101MonthlyReport({ periodId, sectionId });
+  addCheck("纵向校验", "JL104→JL101支付金额", certificate.finalPayment, jl101.currentPayment, "JL101月报支付金额=JL104实际支付");
 
   const expectedMobilization = period && period.mobilizationDeductionMoney !== undefined
     ? Number(period.mobilizationDeductionMoney || 0)
@@ -1207,6 +1249,7 @@ function jlPaymentValidation(options = {}) {
       jl105Continuity: "E=G+I, F=H+J, D=F/C",
       jl104Payment: "实际支付 = 小计 + 价格调整 + 材料设备垫付款 - 扣回材料设备垫付款 - 保留金 - 扣回动员预付款 ± 索赔/罚金/利息",
       jl108PriceAdjustment: "JL108价格调整 = Σ[实际用量 * (现行价-基价)]；JL116: T=F*[(X+index)-1]",
+      jl101Payment: "JL101月报支付金额 = JL104本期实际支付",
       materialAdvance: `JL109材料设备垫付款 = 到场金额 * ${rules.materialAdvanceRate}%`,
       mobilizationDeduction: "JL111累计应扣回 = (C-D)/A*2*B，30%后开始，80%时扣完"
     },
@@ -1612,6 +1655,7 @@ module.exports = {
   priceAdjustmentSummaryRows,
   jl116FormulaSummary,
   jlPriceAdjustmentReport,
+  jl101MonthlyReport,
   materialArrivalRows,
   materialDeductionRows,
   materialDeductionLedgerRows,
