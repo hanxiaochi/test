@@ -1100,6 +1100,14 @@ function jlPaymentReferenceCases() {
       basis: "累计小计151,301,505未达合同价30%"
     },
     {
+      period: "第12期样表",
+      item: "JL106/JL107变更金额",
+      expected: 0,
+      actual: 0,
+      passed: true,
+      basis: "JL106/JL107样表仅表头无变更明细；JL104合同金额=变更后合同金额"
+    },
+    {
       period: "第14期样表",
       item: "JL111动员预付款扣回",
       expected: 621281,
@@ -1197,6 +1205,24 @@ function jlPaymentValidation(options = {}) {
   });
   addCheck("纵向校验", "JL109→JL104材料设备垫付款", certificate.materialArrivalMoney * (rules.materialAdvanceRate / 100), certificate.materialAdvanceMoney, `材料到场金额*${rules.materialAdvanceRate}%`);
   addCheck("纵向校验", "JL110→JL104扣回材料设备垫付款", materialDeductionMoneyForPeriod(periodId), certificate.materialDeductionMoney, "本期扣回=到本期末累计扣回-到上期末累计扣回");
+  const variationRowsToDate = variationRows()
+    .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId)
+    .filter((row) => !period || rowBelongsToPeriod(row, period) || rowBeforePeriod(row, period));
+  const variationByChapter = new Map();
+  variationRowsToDate.forEach((row) => {
+    const sourceBill = bill(row.billId, {});
+    const chapter = String(sourceBill.chapter || row.chapter || row.billNo || "").padEnd(3, "0").slice(0, 3);
+    const beforeQuantity = Number(row.beforeVaryNum ?? row.beforeNum ?? 0);
+    const afterQuantity = Number(row.afterVaryNum ?? row.afterNum ?? 0);
+    const beforePrice = Number(row.beforeVaryPrice ?? row.beforePrice ?? 0);
+    const afterPrice = Number(row.afterVaryPrice ?? row.afterPrice ?? beforePrice);
+    const quantityChangeMoney = round((afterQuantity - beforeQuantity) * beforePrice);
+    const priceChangeMoney = round(afterQuantity * (afterPrice - beforePrice));
+    variationByChapter.set(chapter, round(Number(variationByChapter.get(chapter) || 0) + quantityChangeMoney + priceChangeMoney));
+  });
+  certificate.chapters.forEach((row) => {
+    addCheck("纵向校验", `JL106/JL107→JL104变更金额=${row.chapter}`, Number(variationByChapter.get(String(row.chapter)) || 0), row.changeAmount, "JL104章级变更金额=JL106工程量变更/JL107单价变更汇总");
+  });
   const priceAdjustment = jlPriceAdjustmentReport({ periodId, sectionId });
   addCheck("纵向校验", "JL108/JL116→JL104价格调整", priceAdjustment.totalAdjustment, certificate.priceAdjustment, "JL108调差=Σ(现行价-基价)*实际用量，JL116公式归档");
   const jl101 = jl101MonthlyReport({ periodId, sectionId });
@@ -1248,6 +1274,7 @@ function jlPaymentValidation(options = {}) {
       jl113Amount: "JL113金额 = ΣJL114数量 * 合同单价",
       jl105Continuity: "E=G+I, F=H+J, D=F/C",
       jl104Payment: "实际支付 = 小计 + 价格调整 + 材料设备垫付款 - 扣回材料设备垫付款 - 保留金 - 扣回动员预付款 ± 索赔/罚金/利息",
+      jl106Jl107Variation: "JL104变更金额 = ΣJL106工程量变更金额 + ΣJL107单价变更金额",
       jl108PriceAdjustment: "JL108价格调整 = Σ[实际用量 * (现行价-基价)]；JL116: T=F*[(X+index)-1]",
       jl101Payment: "JL101月报支付金额 = JL104本期实际支付",
       materialAdvance: `JL109材料设备垫付款 = 到场金额 * ${rules.materialAdvanceRate}%`,
@@ -1429,6 +1456,74 @@ function variationRows() {
       }
     };
   });
+}
+
+function variationRowsForPeriod(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const sectionId = Number(opts.sectionId || 0);
+  const periodId = Number(opts.periodId || 0);
+  const period = findPeriod(periodId);
+  return variationRows()
+    .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId)
+    .filter((row) => !period || rowBelongsToPeriod(row, period));
+}
+
+function jl106VariationQuantityRows(options = {}) {
+  return variationRowsForPeriod(options).map((row) => {
+    const beforeQuantity = Number(row.beforeVaryNum ?? row.beforeNum ?? 0);
+    const afterQuantity = Number(row.afterVaryNum ?? row.afterNum ?? 0);
+    const price = Number(row.beforeVaryPrice ?? row.beforePrice ?? row.afterVaryPrice ?? row.afterPrice ?? 0);
+    const quantityChange = round(afterQuantity - beforeQuantity, calculationRules().quantityDigits);
+    const quantityChangeMoney = round(quantityChange * price);
+    return {
+      variationId: row.varyId || row.id,
+      varyNo: row.varyNo || row.meetingNo || "",
+      sectionId: Number(row.sectionId || 0),
+      sectionName: row.sectionName || section(row.sectionId).sectionName,
+      billId: row.billId,
+      itemCode: row.billNo,
+      itemName: row.billName,
+      unit: row.measureUnit,
+      beforeQuantity,
+      afterQuantity,
+      quantityChange,
+      price,
+      quantityChangeMoney,
+      varyMoney: Number(row.varyMoney || 0),
+      reason: row.varyReason || row.varyItem || "",
+      status: row.states || "",
+      formula: "quantityChangeMoney = (afterQuantity - beforeQuantity) * beforePrice"
+    };
+  }).filter((row) => Math.abs(Number(row.quantityChange || 0)) > 0 || Math.abs(Number(row.quantityChangeMoney || 0)) > 0);
+}
+
+function jl107UnitPriceVariationRows(options = {}) {
+  return variationRowsForPeriod(options).map((row) => {
+    const beforePrice = Number(row.beforeVaryPrice ?? row.beforePrice ?? 0);
+    const afterPrice = Number(row.afterVaryPrice ?? row.afterPrice ?? 0);
+    const afterQuantity = Number(row.afterVaryNum ?? row.afterNum ?? 0);
+    const priceChange = round(afterPrice - beforePrice, calculationRules().priceDigits);
+    const priceChangeMoney = round(afterQuantity * priceChange);
+    return {
+      variationId: row.varyId || row.id,
+      varyNo: row.varyNo || row.meetingNo || "",
+      sectionId: Number(row.sectionId || 0),
+      sectionName: row.sectionName || section(row.sectionId).sectionName,
+      billId: row.billId,
+      itemCode: row.billNo,
+      itemName: row.billName,
+      unit: row.measureUnit,
+      beforePrice,
+      afterPrice,
+      priceChange,
+      afterQuantity,
+      priceChangeMoney,
+      varyMoney: Number(row.varyMoney || 0),
+      reason: row.varyReason || row.varyItem || "",
+      status: row.states || "",
+      formula: "priceChangeMoney = afterQuantity * (afterPrice - beforePrice)"
+    };
+  }).filter((row) => Math.abs(Number(row.priceChange || 0)) > 0 || Math.abs(Number(row.priceChangeMoney || 0)) > 0);
 }
 
 function billLedgerRows() {
@@ -1662,6 +1757,9 @@ module.exports = {
   mobilizationDeductionLedgerRows,
   manualMeasureRows,
   variationRows,
+  variationRowsForPeriod,
+  jl106VariationQuantityRows,
+  jl107UnitPriceVariationRows,
   jl113Rows,
   jl105LedgerRows,
   jl104ChapterRows,
