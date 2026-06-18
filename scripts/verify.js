@@ -1499,6 +1499,8 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(validation.json.data.formulas.jl108RawMaterial.includes("JL108-1"), "JL payment validation should expose JL108-1 raw material formula");
   assert.ok(validation.json.data.formulas.jl112Compilation.includes("JL112"), "JL payment validation should expose JL112 compilation formula");
   assert.ok(validation.json.data.formulas.jl115MobilizationAdvance.includes("JL115"), "JL payment validation should expose JL115 mobilization advance formula");
+  assert.ok(validation.json.data.formulas.jl109Jl110Cumulative.includes("JL110"), "JL payment validation should expose JL109 to JL110 cumulative formula");
+  assert.ok(validation.json.data.formulas.retentionContinuity.includes("保留金"), "JL payment validation should expose retention continuity formula");
   assert.ok(validation.json.data.checks.some((row) => row.name === "JL104→JL101支付金额" && row.passed), "JL validation should check JL104 to JL101 payment amount");
   assert.ok(validation.json.data.checks.some((row) => row.name.includes("JL106/JL107→JL104变更金额") && row.passed), "JL validation should check JL106/JL107 variation amounts against JL104");
   assert.ok(validation.json.data.checks.some((row) => row.name === "JL108-1→JL108原材料调差" && row.passed), "JL validation should check JL108-1 raw material rows against JL108");
@@ -1513,6 +1515,17 @@ async function verifyJlPaymentReportPageLoop() {
   assert.strictEqual(inheritance.json.data.summary.failedRows, 0, "JL period inheritance should have no failed rows");
   assert.ok(inheritance.json.data.summary.totalRows >= 1, "JL period inheritance should compare JL105 rows");
   assert.ok(inheritance.json.data.rows.some((row) => row.formula.includes("第N期到上期末")), "JL period inheritance should expose the continuity formula");
+
+  const financialContinuity = await requestJson("/api/payment/jl_financial_continuity?periodId=2");
+  assert.strictEqual(financialContinuity.response.status, 200, "JL financial continuity API should load");
+  assert.strictEqual(financialContinuity.json.code, 1, "JL financial continuity API should return success");
+  assert.ok(financialContinuity.json.data.ok, "JL financial continuity should pass for current local period");
+  assert.strictEqual(financialContinuity.json.data.summary.failedChecks, 0, "JL financial continuity should have no failed checks");
+  assert.ok(financialContinuity.json.data.summary.totalChecks >= 12, "JL financial continuity should check material, mobilization and retention continuity");
+  assert.ok(financialContinuity.json.data.formulas.jl109ToJl110.includes("JL110"), "JL financial continuity should expose JL109 to JL110 formula");
+  assert.ok(financialContinuity.json.data.checks.some((row) => row.name.includes("JL109→JL110累计预付") && row.passed), "JL financial continuity should check cumulative material advances");
+  assert.ok(financialContinuity.json.data.checks.some((row) => row.name.includes("保留金累计") && row.passed), "JL financial continuity should check retention cumulative continuity");
+  assert.ok(financialContinuity.json.data.referenceCases.some((row) => row.item === "材料未扣回余额" && row.expected === 6400483 && row.passed), "JL financial continuity should record the period 12 material outstanding reference");
 
   const jl101 = await requestJson("/api/payment/jl101?periodId=2");
   assert.strictEqual(jl101.response.status, 200, "JL101 monthly report API should load");
@@ -1603,11 +1616,13 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(page.text.includes("JL106/JL107变更金额") && page.text.includes("JL106/JL107样表仅表头无变更明细"), "JL payment report page should show the period 12 empty variation reference");
   assert.ok(page.text.includes("JL表单校验结果") && page.text.includes("当前期横向、纵向、期次和样表基准校验全部通过"), "JL payment report page should show validation results");
   assert.ok(page.text.includes("JL105期次继承校验") && page.text.includes("/api/payment/jl_period_inheritance"), "JL payment report page should show period inheritance validation and JSON link");
+  assert.ok(page.text.includes("JL资金连续性校验") && page.text.includes("/api/payment/jl_financial_continuity"), "JL payment report page should show financial continuity validation and JSON link");
+  assert.ok(page.text.includes("材料未扣回余额") && page.text.includes("保留金连续性"), "JL payment report page should show material outstanding and retention continuity");
   assert.ok(page.text.includes("JL表单生命周期") && page.text.includes("JL115") && page.text.includes("JL116"), "JL payment report page should show lifecycle table");
   assert.ok(page.text.includes("JL108 永久性工程材料差价金额一览表") && page.text.includes("JL116 合同价格调表"), "JL payment report page should show JL108/JL116 price adjustment ledgers");
   assert.ok(page.text.includes("覆盖方式") && page.text.includes("来源期次"), "JL payment report page should show JL108 settlement coverage metadata");
   assert.ok(page.text.includes("JL110 扣回材料垫付款一览表") && page.text.includes("JL111 扣回动员预付款一览表"), "JL payment report page should show JL110 and JL111 ledgers");
-  assert.ok(page.text.includes("/api/payment/certificate") && page.text.includes("/api/payment/jl_validation") && page.text.includes("/api/payment/jl_lifecycle") && page.text.includes("/api/payment/jl_period_inheritance"), "JL payment report page should link certificate, validation, lifecycle and inheritance JSON");
+  assert.ok(page.text.includes("/api/payment/certificate") && page.text.includes("/api/payment/jl_validation") && page.text.includes("/api/payment/jl_lifecycle") && page.text.includes("/api/payment/jl_period_inheritance") && page.text.includes("/api/payment/jl_financial_continuity"), "JL payment report page should link certificate, validation, lifecycle, inheritance and financial continuity JSON");
   assert.ok(page.text.includes("/api/payment/jl106") && page.text.includes("/api/payment/jl107"), "JL payment report page should link JL106/JL107 JSON");
   assert.ok(page.text.includes("/api/payment/jl102") && page.text.includes("/api/payment/jl103") && page.text.includes("/api/payment/jl108_raw_material") && page.text.includes("/api/payment/jl112") && page.text.includes("/api/payment/jl115"), "JL payment report page should link auxiliary JL JSON APIs");
   assert.ok(page.text.includes("/api/payment/jl_price_adjustment"), "JL payment report page should link price adjustment JSON");
@@ -1617,7 +1632,7 @@ async function verifyJlPaymentReportPageLoop() {
   const printPage = await requestText("/payment/jl_print_page?periodId=2");
   assert.strictEqual(printPage.response.status, 200, "JL payment print page should load");
   assert.ok(printPage.text.includes("JL计量支付报表打印预览"), "JL payment print page should show dedicated title");
-  assert.ok(["JL101 计量支付月报表", "JL102/JL103 流转与施工进度", "JL104 中期财务支付证书", "JL115 开工动员预付款支付证书", "JL106/JL107 变更明细", "JL108/JL116 价格调差", "JL108-1 原材料明细表", "JL112 工程量表汇编", "JL113 计量支付数量汇总表", "JL105 清单中期财务支付报表", "JL表单校验与生命周期", "JL105期次继承校验", "JL110/JL111 专项扣款台账"].every((label) => printPage.text.includes(label)), "JL payment print page should include printable core sections");
+  assert.ok(["JL101 计量支付月报表", "JL102/JL103 流转与施工进度", "JL104 中期财务支付证书", "JL115 开工动员预付款支付证书", "JL106/JL107 变更明细", "JL108/JL116 价格调差", "JL108-1 原材料明细表", "JL112 工程量表汇编", "JL113 计量支付数量汇总表", "JL105 清单中期财务支付报表", "JL表单校验与生命周期", "JL105期次继承校验", "JL资金连续性校验", "JL110/JL111 专项扣款台账"].every((label) => printPage.text.includes(label)), "JL payment print page should include printable core sections");
 
   const exportCsv = await requestText("/payment/export_jl_report?periodId=2");
   assert.strictEqual(exportCsv.response.status, 200, "JL payment CSV export should load");
@@ -1627,6 +1642,7 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(exportCsv.text.includes("JL108材料调差明细") && exportCsv.text.includes("JL108-1原材料明细表") && exportCsv.text.includes("JL116合同价格调表"), "JL payment CSV export should include JL108/JL108-1/JL116 price adjustment rows");
   assert.ok(exportCsv.text.includes("JL110材料扣回台账") && exportCsv.text.includes("JL111动员扣回台账"), "JL payment CSV export should include JL110 and JL111 ledgers");
   assert.ok(exportCsv.text.includes("JL105期次继承校验"), "JL payment CSV export should include JL105 period inheritance rows");
+  assert.ok(exportCsv.text.includes("JL资金连续性校验") && exportCsv.text.includes("JL104保留金连续台账"), "JL payment CSV export should include financial continuity and retention ledger rows");
 
   const exportPdf = await requestBuffer("/payment/export_jl_report_pdf?periodId=2");
   assert.strictEqual(exportPdf.response.status, 200, "JL payment PDF export should load");

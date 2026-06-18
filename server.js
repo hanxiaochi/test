@@ -7076,6 +7076,7 @@ function jlPaymentExportRows(req) {
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
   const supportReport = engine.jlPaymentSupportReport({ periodId, sectionId });
+  const financialContinuity = engine.jlFinancialContinuityReport({ periodId, sectionId });
   const rows = [];
   const push = (table, row) => rows.push({
     periodId: certificate.periodId,
@@ -7291,6 +7292,23 @@ function jlPaymentExportRows(req) {
     status: row.status,
     formula: row.formula
   }));
+  financialContinuity.retentionLedger.forEach((row) => push("JL104保留金连续台账", {
+    period: row.periodDesc,
+    subtotal: row.subtotal,
+    previousRetention: row.previousRetention,
+    periodRetention: row.periodRetention,
+    cumulativeRetention: row.cumulativeRetention,
+    formula: row.formula
+  }));
+  financialContinuity.checks.forEach((row) => push("JL资金连续性校验", {
+    group: row.group,
+    item: row.name,
+    expected: row.expected,
+    actual: row.actual,
+    difference: row.difference,
+    passed: row.passed,
+    basis: row.detail
+  }));
   validation.checks.forEach((row) => push("JL表单校验", {
     group: row.group,
     item: row.name,
@@ -7347,7 +7365,7 @@ function jlPaymentPdfBuffer(req) {
   ];
   const lines = [
     `期次：${periodDesc || "全部期次"}`,
-    "导出范围：JL101-JL116、JL104支付证书、JL105/JL113清单链路、JL109/JL110/JL111扣款台账、校验与生命周期。"
+    "导出范围：JL101-JL116、JL104支付证书、JL105/JL113清单链路、JL109/JL110/JL111扣款台账、资金连续性校验与生命周期。"
   ];
   let currentTable = "";
   rows.forEach((row, index) => {
@@ -7388,6 +7406,7 @@ function jlPaymentPrintableHtml(req) {
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
   const supportReport = engine.jlPaymentSupportReport({ periodId, sectionId });
+  const financialContinuity = engine.jlFinancialContinuityReport({ periodId, sectionId });
   const jl106Rows = engine.jl106VariationQuantityRows({ periodId, sectionId });
   const jl107Rows = engine.jl107UnitPriceVariationRows({ periodId, sectionId });
   const materialDeductionLedger = engine.materialDeductionLedgerRows({ periodId, sectionId });
@@ -7527,6 +7546,23 @@ function jlPaymentPrintableHtml(req) {
         </tbody></table>
       </div>
       <div class="jl-print-section">
+        <h2>JL资金连续性校验</h2>
+        <table><thead><tr><th>项目</th><th>数值</th><th>说明</th></tr></thead><tbody>
+          ${rows([
+            ["校验结论", financialContinuity.ok ? "通过" : "需复核", `失败 ${financialContinuity.summary.failedChecks} / ${financialContinuity.summary.totalChecks}`],
+            ["材料累计预付", moneyText(financialContinuity.summary.cumulativeMaterialAdvance), "JL110累计预付 = ΣJL109各期预付金额"],
+            ["材料累计扣回", moneyText(financialContinuity.summary.cumulativeMaterialDeduction), "JL110累计扣回连续"],
+            ["材料未扣回余额", moneyText(financialContinuity.summary.materialOutstandingBalance), "累计预付 - 累计扣回"],
+            ["保留金累计", moneyText(financialContinuity.summary.cumulativeRetention), "到本期末保留金累计"],
+            ["动员累计扣回", moneyText(financialContinuity.summary.cumulativeMobilizationDeduction), "JL111累计扣回"]
+          ], (row) => row)}
+        </tbody></table>
+        <table style="margin-top:8px;"><thead><tr><th>期次</th><th>小计</th><th>上期保留金</th><th>本期保留金</th><th>累计保留金</th><th>公式</th></tr></thead><tbody>
+          ${rows(financialContinuity.retentionLedger, (row) => [row.periodDesc, moneyText(row.subtotal), moneyText(row.previousRetention), moneyText(row.periodRetention), moneyText(row.cumulativeRetention), row.formula]) ||
+            `<tr><td colspan="6">暂无保留金台账</td></tr>`}
+        </tbody></table>
+      </div>
+      <div class="jl-print-section">
         <h2>JL110/JL111 专项扣款台账</h2>
         <table><thead><tr><th>表号</th><th>期次</th><th>累计基数</th><th>本期扣回</th><th>累计扣回</th><th>余额/状态</th></tr></thead><tbody>
           ${rows(materialDeductionLedger, (row) => ["JL110", row.periodDesc, moneyText(row.cumulativeAdvance), moneyText(row.periodDeduction), moneyText(row.cumulativeDeduction), moneyText(row.remainingAdvance)])}
@@ -7548,6 +7584,7 @@ function jlPaymentReportPageHtml(req) {
   const lifecycle = engine.jlFormLifecycle({ periodId, sectionId });
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
   const supportReport = engine.jlPaymentSupportReport({ periodId, sectionId });
+  const financialContinuity = engine.jlFinancialContinuityReport({ periodId, sectionId });
   const jl106Rows = engine.jl106VariationQuantityRows({ periodId, sectionId });
   const jl107Rows = engine.jl107UnitPriceVariationRows({ periodId, sectionId });
   const materialDeductionLedger = engine.materialDeductionLedgerRows({ periodId, sectionId });
@@ -7834,6 +7871,33 @@ function jlPaymentReportPageHtml(req) {
       <td>${moneyText(row.amountDifference)}</td>
       <td>${htmlEscape(row.passed ? "通过" : "需复核")}</td>
     </tr>`).join("");
+  const financialCards = coreCardsHtml([
+    ["资金连续性", financialContinuity.ok ? "通过" : "需复核", `失败 ${financialContinuity.summary.failedChecks}/${financialContinuity.summary.totalChecks}`],
+    ["材料累计预付", moneyText(financialContinuity.summary.cumulativeMaterialAdvance), "JL109→JL110"],
+    ["材料累计扣回", moneyText(financialContinuity.summary.cumulativeMaterialDeduction), "JL110累计扣回"],
+    ["材料未扣回余额", moneyText(financialContinuity.summary.materialOutstandingBalance), "累计预付 - 累计扣回"],
+    ["保留金累计", moneyText(financialContinuity.summary.cumulativeRetention), "保留金连续性"],
+    ["动员累计扣回", moneyText(financialContinuity.summary.cumulativeMobilizationDeduction), "JL111累计扣回"]
+  ]);
+  const financialRows = (financialContinuity.failed.length ? financialContinuity.failed : financialContinuity.checks.slice(0, 12)).map((row) => `
+    <tr>
+      <td>${htmlEscape(row.group || "")}</td>
+      <td class="left">${htmlEscape(row.name || "")}</td>
+      <td>${moneyText(row.expected)}</td>
+      <td>${moneyText(row.actual)}</td>
+      <td>${moneyText(row.difference)}</td>
+      <td>${htmlEscape(row.passed ? "通过" : "需复核")}</td>
+      <td class="left">${htmlEscape(row.detail || "")}</td>
+    </tr>`).join("");
+  const retentionRows = financialContinuity.retentionLedger.map((row) => `
+    <tr>
+      <td>${htmlEscape(row.periodDesc || "")}</td>
+      <td>${moneyText(row.subtotal)}</td>
+      <td>${moneyText(row.previousRetention)}</td>
+      <td>${moneyText(row.periodRetention)}</td>
+      <td>${moneyText(row.cumulativeRetention)}</td>
+      <td class="left">${htmlEscape(row.formula || "")}</td>
+    </tr>`).join("");
   const lifecycleRows = lifecycle.forms.map((row) => `
     <tr>
       <td>${htmlEscape(row.expected ? "应出现" : "可不出现")}</td>
@@ -7887,6 +7951,7 @@ function jlPaymentReportPageHtml(req) {
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_deductions?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">扣款台账JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_validation?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">校验JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl_period_inheritance?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">期次继承JSON</a>
+            <a class="layui-btn layui-btn-sm" href="/api/payment/jl_financial_continuity?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">资金连续性JSON</a>
             <a class="layui-btn layui-btn-sm layui-btn-primary" href="/api/payment/certificate?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">证书JSON</a>
           </div>
         </div>
@@ -7962,6 +8027,18 @@ function jlPaymentReportPageHtml(req) {
             <table class="layui-table" lay-size="sm">
               <thead><tr><th>细目编号</th><th>细目名称</th><th>上期</th><th>本期</th><th>应继承数量</th><th>实际上期数量</th><th>应继承金额</th><th>实际上期金额</th><th>金额差额</th><th>状态</th></tr></thead>
               <tbody>${inheritanceRows || `<tr><td colspan="10" class="core-empty">首期无上期继承或暂无清单台账</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>JL资金连续性校验 <span class="subtle">JL109→JL110、扣回连续性、保留金连续性</span></h3>
+            <div class="core-cards">${financialCards}</div>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>类型</th><th>校验项</th><th>应为</th><th>实际</th><th>差额</th><th>状态</th><th>依据</th></tr></thead>
+              <tbody>${financialRows || `<tr><td colspan="7" class="core-empty">资金连续性校验全部通过</td></tr>`}</tbody>
+            </table>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>期次</th><th>小计</th><th>上期保留金</th><th>本期保留金</th><th>累计保留金</th><th>公式</th></tr></thead>
+              <tbody>${retentionRows || `<tr><td colspan="6" class="core-empty">暂无保留金台账</td></tr>`}</tbody>
             </table>
           </div>
           <div class="core-panel">
@@ -12481,6 +12558,7 @@ app.get("/api/payment/jl_support", (req, res) => operationOk(res, engine.jlPayme
 app.get("/api/payment/certificate", (req, res) => operationOk(res, engine.paymentCertificateForPeriod(queryNumber(req, "periodId") || queryNumber(req, "gatherId"), { sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_validation", (req, res) => operationOk(res, engine.jlPaymentValidation({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_period_inheritance", (req, res) => operationOk(res, engine.jlPeriodInheritanceReport({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl_financial_continuity", (req, res) => operationOk(res, engine.jlFinancialContinuityReport({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_lifecycle", (req, res) => operationOk(res, engine.jlFormLifecycle({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl_deductions", (req, res) => {
   const periodId = queryNumber(req, "periodId") || queryNumber(req, "gatherId");

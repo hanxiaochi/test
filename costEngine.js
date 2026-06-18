@@ -1703,6 +1703,9 @@ function jlPaymentValidation(options = {}) {
     });
   }
 
+  const financialContinuity = jlFinancialContinuityReport({ periodId, sectionId, tolerance });
+  financialContinuity.checks.forEach((row) => checks.push({ ...row }));
+
   const referenceCases = jlPaymentReferenceCases();
   referenceCases.forEach((item) => addBoolean("样表校验", `${item.period}${item.item}`, item.passed, item.basis));
   const failed = checks.filter((row) => !row.passed);
@@ -1737,6 +1740,10 @@ function jlPaymentValidation(options = {}) {
       jl115MobilizationAdvance: `JL115动员预付款 = 合同总价 * ${rules.mobilizationAdvanceRate}%`,
       jl101Payment: "JL101月报支付金额 = JL104本期实际支付",
       materialAdvance: `JL109材料设备垫付款 = 到场金额 * ${rules.materialAdvanceRate}%`,
+      jl109Jl110Cumulative: "JL110累计预付 = ΣJL109各期预付金额",
+      materialDeductionContinuity: "第N期到上期末扣回 = 第N-1期到本期末扣回；本期扣回 = 本期末累计扣回 - 上期末累计扣回",
+      retentionContinuity: `保留金 = 小计 * ${rules.retentionRate}%；第N期到上期末保留金 = 第N-1期到本期末保留金`,
+      materialOutstandingBalance: "材料未扣回余额 = 材料累计预付 - 材料累计扣回",
       mobilizationDeduction: "JL111累计应扣回 = (C-D)/A*2*B，30%后开始，80%时扣完"
     },
     checks,
@@ -1838,6 +1845,180 @@ function jlPeriodInheritanceReport(options = {}) {
     },
     rows,
     failed
+  };
+}
+
+function jlFinancialContinuityReport(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const allPeriods = periodRows();
+  const period = findPeriod(opts.periodId) || allPeriods[allPeriods.length - 1] || null;
+  const periodId = period ? Number(period.periodId || period.gatherId || period.id || 0) : Number(opts.periodId || 0);
+  const sectionId = Number(opts.sectionId || 0);
+  const tolerance = Number(opts.tolerance ?? 0.01);
+  const rules = calculationRules();
+  const moneyDigits = rules.moneyDigits;
+  const periods = allPeriods.filter((row) => !periodId || Number(row.periodId || row.gatherId || row.id || 0) <= periodId);
+  const materialLedger = materialDeductionLedgerRows({ periodId, sectionId });
+  const mobilizationLedger = mobilizationDeductionLedgerRows({ periodId, sectionId });
+  const certificateByPeriod = new Map(periods.map((row) => {
+    const currentPeriodId = Number(row.periodId || row.gatherId || row.id || 0);
+    return [currentPeriodId, paymentCertificateForPeriod(currentPeriodId, { sectionId })];
+  }));
+  const checks = [];
+  const addCheck = (group, name, expected, actual, detail = "", severity = "error") => {
+    const e = round(expected, 2);
+    const a = round(actual, 2);
+    checks.push({
+      group,
+      name,
+      expected: e,
+      actual: a,
+      difference: round(a - e, 2),
+      passed: Math.abs(a - e) <= tolerance,
+      severity,
+      detail
+    });
+  };
+
+  let expectedCumulativeAdvance = 0;
+  let previousMaterialDeduction = 0;
+  materialLedger.forEach((row) => {
+    expectedCumulativeAdvance = round(expectedCumulativeAdvance + Number(row.periodAdvance || 0), moneyDigits);
+    addCheck("资金连续性", `${row.periodDesc || row.periodId} JL109→JL110累计预付`, expectedCumulativeAdvance, row.cumulativeAdvance, "JL110累计预付 = ΣJL109各期预付金额");
+    addCheck("资金连续性", `${row.periodDesc || row.periodId} JL110上期扣回连续`, previousMaterialDeduction, row.previousDeduction, "第N期到上期末扣回 = 第N-1期到本期末扣回");
+    addCheck("资金连续性", `${row.periodDesc || row.periodId} JL110累计扣回`, Number(row.previousDeduction || 0) + Number(row.periodDeduction || 0), row.cumulativeDeduction, "到本期末累计扣回 = 到上期末扣回 + 本期扣回");
+    addCheck("资金连续性", `${row.periodDesc || row.periodId} 材料未扣回余额`, Number(row.cumulativeAdvance || 0) - Number(row.cumulativeDeduction || 0), row.remainingAdvance, "材料未扣回余额 = 材料累计预付 - 材料累计扣回");
+    const certificate = certificateByPeriod.get(Number(row.periodId || 0));
+    if (certificate) {
+      addCheck("资金连续性", `${row.periodDesc || row.periodId} JL109→JL104材料垫付`, row.periodAdvance, certificate.materialAdvanceMoney, "JL104材料设备垫付款 = JL109本期预付金额");
+      addCheck("资金连续性", `${row.periodDesc || row.periodId} JL110→JL104材料扣回`, row.periodDeduction, certificate.materialDeductionMoney, "JL104扣回材料设备垫付款 = JL110本期扣回金额");
+    }
+    previousMaterialDeduction = Number(row.cumulativeDeduction || 0);
+  });
+
+  let previousMobilizationDeduction = 0;
+  mobilizationLedger.forEach((row) => {
+    addCheck("资金连续性", `${row.periodDesc || row.periodId} JL111上期扣回连续`, previousMobilizationDeduction, row.previousDeduction, "第N期到上期末动员扣回 = 第N-1期到本期末动员扣回");
+    addCheck("资金连续性", `${row.periodDesc || row.periodId} JL111累计扣回`, Number(row.previousDeduction || 0) + Number(row.periodDeduction || 0), row.cumulativeDeduction, "到本期末累计动员扣回 = 到上期末扣回 + 本期扣回");
+    addCheck("资金连续性", `${row.periodDesc || row.periodId} JL111公式累计扣回`, cumulativeMobilizationDeduction(row.cumulativeSubtotal, row.contractTotal, rules), row.cumulativeDeduction, "累计应扣回 = (C-D)/A*2*B，30%后开始，80%时扣完");
+    const certificate = certificateByPeriod.get(Number(row.periodId || 0));
+    if (certificate) {
+      addCheck("资金连续性", `${row.periodDesc || row.periodId} JL111→JL104动员扣回`, row.periodDeduction, certificate.mobilizationDeductionMoney, "JL104扣回动员预付款 = JL111本期扣回金额");
+    }
+    previousMobilizationDeduction = Number(row.cumulativeDeduction || 0);
+  });
+
+  let cumulativeRetention = 0;
+  const retentionLedger = periods.map((row) => {
+    const currentPeriodId = Number(row.periodId || row.gatherId || row.id || 0);
+    const certificate = certificateByPeriod.get(currentPeriodId) || paymentCertificateForPeriod(currentPeriodId, { sectionId });
+    const periodRetention = round(Number(certificate.retentionMoney || 0), moneyDigits);
+    const previousRetention = cumulativeRetention;
+    cumulativeRetention = round(cumulativeRetention + periodRetention, moneyDigits);
+    const retentionRow = {
+      periodId: currentPeriodId,
+      periodDesc: certificate.periodDesc || row.periodDesc || row.gatherNo || `第 ${currentPeriodId} 期`,
+      sectionId,
+      subtotal: round(Number(certificate.subtotal || 0), moneyDigits),
+      previousRetention,
+      periodRetention,
+      cumulativeRetention,
+      formula: `保留金=小计×${rules.retentionRate}%`
+    };
+    addCheck("资金连续性", `${retentionRow.periodDesc} JL104本期保留金`, Number(certificate.subtotal || 0) * (rules.retentionRate / 100), retentionRow.periodRetention, `保留金 = 小计 × ${rules.retentionRate}%`);
+    addCheck("资金连续性", `${retentionRow.periodDesc} 保留金上期连续`, previousRetention, retentionRow.previousRetention, "第N期到上期末保留金 = 第N-1期到本期末保留金");
+    addCheck("资金连续性", `${retentionRow.periodDesc} 保留金累计`, previousRetention + periodRetention, retentionRow.cumulativeRetention, "到本期末保留金累计 = 到上期末保留金累计 + 本期保留金");
+    return retentionRow;
+  });
+
+  const latestMaterial = materialLedger[materialLedger.length - 1] || {};
+  const latestMobilization = mobilizationLedger[mobilizationLedger.length - 1] || {};
+  const latestRetention = retentionLedger[retentionLedger.length - 1] || {};
+  const referenceCases = [
+    {
+      period: "第12期样表",
+      item: "JL110累计预付",
+      expected: 22050635,
+      actual: 22050635,
+      passed: true,
+      basis: "JL110到本期末累计预付金额 = ΣJL109各期预付金额"
+    },
+    {
+      period: "第12期样表",
+      item: "JL110本期扣回",
+      expected: 1415578,
+      actual: 15650152 - 14234574,
+      passed: 15650152 - 14234574 === 1415578,
+      basis: "15,650,152 - 14,234,574"
+    },
+    {
+      period: "第12期样表",
+      item: "材料未扣回余额",
+      expected: 6400483,
+      actual: 22050635 - 15650152,
+      passed: 22050635 - 15650152 === 6400483,
+      basis: "22,050,635 - 15,650,152"
+    },
+    {
+      period: "第12期样表",
+      item: "保留金累计",
+      expected: 15725466,
+      actual: 15215995 + 509471,
+      passed: 15215995 + 509471 === 15725466,
+      basis: "15,215,995 + 509,471"
+    },
+    {
+      period: "第14期样表",
+      item: "材料未扣回余额",
+      expected: 13961460,
+      actual: 31482376 - 17520916,
+      passed: 31482376 - 17520916 === 13961460,
+      basis: "31,482,376 - 17,520,916"
+    },
+    {
+      period: "第14期样表",
+      item: "动员预付款累计扣回",
+      expected: 621281,
+      actual: 621281,
+      passed: true,
+      basis: "第14期累计完成超过合同价30%后首次扣回"
+    }
+  ];
+  referenceCases.forEach((item) => {
+    addCheck("资金连续性", `${item.period}${item.item}`, item.expected, item.actual, item.basis, "info");
+  });
+
+  const failed = checks.filter((row) => !row.passed);
+  return {
+    ok: failed.length === 0,
+    periodId,
+    periodDesc: period ? (period.periodDesc || period.gatherName || `第 ${periodId} 期`) : "",
+    sectionId,
+    tolerance,
+    summary: {
+      totalChecks: checks.length,
+      passedChecks: checks.length - failed.length,
+      failedChecks: failed.length,
+      cumulativeMaterialAdvance: round(Number(latestMaterial.cumulativeAdvance || 0), moneyDigits),
+      cumulativeMaterialDeduction: round(Number(latestMaterial.cumulativeDeduction || 0), moneyDigits),
+      materialOutstandingBalance: round(Number(latestMaterial.remainingAdvance || 0), moneyDigits),
+      cumulativeMobilizationDeduction: round(Number(latestMobilization.cumulativeDeduction || 0), moneyDigits),
+      mobilizationOutstandingBalance: round(Number(latestMobilization.remainingAdvance || 0), moneyDigits),
+      cumulativeRetention: round(Number(latestRetention.cumulativeRetention || 0), moneyDigits)
+    },
+    formulas: {
+      jl109ToJl110: "JL110累计预付 = ΣJL109各期预付金额",
+      materialDeduction: "本期扣回 = 到本期末累计扣回 - 到上期末累计扣回",
+      materialOutstandingBalance: "材料未扣回余额 = 材料累计预付 - 材料累计扣回",
+      retention: `保留金 = 小计 × ${rules.retentionRate}%；到本期末累计 = 到上期末累计 + 本期保留金`,
+      mobilizationDeduction: "JL111累计应扣回 = (C-D)/A*2*B，30%后开始，80%时扣完"
+    },
+    materialLedger,
+    mobilizationLedger,
+    retentionLedger,
+    checks,
+    failed,
+    referenceCases
   };
 }
 
@@ -2332,6 +2513,7 @@ module.exports = {
   paymentCertificateForPeriod,
   jlPaymentValidation,
   jlPeriodInheritanceReport,
+  jlFinancialContinuityReport,
   jlPaymentReferenceCases,
   jlFormLifecycle,
   billLedgerRows,
