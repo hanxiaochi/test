@@ -1605,7 +1605,7 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(page.text.includes("/api/payment/jl102") && page.text.includes("/api/payment/jl103") && page.text.includes("/api/payment/jl108_raw_material") && page.text.includes("/api/payment/jl112") && page.text.includes("/api/payment/jl115"), "JL payment report page should link auxiliary JL JSON APIs");
   assert.ok(page.text.includes("/api/payment/jl_price_adjustment"), "JL payment report page should link price adjustment JSON");
   assert.ok(page.text.includes("/api/payment/jl_deductions"), "JL payment report page should link deduction ledger JSON");
-  assert.ok(page.text.includes("/payment/jl_print_page") && page.text.includes("/payment/export_jl_report"), "JL payment report page should link print preview and CSV export");
+  assert.ok(page.text.includes("/payment/jl_print_page") && page.text.includes("/payment/export_jl_report") && page.text.includes("/payment/export_jl_report_pdf"), "JL payment report page should link print preview, CSV export and PDF export");
 
   const printPage = await requestText("/payment/jl_print_page?periodId=2");
   assert.strictEqual(printPage.response.status, 200, "JL payment print page should load");
@@ -1620,6 +1620,12 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(exportCsv.text.includes("JL108材料调差明细") && exportCsv.text.includes("JL108-1原材料明细表") && exportCsv.text.includes("JL116合同价格调表"), "JL payment CSV export should include JL108/JL108-1/JL116 price adjustment rows");
   assert.ok(exportCsv.text.includes("JL110材料扣回台账") && exportCsv.text.includes("JL111动员扣回台账"), "JL payment CSV export should include JL110 and JL111 ledgers");
   assert.ok(exportCsv.text.includes("JL105期次继承校验"), "JL payment CSV export should include JL105 period inheritance rows");
+
+  const exportPdf = await requestBuffer("/payment/export_jl_report_pdf?periodId=2");
+  assert.strictEqual(exportPdf.response.status, 200, "JL payment PDF export should load");
+  assert.ok((exportPdf.response.headers.get("content-type") || "").includes("application/pdf"), "JL payment PDF export should use application/pdf content type");
+  assert.strictEqual(exportPdf.buffer.slice(0, 5).toString("latin1"), "%PDF-", "JL payment PDF export should return a real PDF file");
+  assert.ok(exportPdf.buffer.includes(Buffer.from("/STSong-Light")), "JL payment PDF export should include a CJK-capable PDF font resource");
 
   const menuPage = await requestText("/sbr/sbr_com/9004");
   assert.strictEqual(menuPage.response.status, 200, "JL payment report menu page should load");

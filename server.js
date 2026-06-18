@@ -307,6 +307,119 @@ function csvBody(rows) {
   return "\uFEFF" + [columns.join(","), ...data.map((row) => columns.map((key) => escape(row[key])).join(","))].join("\n");
 }
 
+function pdfHexText(value) {
+  const text = `\uFEFF${String(value ?? "")}`;
+  const bytes = [];
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    bytes.push((code >> 8) & 0xff, code & 0xff);
+  }
+  return `<${Buffer.from(bytes).toString("hex").toUpperCase()}>`;
+}
+
+function pdfTextUnits(value) {
+  return Array.from(String(value ?? "")).reduce((sum, char) => sum + (char.charCodeAt(0) <= 0x7f ? 0.55 : 1), 0);
+}
+
+function wrapPdfLine(value, maxUnits = 62) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return [""];
+  const lines = [];
+  let current = "";
+  let units = 0;
+  Array.from(text).forEach((char) => {
+    const nextUnits = char.charCodeAt(0) <= 0x7f ? 0.55 : 1;
+    if (current && units + nextUnits > maxUnits) {
+      lines.push(current);
+      current = char;
+      units = nextUnits;
+    } else {
+      current += char;
+      units += nextUnits;
+    }
+  });
+  if (current) lines.push(current);
+  return lines;
+}
+
+function buildSimplePdf(title, sourceLines) {
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const margin = 42;
+  const lineHeight = 14;
+  const lines = [
+    { text: title, size: 15 },
+    { text: `生成时间：${new Date().toLocaleString("zh-CN", { hour12: false })}`, size: 9 },
+    { text: "", size: 9 },
+    ...sourceLines.flatMap((line) => wrapPdfLine(line, line.startsWith("【") ? 58 : 62).map((text) => ({
+      text,
+      size: line.startsWith("【") ? 11 : 8.5
+    })))
+  ];
+  const pages = [];
+  let page = [];
+  let y = pageHeight - margin;
+  lines.forEach((line) => {
+    const itemHeight = line.text ? lineHeight : lineHeight / 2;
+    if (y - itemHeight < margin && page.length) {
+      pages.push(page);
+      page = [];
+      y = pageHeight - margin;
+    }
+    page.push(line);
+    y -= itemHeight;
+  });
+  if (page.length) pages.push(page);
+
+  const objects = [];
+  const addObject = (body) => {
+    objects.push(body);
+    return objects.length;
+  };
+  const catalogId = addObject("<< /Type /Catalog /Pages 2 0 R >>");
+  const pagesId = addObject("");
+  const fontId = addObject("<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> /FontDescriptor << /Type /FontDescriptor /FontName /STSong-Light /Flags 6 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 880 /StemV 80 >> >>] >>");
+  void catalogId;
+  const pageIds = [];
+
+  pages.forEach((pageLines, pageIndex) => {
+    let cursorY = pageHeight - margin;
+    const commands = [
+      "q",
+      "0.2 w",
+      `BT /F1 8 Tf 1 0 0 1 ${pageWidth - margin - 80} ${margin - 14} Tm ${pdfHexText(`第 ${pageIndex + 1} / ${pages.length} 页`)} Tj ET`
+    ];
+    pageLines.forEach((line) => {
+      if (!line.text) {
+        cursorY -= lineHeight / 2;
+        return;
+      }
+      commands.push(`BT /F1 ${line.size} Tf 1 0 0 1 ${margin} ${cursorY} Tm ${pdfHexText(line.text)} Tj ET`);
+      cursorY -= lineHeight;
+    });
+    commands.push("Q");
+    const content = commands.join("\n");
+    const contentId = addObject(`<< /Length ${Buffer.byteLength(content, "utf8")} >>\nstream\n${content}\nendstream`);
+    const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+    pageIds.push(pageId);
+  });
+  objects[pagesId - 1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`;
+
+  const chunks = ["%PDF-1.4\n%\xE2\xE3\xCF\xD3\n"];
+  const offsets = [0];
+  objects.forEach((body, index) => {
+    offsets.push(Buffer.byteLength(chunks.join(""), "binary"));
+    chunks.push(`${index + 1} 0 obj\n${body}\nendobj\n`);
+  });
+  const xrefOffset = Buffer.byteLength(chunks.join(""), "binary");
+  chunks.push(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`);
+  for (let index = 1; index < offsets.length; index += 1) {
+    chunks.push(`${String(offsets[index]).padStart(10, "0")} 00000 n \n`);
+  }
+  chunks.push(`trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+  return Buffer.from(chunks.join(""), "binary");
+}
+
 function ensureExportDir() {
   const dir = path.join(dataDir, "exports");
   fs.mkdirSync(dir, { recursive: true });
@@ -7202,6 +7315,58 @@ function jlPaymentExportRows(req) {
   return rows;
 }
 
+function jlPaymentPdfBuffer(req) {
+  const rows = jlPaymentExportRows(req);
+  const periodDesc = rows[0]?.periodDesc || "";
+  const skipKeys = new Set(["periodId", "periodDesc", "sectionId", "table"]);
+  const preferredKeys = [
+    "code",
+    "name",
+    "item",
+    "amount",
+    "quantity",
+    "price",
+    "currentAmount",
+    "cumulativeAmount",
+    "expected",
+    "actual",
+    "difference",
+    "passed",
+    "status",
+    "source",
+    "formula"
+  ];
+  const lines = [
+    `期次：${periodDesc || "全部期次"}`,
+    "导出范围：JL101-JL116、JL104支付证书、JL105/JL113清单链路、JL109/JL110/JL111扣款台账、校验与生命周期。"
+  ];
+  let currentTable = "";
+  rows.forEach((row, index) => {
+    if (row.table !== currentTable) {
+      currentTable = row.table;
+      lines.push("");
+      lines.push(`【${currentTable || "未命名表"}】`);
+    }
+    const keys = [
+      ...preferredKeys.filter((key) => Object.prototype.hasOwnProperty.call(row, key)),
+      ...Object.keys(row).filter((key) => !skipKeys.has(key) && !preferredKeys.includes(key) && typeof row[key] !== "object")
+    ];
+    const body = keys
+      .filter((key) => row[key] !== undefined && row[key] !== null && row[key] !== "")
+      .map((key) => `${key}=${row[key]}`)
+      .join("；");
+    lines.push(`${index + 1}. ${body || "空行"}`);
+  });
+  return buildSimplePdf("JL计量支付报表PDF导出", lines);
+}
+
+function jlPaymentExportPdf(req, res) {
+  const buffer = jlPaymentPdfBuffer(req);
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", 'attachment; filename="jl-payment-report.pdf"');
+  res.send(buffer);
+}
+
 function jlPaymentPrintableHtml(req) {
   const requestedPeriodId = Number(req.query.periodId || req.body.periodId || req.query.gatherId || req.body.gatherId || 0);
   const latestPeriod = (engine.db.measurePeriods || [])[engine.db.measurePeriods.length - 1] || {};
@@ -7243,6 +7408,7 @@ function jlPaymentPrintableHtml(req) {
           <p>${htmlEscape(certificate.periodDesc || `期次 ${certificate.periodId}`)} · 横向/纵向/期次校验：${validation.ok ? "通过" : "需复核"} · 应出现表单 ${lifecycle.summary.requiredCount}/${lifecycle.summary.formCount}</p>
         </div>
         <div class="jl-print-actions">
+          <a href="/payment/export_jl_report_pdf?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">导出PDF</a>
           <a href="/payment/export_jl_report?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">导出CSV</a>
           <button onclick="window.print()">打印</button>
         </div>
@@ -7686,6 +7852,7 @@ function jlPaymentReportPageHtml(req) {
             <select onchange="location.href='/payment/jl_report_page?periodId=${encodeURIComponent(periodId || "")}&sectionId='+this.value">${sectionOptionsHtml}</select>
             <a class="layui-btn layui-btn-sm" href="/reportManager/dashboard_page${sectionId ? `?sectionId=${sectionId}` : ""}">报表中心</a>
             <a class="layui-btn layui-btn-sm" href="/payment/jl_print_page?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">打印预览</a>
+            <a class="layui-btn layui-btn-sm" href="/payment/export_jl_report_pdf?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">导出PDF</a>
             <a class="layui-btn layui-btn-sm" href="/payment/export_jl_report?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">导出CSV</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl101?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL101 JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl102?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL102 JSON</a>
@@ -12245,6 +12412,7 @@ app.get("/system/calculation_rules_page", (req, res) => html(res, calculationRul
 app.all("/payment/jl_report_page", (req, res) => html(res, jlPaymentReportPageHtml(req)));
 app.all("/payment/jl_print_page", (req, res) => html(res, jlPaymentPrintableHtml(req)));
 app.all("/payment/export_jl_report", (req, res) => csv(res, "jl-payment-report.csv", jlPaymentExportRows(req)));
+app.all("/payment/export_jl_report_pdf", (req, res) => jlPaymentExportPdf(req, res));
 app.get("/sbr/sbr_com/:id", (req, res) => html(res, contentForId(req.params.id)));
 app.all("/sbr/sbr_com", (req, res) => html(res, contentForId(req.body.leftId || req.query.leftId || "")));
 
