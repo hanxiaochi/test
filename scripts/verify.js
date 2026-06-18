@@ -295,6 +295,9 @@ function verifyJlPaymentReferenceCases() {
     cumulativeSubtotal: 174060235
   }, rules);
   assert.strictEqual(period14.finalPayment, 24024989, "period 14 JL104 sample should calculate actual payment 24,024,989");
+
+  const referenceCases = engine.jlPaymentReferenceCases();
+  assert.ok(referenceCases.every((item) => item.passed), "JL payment reference cases should be exposed as passing validation cases");
 }
 
 async function verifyStandaloneCostCalculator() {
@@ -1462,13 +1465,23 @@ async function verifyJlPaymentReportPageLoop() {
   );
   assert.strictEqual(round(data.finalPayment), expectedFinal, "JL certificate API should follow JL104 payment formula for current local period");
 
+  const validation = await requestJson("/api/payment/jl_validation?periodId=2");
+  assert.strictEqual(validation.response.status, 200, "JL payment validation API should load");
+  assert.strictEqual(validation.json.code, 1, "JL payment validation API should return success");
+  assert.ok(validation.json.data.ok, "JL payment validation should pass current local period");
+  assert.strictEqual(validation.json.data.summary.failedChecks, 0, "JL payment validation should have no failed checks");
+  assert.ok(validation.json.data.summary.totalChecks >= 20, "JL payment validation should run horizontal, vertical, period and sample checks");
+  assert.ok(["横向校验", "纵向校验", "期次校验", "样表校验"].every((group) => validation.json.data.summary.groups[group]), "JL payment validation should summarize all required validation groups");
+  assert.ok(validation.json.data.formulas.jl104Payment.includes("实际支付"), "JL payment validation should expose JL104 payment formula");
+
   const page = await requestText("/payment/jl_report_page?periodId=2");
   assert.strictEqual(page.response.status, 200, "JL payment report page should load");
   assert.ok(page.text.includes("JL计量支付报表核对"), "JL payment report page should show dedicated title");
   assert.ok(["JL104", "JL113", "JL105", "JL109"].every((label) => page.text.includes(label)), "JL payment report page should include core JL tables");
   assert.ok(page.text.includes(moneyTextForVerify(data.finalPayment)) && page.text.includes(moneyTextForVerify(data.subtotal)), "JL payment report page should show current API values");
   assert.ok(page.text.includes("7,699,376.00") && page.text.includes("24,024,989.00") && page.text.includes("621,281.00"), "JL payment report page should show PDF reference validation values");
-  assert.ok(page.text.includes("/api/payment/certificate"), "JL payment report page should link certificate JSON");
+  assert.ok(page.text.includes("JL表单校验结果") && page.text.includes("当前期横向、纵向、期次和样表基准校验全部通过"), "JL payment report page should show validation results");
+  assert.ok(page.text.includes("/api/payment/certificate") && page.text.includes("/api/payment/jl_validation"), "JL payment report page should link certificate and validation JSON");
 
   const menuPage = await requestText("/sbr/sbr_com/9004");
   assert.strictEqual(menuPage.response.status, 200, "JL payment report menu page should load");

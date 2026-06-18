@@ -471,7 +471,7 @@ function jl105LedgerRows(options = {}) {
         currentAmount,
         cumulativeQuantity,
         cumulativeAmount,
-        progressPct: item.finalMoney ? round((cumulativeAmount / item.finalMoney) * 100, 2) : 0
+        progressPct: item.contractMoney ? round((cumulativeAmount / item.contractMoney) * 100, 2) : 0
       };
     });
 }
@@ -791,6 +791,217 @@ function paymentCertificateForPeriod(periodId, options = {}) {
   };
 }
 
+function jlPaymentReferenceCases() {
+  const rules = {
+    ...calculationRules(),
+    moneyDigits: 0,
+    includeBillMeasure: true,
+    includeMaterialAdjust: true,
+    includeManualMeasure: true,
+    includeMaterialAdvance: true,
+    includeRetention: true,
+    materialAdvanceRate: 60,
+    retentionRate: 10,
+    mobilizationAdvanceRate: 10,
+    mobilizationDeductionStartRate: 30,
+    mobilizationDeductionEndRate: 80,
+    materialDeductionMoney: 0,
+    cumulativeMaterialDeductionMoney: 0,
+    previousMaterialDeductionMoney: 0
+  };
+  const period12 = calculatePaymentCertificate({
+    measuredMoney: 5094708,
+    materialDiasMoney: 0,
+    materialAdvanceMoney: 4529717,
+    materialDeductionMoney: 1415578,
+    retentionMoney: 509471,
+    contractTotal: 569846095,
+    previousCumulativeSubtotal: 146206797,
+    cumulativeSubtotal: 151301505
+  }, rules);
+  const period14Mobilization = cumulativeMobilizationDeduction(174060235, 569846095, rules);
+  const period14 = calculatePaymentCertificate({
+    measuredMoney: 20618620,
+    materialDiasMoney: 2139953,
+    materialAdvanceMoney: 5257494,
+    materialDeductionMoney: 1093940,
+    retentionMoney: 2275857,
+    mobilizationDeductionMoney: period14Mobilization,
+    contractTotal: 569846095,
+    previousCumulativeSubtotal: 153441615,
+    cumulativeSubtotal: 174060235
+  }, rules);
+  return [
+    {
+      period: "第12期样表",
+      item: "JL104实际支付",
+      expected: 7699376,
+      actual: period12.finalPayment,
+      passed: period12.finalPayment === 7699376,
+      basis: "5,094,708 + 4,529,717 - 1,415,578 - 509,471"
+    },
+    {
+      period: "第12期样表",
+      item: "JL111动员预付款扣回",
+      expected: 0,
+      actual: period12.mobilizationDeductionMoney,
+      passed: period12.mobilizationDeductionMoney === 0,
+      basis: "累计小计151,301,505未达合同价30%"
+    },
+    {
+      period: "第14期样表",
+      item: "JL111动员预付款扣回",
+      expected: 621281,
+      actual: period14Mobilization,
+      passed: period14Mobilization === 621281,
+      basis: "(174,060,235 - 170,953,828) / 569,846,095 * 2 * 56,984,610"
+    },
+    {
+      period: "第14期样表",
+      item: "JL104实际支付",
+      expected: 24024989,
+      actual: period14.finalPayment,
+      passed: period14.finalPayment === 24024989,
+      basis: "20,618,620 + 2,139,953 + 5,257,494 - 1,093,940 - 2,275,857 - 621,281"
+    }
+  ];
+}
+
+function jlPaymentValidation(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const period = findPeriod(opts.periodId) || periodRows()[periodRows().length - 1] || null;
+  const periodId = period ? Number(period.periodId || period.gatherId || period.id || 0) : Number(opts.periodId || 0);
+  const sectionId = Number(opts.sectionId || 0);
+  const rules = calculationRules();
+  const certificate = paymentCertificateForPeriod(periodId, { sectionId });
+  const tolerance = Number(opts.tolerance ?? 0.01);
+  const checks = [];
+  const addCheck = (group, name, expected, actual, detail = "", severity = "error") => {
+    const e = round(expected, 2);
+    const a = round(actual, 2);
+    checks.push({
+      group,
+      name,
+      expected: e,
+      actual: a,
+      difference: round(a - e, 2),
+      passed: Math.abs(a - e) <= tolerance,
+      severity,
+      detail
+    });
+  };
+  const addBoolean = (group, name, passed, detail = "", severity = "error") => {
+    checks.push({ group, name, expected: true, actual: Boolean(passed), difference: 0, passed: Boolean(passed), severity, detail });
+  };
+
+  certificate.jl113Rows.forEach((row) => {
+    addCheck("横向校验", `JL113金额=${row.itemCode || row.billNo}`, Number(row.quantity || 0) * Number(row.price || 0), row.amount, "JL113金额=数量*单价");
+  });
+  certificate.jl105Rows.forEach((row) => {
+    addCheck("横向校验", `JL105数量连续=${row.itemCode || row.billNo}`, Number(row.previousQuantity || 0) + Number(row.currentQuantity || 0), row.cumulativeQuantity, "E=G+I");
+    addCheck("横向校验", `JL105金额连续=${row.itemCode || row.billNo}`, Number(row.previousAmount || 0) + Number(row.currentAmount || 0), row.cumulativeAmount, "F=H+J");
+    const denominator = Number(row.contractAmount || 0);
+    if (denominator > 0) {
+      addCheck("横向校验", `JL105进度=${row.itemCode || row.billNo}`, (Number(row.cumulativeAmount || 0) / denominator) * 100, row.progressPct, "D=F/C");
+    }
+  });
+  const chapterCurrent = certificate.chapters.reduce((sum, row) => sum + Number(row.currentAmount || 0), 0);
+  addCheck("横向校验", "JL104章级本期合计=清单本期小计", chapterCurrent, certificate.billMeasureMoney, "100~900章本期完成之和");
+  const expectedFinalPayment =
+    Number(certificate.subtotal || 0) +
+    Number(certificate.priceAdjustment || 0) +
+    Number(certificate.claimsMoney || 0) +
+    Number(certificate.interestMoney || 0) +
+    Number(certificate.materialAdvanceMoney || 0) +
+    Number(certificate.mobilizationAdvanceMoney || 0) +
+    Number(certificate.otherAdjustmentMoney || 0) -
+    Number(certificate.penaltyMoney || 0) -
+    Number(certificate.materialDeductionMoney || 0) -
+    Number(certificate.retentionMoney || 0) -
+    Number(certificate.mobilizationDeductionMoney || 0);
+  addCheck("横向校验", "JL104实际支付平衡", expectedFinalPayment, certificate.finalPayment, "实际支付=小计+调整+垫付-扣回-保留金");
+
+  const jl113ByBill = new Map(certificate.jl113Rows.map((row) => [String(row.billId || row.itemCode || row.billNo), row]));
+  certificate.jl105Rows.forEach((row) => {
+    const key = String(row.billId || row.itemCode || row.billNo);
+    const source = jl113ByBill.get(key);
+    const sourceQty = source ? Number(source.quantity || 0) : 0;
+    const sourceAmount = source ? Number(source.amount || 0) : 0;
+    addCheck("纵向校验", `JL113→JL105数量=${row.itemCode || row.billNo}`, sourceQty, row.currentQuantity, "本期完成数量来自JL113");
+    addCheck("纵向校验", `JL113→JL105金额=${row.itemCode || row.billNo}`, sourceAmount, row.currentAmount, "本期完成金额来自JL113");
+  });
+  const ledgerByChapter = new Map();
+  certificate.jl105Rows.forEach((row) => {
+    const chapter = String(row.chapter || "").padEnd(3, "0").slice(0, 3);
+    const current = ledgerByChapter.get(chapter) || { currentAmount: 0, previousAmount: 0, cumulativeAmount: 0 };
+    current.currentAmount += Number(row.currentAmount || 0);
+    current.previousAmount += Number(row.previousAmount || 0);
+    current.cumulativeAmount += Number(row.cumulativeAmount || 0);
+    ledgerByChapter.set(chapter, current);
+  });
+  certificate.chapters.forEach((row) => {
+    const source = ledgerByChapter.get(String(row.chapter)) || { currentAmount: 0, previousAmount: 0, cumulativeAmount: 0 };
+    addCheck("纵向校验", `JL105→JL104本期=${row.chapter}`, source.currentAmount, row.currentAmount, "JL104章级本期完成来自JL105");
+    addCheck("纵向校验", `JL105→JL104累计=${row.chapter}`, source.cumulativeAmount, row.cumulativeAmount, "JL104章级累计来自JL105");
+  });
+  addCheck("纵向校验", "JL109→JL104材料设备垫付款", certificate.materialArrivalMoney * (rules.materialAdvanceRate / 100), certificate.materialAdvanceMoney, `材料到场金额*${rules.materialAdvanceRate}%`);
+  addCheck("纵向校验", "JL110→JL104扣回材料设备垫付款", materialDeductionMoneyForPeriod(periodId), certificate.materialDeductionMoney, "本期扣回=到本期末累计扣回-到上期末累计扣回");
+  const expectedMobilization = period && period.mobilizationDeductionMoney !== undefined
+    ? Number(period.mobilizationDeductionMoney || 0)
+    : Math.max(0, cumulativeMobilizationDeduction(certificate.cumulativeSubtotal, certificate.contractTotal, rules) - cumulativeMobilizationDeduction(certificate.previousCumulativeSubtotal, certificate.contractTotal, rules));
+  addCheck("纵向校验", "JL111→JL104扣回动员预付款", expectedMobilization, certificate.mobilizationDeductionMoney, "超过30%合同价后按(C-D)/A*2*B扣回");
+
+  const periods = periodRows().filter((row) => !periodId || Number(row.periodId || 0) <= periodId);
+  for (let i = 1; i < periods.length; i += 1) {
+    const previous = paymentCertificateForPeriod(periods[i - 1].periodId, { sectionId });
+    const current = paymentCertificateForPeriod(periods[i].periodId, { sectionId });
+    const previousMap = new Map(previous.jl105Rows.map((row) => [String(row.billId || row.itemCode || row.billNo), row]));
+    current.jl105Rows.forEach((row) => {
+      const prev = previousMap.get(String(row.billId || row.itemCode || row.billNo));
+      if (prev) {
+        addCheck("期次校验", `${current.periodDesc || current.periodId}上期金额=${row.itemCode || row.billNo}`, prev.cumulativeAmount, row.previousAmount, "第N期到上期末=第N-1期到本期末");
+        addCheck("期次校验", `${current.periodDesc || current.periodId}上期数量=${row.itemCode || row.billNo}`, prev.cumulativeQuantity, row.previousQuantity, "第N期到上期末=第N-1期到本期末");
+      }
+    });
+  }
+
+  const referenceCases = jlPaymentReferenceCases();
+  referenceCases.forEach((item) => addBoolean("样表校验", `${item.period}${item.item}`, item.passed, item.basis));
+  const failed = checks.filter((row) => !row.passed);
+  const byGroup = checks.reduce((acc, row) => {
+    const group = acc[row.group] || { total: 0, failed: 0, passed: 0 };
+    group.total += 1;
+    if (row.passed) group.passed += 1;
+    else group.failed += 1;
+    acc[row.group] = group;
+    return acc;
+  }, {});
+  return {
+    ok: failed.length === 0,
+    periodId,
+    periodDesc: certificate.periodDesc,
+    sectionId,
+    tolerance,
+    summary: {
+      totalChecks: checks.length,
+      passedChecks: checks.length - failed.length,
+      failedChecks: failed.length,
+      groups: byGroup
+    },
+    formulas: {
+      jl113Amount: "JL113金额 = ΣJL114数量 * 合同单价",
+      jl105Continuity: "E=G+I, F=H+J, D=F/C",
+      jl104Payment: "实际支付 = 小计 + 价格调整 + 材料设备垫付款 - 扣回材料设备垫付款 - 保留金 - 扣回动员预付款 ± 索赔/罚金/利息",
+      materialAdvance: `JL109材料设备垫付款 = 到场金额 * ${rules.materialAdvanceRate}%`,
+      mobilizationDeduction: "JL111累计应扣回 = (C-D)/A*2*B，30%后开始，80%时扣完"
+    },
+    checks,
+    failed,
+    referenceCases,
+    certificate
+  };
+}
+
 function planRows() {
   const contract = contractSummary();
   let total = 0;
@@ -1097,6 +1308,8 @@ module.exports = {
   jl105LedgerRows,
   jl104ChapterRows,
   paymentCertificateForPeriod,
+  jlPaymentValidation,
+  jlPaymentReferenceCases,
   billLedgerRows,
   reportProjectRows,
   auditMoneyRows,

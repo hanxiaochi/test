@@ -6904,6 +6904,7 @@ function jlPaymentReportPageHtml(req) {
   const periodId = requestedPeriodId || Number(latestPeriod.gatherId || latestPeriod.id || 0);
   const sectionId = Number(req.query.sectionId || req.body.sectionId || 0);
   const certificate = engine.paymentCertificateForPeriod(periodId, { sectionId });
+  const validation = engine.jlPaymentValidation({ periodId, sectionId });
   const rules = engine.calculationRules();
   const sectionOptionsHtml = coreSectionOptions(sectionId, "全部合同段");
   const periodOptionsHtml = corePeriodOptions(periodId, "选择计量期");
@@ -6998,6 +6999,24 @@ function jlPaymentReportPageHtml(req) {
       <td>${moneyText(value)}</td>
       <td class="left">${htmlEscape(basis)}</td>
     </tr>`).join("");
+  const validationCards = coreCardsHtml([
+    ["校验结论", validation.ok ? "通过" : "需复核", `失败 ${validation.summary.failedChecks} / ${validation.summary.totalChecks}`],
+    ["横向校验", `${validation.summary.groups["横向校验"]?.passed || 0}/${validation.summary.groups["横向校验"]?.total || 0}`, "同表内金额/数量/支付平衡"],
+    ["纵向校验", `${validation.summary.groups["纵向校验"]?.passed || 0}/${validation.summary.groups["纵向校验"]?.total || 0}`, "JL114→JL113→JL105→JL104"],
+    ["期次校验", `${validation.summary.groups["期次校验"]?.passed || 0}/${validation.summary.groups["期次校验"]?.total || 0}`, "上期末与本期初连续"],
+    ["样表校验", `${validation.summary.groups["样表校验"]?.passed || 0}/${validation.summary.groups["样表校验"]?.total || 0}`, "第12/14期PDF基准"]
+  ]);
+  const validationRows = validation.failed.length
+    ? validation.failed.slice(0, 80).map((row) => `
+      <tr>
+        <td>${htmlEscape(row.group || "")}</td>
+        <td class="left">${htmlEscape(row.name || "")}</td>
+        <td>${moneyText(row.expected)}</td>
+        <td>${moneyText(row.actual)}</td>
+        <td>${moneyText(row.difference)}</td>
+        <td class="left">${htmlEscape(row.detail || "")}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="6" class="core-empty">当前期横向、纵向、期次和样表基准校验全部通过</td></tr>`;
   return `
     <div class="core-page jl-report-page" data-core-page="jl-report-page">
       ${corePageStyle("#155e75")}
@@ -7019,6 +7038,7 @@ function jlPaymentReportPageHtml(req) {
             <select onchange="location.href='/payment/jl_report_page?periodId='+this.value+'&sectionId=${encodeURIComponent(sectionId || "")}'">${periodOptionsHtml}</select>
             <select onchange="location.href='/payment/jl_report_page?periodId=${encodeURIComponent(periodId || "")}&sectionId='+this.value">${sectionOptionsHtml}</select>
             <a class="layui-btn layui-btn-sm" href="/reportManager/dashboard_page${sectionId ? `?sectionId=${sectionId}` : ""}">报表中心</a>
+            <a class="layui-btn layui-btn-sm" href="/api/payment/jl_validation?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">校验JSON</a>
             <a class="layui-btn layui-btn-sm layui-btn-primary" href="/api/payment/certificate?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">证书JSON</a>
           </div>
         </div>
@@ -7039,6 +7059,14 @@ function jlPaymentReportPageHtml(req) {
             <table class="layui-table" lay-size="sm">
               <thead><tr><th>期次</th><th>核对项</th><th>样表金额</th><th>计算依据</th></tr></thead>
               <tbody>${referenceRows}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>JL表单校验结果</h3>
+            <div class="core-cards">${validationCards}</div>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>类型</th><th>校验项</th><th>应为</th><th>实际</th><th>差额</th><th>依据</th></tr></thead>
+              <tbody>${validationRows}</tbody>
             </table>
           </div>
           <div class="core-panel">
@@ -11475,6 +11503,7 @@ app.get("/api/payment/jl113", (req, res) => table(res, req, engine.jl113Rows({ p
 app.get("/api/payment/jl105", (req, res) => table(res, req, engine.jl105LedgerRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl104_chapters", (req, res) => table(res, req, engine.jl104ChapterRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/certificate", (req, res) => operationOk(res, engine.paymentCertificateForPeriod(queryNumber(req, "periodId") || queryNumber(req, "gatherId"), { sectionId: queryNumber(req, "sectionId") })));
+app.get("/api/payment/jl_validation", (req, res) => operationOk(res, engine.jlPaymentValidation({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/cost/reconciliation", (req, res) => operationOk(res, costReconciliationData()));
 app.get("/api/cost/5d_model", (req, res) => operationOk(res, fiveDCostModelData()));
 app.get("/api/cost/boq_validation", (req, res) => operationOk(res, boqValidationData()));
