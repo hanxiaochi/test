@@ -657,6 +657,7 @@ async function verifyCalculationRulesAdminLoop() {
   assert.ok(page.text.includes("材料到场进入应付"), "calculation rules admin page should expose material arrival toggle");
   assert.ok(page.text.includes("材料预付率") && page.text.includes("保留金率"), "calculation rules admin page should expose JL104 payment rules");
   assert.ok(page.text.includes("JL115出现至第几期") && page.text.includes("JL108/JL116调差月份"), "calculation rules admin page should expose JL form lifecycle rules");
+  assert.ok(page.text.includes("JL108覆盖期数") && page.text.includes("JL108覆盖方式"), "calculation rules admin page should expose JL108 multi-period coverage rules");
   assert.ok(page.text.includes("JL116非调因子X"), "calculation rules admin page should expose JL116 price adjustment formula factor");
   assert.ok(page.text.includes("JL108-1原材料折算系数") && page.text.includes("JL116材料权重系数"), "calculation rules admin page should expose JL108/JL116 configurable factor maps");
 
@@ -667,6 +668,8 @@ async function verifyCalculationRulesAdminLoop() {
     includeRetention: !original.includeRetention,
     jl115EndPeriod: Number(original.jl115EndPeriod || 2) + 1,
     jlPriceAdjustmentMonths: "2,5,8,11",
+    jlPriceAdjustmentCoveragePeriods: 3,
+    jlPriceAdjustmentCoverageMode: "previous",
     jl116NonAdjustableFactor: 0.4,
     jl108RawMaterialConversionFactors: "CL-001=1.05; 钢筋 HRB400=1.05",
     jl116MaterialWeights: "CL-001=0.35; CL-002=0.30"
@@ -677,6 +680,8 @@ async function verifyCalculationRulesAdminLoop() {
     assert.strictEqual(toggled.json.data.rules.includeRetention, toggledRules.includeRetention, "retention toggle should persist");
     assert.strictEqual(toggled.json.data.rules.jl115EndPeriod, toggledRules.jl115EndPeriod, "JL115 lifecycle end period should persist");
     assert.deepStrictEqual(toggled.json.data.rules.jlPriceAdjustmentMonths, [2, 5, 8, 11], "JL price adjustment months should parse and persist");
+    assert.strictEqual(toggled.json.data.rules.jlPriceAdjustmentCoveragePeriods, 3, "JL108 coverage periods should persist");
+    assert.strictEqual(toggled.json.data.rules.jlPriceAdjustmentCoverageMode, "previous", "JL108 coverage mode should persist");
     assert.strictEqual(toggled.json.data.rules.jl116NonAdjustableFactor, 0.4, "JL116 non-adjustable factor should persist");
     assert.strictEqual(toggled.json.data.rules.jl108RawMaterialConversionFactors["CL-001"], 1.05, "JL108-1 conversion factor map should parse and persist");
     assert.strictEqual(toggled.json.data.rules.jl116MaterialWeights["CL-001"], 0.35, "JL116 material weight map should parse and persist");
@@ -1573,6 +1578,7 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(Array.isArray(priceAdjustment.json.data.detailRows), "JL108 price adjustment report should expose detail rows");
   assert.ok(priceAdjustment.json.data.formula && priceAdjustment.json.data.formula.formula.includes("T = F"), "JL116 price adjustment report should expose formula");
   assert.ok(Array.isArray(priceAdjustment.json.data.formula.materialWeights), "JL116 price adjustment report should expose material weight rows");
+  assert.ok(priceAdjustment.json.data.coverage && Array.isArray(priceAdjustment.json.data.coverage.sourcePeriodIds), "JL108 price adjustment report should expose settlement coverage periods");
   assert.ok(Object.prototype.hasOwnProperty.call(priceAdjustment.json.data.formula, "formulaAdjustment"), "JL116 formula summary should expose formula adjustment amount");
   assert.strictEqual(round(priceAdjustment.json.data.formula.certificatePriceAdjustment), round(data.priceAdjustment), "JL116 formula summary should reconcile to JL104 price adjustment");
 
@@ -1599,6 +1605,7 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(page.text.includes("JL105期次继承校验") && page.text.includes("/api/payment/jl_period_inheritance"), "JL payment report page should show period inheritance validation and JSON link");
   assert.ok(page.text.includes("JL表单生命周期") && page.text.includes("JL115") && page.text.includes("JL116"), "JL payment report page should show lifecycle table");
   assert.ok(page.text.includes("JL108 永久性工程材料差价金额一览表") && page.text.includes("JL116 合同价格调表"), "JL payment report page should show JL108/JL116 price adjustment ledgers");
+  assert.ok(page.text.includes("覆盖方式") && page.text.includes("来源期次"), "JL payment report page should show JL108 settlement coverage metadata");
   assert.ok(page.text.includes("JL110 扣回材料垫付款一览表") && page.text.includes("JL111 扣回动员预付款一览表"), "JL payment report page should show JL110 and JL111 ledgers");
   assert.ok(page.text.includes("/api/payment/certificate") && page.text.includes("/api/payment/jl_validation") && page.text.includes("/api/payment/jl_lifecycle") && page.text.includes("/api/payment/jl_period_inheritance"), "JL payment report page should link certificate, validation, lifecycle and inheritance JSON");
   assert.ok(page.text.includes("/api/payment/jl106") && page.text.includes("/api/payment/jl107"), "JL payment report page should link JL106/JL107 JSON");
@@ -2444,6 +2451,25 @@ async function verifyGatherPeriodCalculationLoop() {
   assert.ok(inheritedBill, "new gather period inheritance should include the measured bill row");
   assert.strictEqual(round(inheritedBill.actualPreviousQuantity, 3), round(inheritedBill.expectedPreviousQuantity, 3), "new gather period should inherit previous cumulative quantity");
   assert.strictEqual(round(inheritedBill.actualPreviousAmount), round(inheritedBill.expectedPreviousAmount), "new gather period should inherit previous cumulative amount");
+
+  const rulesBeforeCoverage = await requestJson("/api/admin/calculation_rules");
+  const originalCoverageRules = rulesBeforeCoverage.json.data.rules;
+  try {
+    await postJson("/api/admin/calculation_rules", {
+      ...originalCoverageRules,
+      jlPriceAdjustmentCoverageMode: "previous",
+      jlPriceAdjustmentCoveragePeriods: 1
+    });
+    const coveredAdjustment = await requestJson(`/api/payment/jl_price_adjustment?periodId=${nextGatherId}&sectionId=101`);
+    assert.strictEqual(coveredAdjustment.json.code, 1, "previous-period JL108 coverage API should succeed");
+    assert.strictEqual(round(coveredAdjustment.json.data.totalAdjustment), 560, "previous-period JL108 coverage should settle April material adjustment into May");
+    assert.strictEqual(coveredAdjustment.json.data.coverage.mode, "previous", "previous-period JL108 coverage should report previous mode");
+    assert.ok(coveredAdjustment.json.data.coverage.sourcePeriodIds.map(Number).includes(Number(gatherId)), "previous-period JL108 coverage should include the April source period");
+    const coveredCertificate = await requestJson(`/api/payment/certificate?periodId=${nextGatherId}&sectionId=101`);
+    assert.strictEqual(round(coveredCertificate.json.data.priceAdjustment), 560, "JL104 price adjustment should use the same JL108 coverage window");
+  } finally {
+    await postJson("/api/admin/calculation_rules", originalCoverageRules);
+  }
 
   const dashboard = await requestText(`/dataGather/gather_dashboard_page?gatherId=${gatherId}`);
   assert.ok(dashboard.text.includes("期次数据汇总"), "gather dashboard should show dedicated title");

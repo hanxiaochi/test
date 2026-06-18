@@ -170,6 +170,8 @@ const jlPaymentDefaults = {
   provisionalCurrentMoney: 0,
   jl115EndPeriod: 2,
   jlPriceAdjustmentMonths: [1, 4, 7, 10],
+  jlPriceAdjustmentCoveragePeriods: 1,
+  jlPriceAdjustmentCoverageMode: "current",
   jl116NonAdjustableFactor: 0.35,
   jl108RawMaterialConversionFactors: {},
   jl116MaterialWeights: {}
@@ -216,6 +218,8 @@ function calculationRules() {
     provisionalCurrentMoney: numberOr(saved.provisionalCurrentMoney, jlPaymentDefaults.provisionalCurrentMoney),
     jl115EndPeriod: bounded("jl115EndPeriod", jlPaymentDefaults.jl115EndPeriod, 0, 999),
     jlPriceAdjustmentMonths: monthList(saved.jlPriceAdjustmentMonths, jlPaymentDefaults.jlPriceAdjustmentMonths),
+    jlPriceAdjustmentCoveragePeriods: bounded("jlPriceAdjustmentCoveragePeriods", jlPaymentDefaults.jlPriceAdjustmentCoveragePeriods, 1, 12),
+    jlPriceAdjustmentCoverageMode: ["current", "previous", "currentAndPrevious"].includes(saved.jlPriceAdjustmentCoverageMode) ? saved.jlPriceAdjustmentCoverageMode : jlPaymentDefaults.jlPriceAdjustmentCoverageMode,
     jl116NonAdjustableFactor: bounded("jl116NonAdjustableFactor", jlPaymentDefaults.jl116NonAdjustableFactor, 0, 1),
     jl108RawMaterialConversionFactors: parseNumericRuleMap(saved.jl108RawMaterialConversionFactors, jlPaymentDefaults.jl108RawMaterialConversionFactors, { min: 0, max: 1000 }),
     jl116MaterialWeights: parseNumericRuleMap(saved.jl116MaterialWeights, jlPaymentDefaults.jl116MaterialWeights, { min: 0, max: 1 })
@@ -469,6 +473,50 @@ function rowBeforePeriod(row, period) {
 function filterByPeriod(rows, periodId) {
   const period = findPeriod(periodId);
   return rows.filter((row) => rowBelongsToPeriod(row, period));
+}
+
+function priceAdjustmentCoverageWindow(periodId, rules = calculationRules()) {
+  const periods = periodRows();
+  const period = findPeriod(periodId) || periods[periods.length - 1] || null;
+  if (!period) {
+    return {
+      mode: rules.jlPriceAdjustmentCoverageMode,
+      coveragePeriods: Number(rules.jlPriceAdjustmentCoveragePeriods || 1),
+      settlementPeriodId: Number(periodId || 0),
+      settlementPeriodDesc: "",
+      sourcePeriods: [],
+      sourcePeriodIds: [],
+      sourcePeriodDescs: []
+    };
+  }
+  const index = periods.findIndex((item) => Number(item.periodId || item.gatherId || item.id || 0) === Number(period.periodId || period.gatherId || period.id || 0));
+  const coveragePeriods = Math.max(1, Math.min(12, Number(rules.jlPriceAdjustmentCoveragePeriods || 1)));
+  const mode = rules.jlPriceAdjustmentCoverageMode || "current";
+  let startIndex = index;
+  let endIndex = index;
+  if (mode === "previous") {
+    startIndex = Math.max(0, index - coveragePeriods);
+    endIndex = Math.max(-1, index - 1);
+  } else if (mode === "currentAndPrevious") {
+    startIndex = Math.max(0, index - coveragePeriods + 1);
+    endIndex = index;
+  }
+  const sourcePeriods = endIndex >= startIndex ? periods.slice(startIndex, endIndex + 1) : [];
+  return {
+    mode,
+    coveragePeriods,
+    settlementPeriodId: Number(period.periodId || period.gatherId || period.id || 0),
+    settlementPeriodDesc: period.periodDesc || period.gatherName || period.gatherNo || "",
+    sourcePeriods,
+    sourcePeriodIds: sourcePeriods.map((item) => Number(item.periodId || item.gatherId || item.id || 0)),
+    sourcePeriodDescs: sourcePeriods.map((item) => item.periodDesc || item.gatherName || item.gatherNo || "")
+  };
+}
+
+function filterByPriceAdjustmentCoverage(rows, periodId, rules = calculationRules()) {
+  const window = priceAdjustmentCoverageWindow(periodId, rules);
+  if (!window.sourcePeriods.length) return [];
+  return rows.filter((row) => window.sourcePeriods.some((period) => rowBelongsToPeriod(row, period)));
 }
 
 function groupMeasureDetails(details) {
@@ -756,7 +804,9 @@ function priceAdjustmentLedgerRows(options = {}) {
   const sectionId = Number(opts.sectionId || 0);
   const periodId = Number(opts.periodId || 0);
   const selectedPeriod = findPeriod(periodId);
-  const rows = periodId ? filterByPeriod(materialDiasRows(), periodId) : materialDiasRows();
+  const rules = calculationRules();
+  const coverage = periodId ? priceAdjustmentCoverageWindow(periodId, rules) : null;
+  const rows = periodId ? filterByPriceAdjustmentCoverage(materialDiasRows(), periodId, rules) : materialDiasRows();
   return rows
     .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId)
     .map((row) => {
@@ -767,6 +817,12 @@ function priceAdjustmentLedgerRows(options = {}) {
       const priceDiff = round(currentPrice - basePrice);
       const adjustMoney = round(quantity * priceDiff);
       return {
+        settlementPeriodId: coverage ? coverage.settlementPeriodId : Number(periodId || 0),
+        settlementPeriodDesc: coverage ? coverage.settlementPeriodDesc : "",
+        coverageMode: coverage ? coverage.mode : "all",
+        coveragePeriods: coverage ? coverage.coveragePeriods : 0,
+        coverageSourcePeriodIds: coverage ? coverage.sourcePeriodIds.join(",") : "",
+        coverageSourcePeriodDescs: coverage ? coverage.sourcePeriodDescs.join(",") : "",
         periodId: rowPeriod ? Number(rowPeriod.periodId || rowPeriod.gatherId || rowPeriod.id || 0) : Number(row.periodId || row.gatherId || 0),
         periodDesc: rowPeriod ? (rowPeriod.periodDesc || rowPeriod.gatherNo || "") : "",
         sectionId: Number(row.sectionId || 0),
@@ -911,10 +967,19 @@ function jlPriceAdjustmentReport(options = {}) {
   const detailRows = priceAdjustmentLedgerRows({ periodId, sectionId });
   const summaryRows = priceAdjustmentSummaryRows({ periodId, sectionId });
   const formula = jl116FormulaSummary({ periodId, sectionId });
+  const coverage = priceAdjustmentCoverageWindow(periodId);
   return {
     periodId,
     periodDesc: formula.periodDesc,
     sectionId,
+    coverage: {
+      mode: coverage.mode,
+      coveragePeriods: coverage.coveragePeriods,
+      settlementPeriodId: coverage.settlementPeriodId,
+      settlementPeriodDesc: coverage.settlementPeriodDesc,
+      sourcePeriodIds: coverage.sourcePeriodIds,
+      sourcePeriodDescs: coverage.sourcePeriodDescs
+    },
     totalAdjustment: round(detailRows.reduce((sum, row) => sum + Number(row.adjustMoney || 0), 0)),
     detailRows,
     summaryRows,
@@ -1391,8 +1456,7 @@ function paymentCertificateForPeriod(periodId, options = {}) {
   });
   const manualMoney = sumMoney(manualRows, "measureMoney");
   const previousManualMoney = sumMoney(previousManualRows, "measureMoney");
-  const materialAdjustMoney = sumMoney(filterByPeriod(materialDiasRows(), periodId)
-    .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId), "adjustMoney");
+  const materialAdjustMoney = sumMoney(priceAdjustmentLedgerRows({ periodId, sectionId }), "adjustMoney");
   const materialArrivalMoney = sumMoney(filterByPeriod(materialArrivalRows(), periodId)
     .filter((row) => !sectionId || Number(row.sectionId || 0) === sectionId), "money");
   const materialDeductionMoney = materialDeductionMoneyForPeriod(periodId);
@@ -1788,7 +1852,7 @@ function jlFormLifecycle(options = {}) {
   const periodDate = dateOnly(period?.endDate || period?.gatherEndDate || period?.startDate || period?.gatherStartDate);
   const periodMonth = Number(periodDate.slice(5, 7)) || 0;
   const sameSection = (row) => !sectionId || Number(row.sectionId || 0) === sectionId;
-  const currentMaterialAdjustRows = filterByPeriod(materialDiasRows(), periodId).filter(sameSection);
+  const currentMaterialAdjustRows = priceAdjustmentLedgerRows({ periodId, sectionId });
   const currentMaterialArrivalRows = filterByPeriod(materialArrivalRows(), periodId).filter(sameSection);
   const currentQuantityVariationRows = jl106VariationQuantityRows({ periodId, sectionId });
   const currentPriceVariationRows = jl107UnitPriceVariationRows({ periodId, sectionId });
@@ -1848,6 +1912,8 @@ function jlFormLifecycle(options = {}) {
       lifecycleRules: {
         jl115EndPeriod: rules.jl115EndPeriod,
         jlPriceAdjustmentMonths: rules.jlPriceAdjustmentMonths,
+        jlPriceAdjustmentCoveragePeriods: rules.jlPriceAdjustmentCoveragePeriods,
+        jlPriceAdjustmentCoverageMode: rules.jlPriceAdjustmentCoverageMode,
         jl116NonAdjustableFactor: rules.jl116NonAdjustableFactor,
         jl108RawMaterialConversionFactorCount: Object.keys(rules.jl108RawMaterialConversionFactors || {}).length,
         jl116MaterialWeightCount: Object.keys(rules.jl116MaterialWeights || {}).length,

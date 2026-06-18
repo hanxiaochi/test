@@ -1126,6 +1126,8 @@ function saveCalculationRules(body = {}) {
     provisionalCurrentMoney: numberFromBody(body.provisionalCurrentMoney, current.provisionalCurrentMoney, -999999999999, 999999999999),
     jl115EndPeriod: numberFromBody(body.jl115EndPeriod, current.jl115EndPeriod, 0, 999),
     jlPriceAdjustmentMonths: monthListFromBody(body.jlPriceAdjustmentMonths, current.jlPriceAdjustmentMonths),
+    jlPriceAdjustmentCoveragePeriods: numberFromBody(body.jlPriceAdjustmentCoveragePeriods, current.jlPriceAdjustmentCoveragePeriods, 1, 12),
+    jlPriceAdjustmentCoverageMode: ["current", "previous", "currentAndPrevious"].includes(body.jlPriceAdjustmentCoverageMode) ? body.jlPriceAdjustmentCoverageMode : current.jlPriceAdjustmentCoverageMode,
     jl116NonAdjustableFactor: numberFromBody(body.jl116NonAdjustableFactor, current.jl116NonAdjustableFactor, 0, 1),
     jl108RawMaterialConversionFactors: body.jl108RawMaterialConversionFactors ?? current.jl108RawMaterialConversionFactors,
     jl116MaterialWeights: body.jl116MaterialWeights ?? current.jl116MaterialWeights
@@ -1170,8 +1172,8 @@ function calculationRulesPageHtml() {
         .calc-admin-head p { margin:6px 0 0; color:#64748b; }
         .calc-admin-grid { display:grid; grid-template-columns:repeat(3, minmax(160px, 1fr)); gap:12px; }
         .calc-admin-field label { display:block; margin-bottom:6px; color:#475569; }
-        .calc-admin-field input[type="number"], .calc-admin-field input[type="text"], .calc-admin-field textarea { width:100%; border:1px solid #cbd5e1; border-radius:4px; padding:0 8px; box-sizing:border-box; }
-        .calc-admin-field input[type="number"], .calc-admin-field input[type="text"] { height:34px; }
+        .calc-admin-field input[type="number"], .calc-admin-field input[type="text"], .calc-admin-field select, .calc-admin-field textarea { width:100%; border:1px solid #cbd5e1; border-radius:4px; padding:0 8px; box-sizing:border-box; }
+        .calc-admin-field input[type="number"], .calc-admin-field input[type="text"], .calc-admin-field select { height:34px; }
         .calc-admin-field textarea { min-height:64px; padding:8px; resize:vertical; line-height:1.5; }
         .calc-admin-field-wide { grid-column:span 3; }
         .calc-admin-checks { display:grid; grid-template-columns:repeat(2, minmax(180px, 1fr)); gap:10px; margin:12px 0; }
@@ -1206,6 +1208,13 @@ function calculationRulesPageHtml() {
               <div class="calc-admin-field"><label>JL115出现至第几期</label><input type="number" step="1" min="0" name="jl115EndPeriod" value="${rules.jl115EndPeriod}"></div>
               <div class="calc-admin-field"><label>JL108/JL116调差月份</label><input type="text" name="jlPriceAdjustmentMonths" value="${htmlEscape(rules.jlPriceAdjustmentMonths.join(","))}"></div>
               <div class="calc-admin-field"><label>JL116非调因子X</label><input type="number" step="0.01" min="0" max="1" name="jl116NonAdjustableFactor" value="${rules.jl116NonAdjustableFactor}"></div>
+              <div class="calc-admin-field"><label>JL108覆盖期数</label><input type="number" step="1" min="1" max="12" name="jlPriceAdjustmentCoveragePeriods" value="${rules.jlPriceAdjustmentCoveragePeriods}"></div>
+              <div class="calc-admin-field"><label>JL108覆盖方式</label><select name="jlPriceAdjustmentCoverageMode">
+                <option value="current" ${rules.jlPriceAdjustmentCoverageMode === "current" ? "selected" : ""}>只覆盖当前期</option>
+                <option value="previous" ${rules.jlPriceAdjustmentCoverageMode === "previous" ? "selected" : ""}>覆盖上N期</option>
+                <option value="currentAndPrevious" ${rules.jlPriceAdjustmentCoverageMode === "currentAndPrevious" ? "selected" : ""}>当前期+前N-1期</option>
+              </select></div>
+              <div class="calc-admin-field"><label>JL108覆盖说明</label><input type="text" value="季度首月可设为覆盖上3期，用于第14期汇总第11/12/13期调差" readonly></div>
               <div class="calc-admin-field calc-admin-field-wide"><label>JL108-1原材料折算系数</label><textarea name="jl108RawMaterialConversionFactors" placeholder="CL-001=1; 钢筋 HRB400=1">${htmlEscape(formatRuleMap(rules.jl108RawMaterialConversionFactors))}</textarea></div>
               <div class="calc-admin-field calc-admin-field-wide"><label>JL116材料权重系数</label><textarea name="jl116MaterialWeights" placeholder="CL-001=0.35; CL-002=0.30">${htmlEscape(formatRuleMap(rules.jl116MaterialWeights))}</textarea></div>
               <div class="calc-admin-field"><label>本期材料扣回</label><input type="number" step="0.01" name="materialDeductionMoney" value="${rules.materialDeductionMoney}"></div>
@@ -7709,6 +7718,17 @@ function jlPaymentReportPageHtml(req) {
       <td>${htmlEscape(row.quantity)}</td>
       <td>${moneyText(row.adjustMoney)}</td>
     </tr>`).join("");
+  const coverageModeText = {
+    current: "只覆盖当前期",
+    previous: "覆盖上N期",
+    currentAndPrevious: "当前期+前N-1期"
+  }[priceAdjustmentReport.coverage?.mode] || priceAdjustmentReport.coverage?.mode || "";
+  const priceCoverageCards = coreCardsHtml([
+    ["结算期", priceAdjustmentReport.coverage?.settlementPeriodDesc || certificate.periodDesc || "", "JL108/JL116归入本期JL104"],
+    ["覆盖方式", coverageModeText, `${priceAdjustmentReport.coverage?.coveragePeriods || 1}期`],
+    ["来源期次", (priceAdjustmentReport.coverage?.sourcePeriodDescs || []).filter(Boolean).join("、") || "当前期", "材料调差来源窗口"],
+    ["调差合计", moneyText(priceAdjustmentReport.totalAdjustment), "进入JL104价格调整"]
+  ]);
   const jl116Rows = [priceAdjustmentReport.formula].map((row) => `
     <tr>
       <td class="left">${htmlEscape(row.formula)}</td>
@@ -7996,6 +8016,7 @@ function jlPaymentReportPageHtml(req) {
           </div>
           <div class="core-panel">
             <h3>JL108 永久性工程材料差价金额一览表</h3>
+            <div class="core-cards">${priceCoverageCards}</div>
             <table class="layui-table" lay-size="sm">
               <thead><tr><th>调差单号</th><th>日期</th><th>材料名称</th><th>单位</th><th>基价</th><th>现行价</th><th>价差</th><th>实际用量</th><th>调差金额</th></tr></thead>
               <tbody>${priceAdjustmentRows || `<tr><td colspan="9" class="core-empty">本期无材料价格调差</td></tr>`}</tbody>
