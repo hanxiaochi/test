@@ -567,6 +567,40 @@ function jl113Rows(options = {}) {
   return groupMeasureDetails(details);
 }
 
+function jl114MeasureRows(options = {}) {
+  const opts = typeof options === "object" ? options : { periodId: options };
+  const period = findPeriod(opts.periodId);
+  const sectionId = Number(opts.sectionId || 0);
+  return allMeasureDetails()
+    .filter((row) => {
+      if (sectionId && Number(row.sectionId || 0) !== sectionId) return false;
+      return period ? rowBelongsToPeriod(row, period) : true;
+    })
+    .map((row) => ({
+      formCode: "JL114",
+      formName: "工程计量表",
+      measureId: row.measureId,
+      billMeasureId: row.billMeasureId,
+      detailId: row.billMeasureDetailId,
+      measureNo: row.measureNo,
+      sheetNo: row.sheetNo,
+      periodId: row.periodId || row.gatherId || 0,
+      sectionId: row.sectionId,
+      sectionName: row.sectionName,
+      measureDate: row.measureDate,
+      position: row.position || row.billName || "",
+      itemCode: row.billNo,
+      itemName: row.billName,
+      unit: row.measureUnit,
+      price: Number(row.price || 0),
+      quantity: round(Number(row.measureNum || row.currentNum || 0), calculationRules().quantityDigits),
+      amount: round(Number(row.measureMoney || row.currentMoney || 0)),
+      formulaText: row.formulaText || "",
+      formula: row.formulaText || "金额=工程数量×合同单价",
+      status: row.states || ""
+    }));
+}
+
 function measuredQuantityFromDetails(details, billId) {
   return details
     .filter((item) => Number(item.billId || 0) === Number(billId || 0))
@@ -2507,6 +2541,7 @@ module.exports = {
   variationRowsForPeriod,
   jl106VariationQuantityRows,
   jl107UnitPriceVariationRows,
+  jl114MeasureRows,
   jl113Rows,
   jl105LedgerRows,
   jl104ChapterRows,

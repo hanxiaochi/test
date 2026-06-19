@@ -1562,6 +1562,12 @@ async function verifyJlPaymentReportPageLoop() {
   assert.strictEqual(jl112.json.code, 0, "JL112 compilation table API should return Layui success");
   assert.ok(Array.isArray(jl112.json.data) && jl112.json.data.length >= 1, "JL112 compilation API should expose measure rows");
 
+  const jl114 = await requestJson("/api/payment/jl114?periodId=2");
+  assert.strictEqual(jl114.response.status, 200, "JL114 measure form API should load");
+  assert.strictEqual(jl114.json.code, 0, "JL114 measure form table API should return Layui success");
+  assert.ok(Array.isArray(jl114.json.data) && jl114.json.data.length >= 1, "JL114 measure form API should expose base measure detail rows");
+  assert.ok(jl114.json.data.some((row) => row.formCode === "JL114" && row.formula && row.formula.includes("金额")), "JL114 rows should expose form code and amount formula");
+
   const jl115 = await requestJson("/api/payment/jl115?periodId=2");
   assert.strictEqual(jl115.response.status, 200, "JL115 mobilization advance API should load");
   assert.strictEqual(jl115.json.code, 1, "JL115 mobilization advance API should return success");
@@ -1608,7 +1614,7 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(page.text.includes("JL计量支付报表核对"), "JL payment report page should show dedicated title");
   assert.ok(page.text.includes("JL101 计量支付月报表") && page.text.includes("/api/payment/jl101"), "JL payment report page should show JL101 monthly report and JSON link");
   assert.ok(page.text.includes("JL102 计量支付报表传递单") && page.text.includes("JL103 施工进度表") && page.text.includes("JL115 开工动员预付款支付证书"), "JL payment report page should show JL102/JL103/JL115 auxiliary forms");
-  assert.ok(["JL104", "JL113", "JL105", "JL109"].every((label) => page.text.includes(label)), "JL payment report page should include core JL tables");
+  assert.ok(["JL104", "JL114", "JL113", "JL105", "JL109"].every((label) => page.text.includes(label)), "JL payment report page should include core JL tables");
   assert.ok(page.text.includes("JL106 清单工程量变更表") && page.text.includes("JL107 清单单价变更一览表"), "JL payment report page should show JL106/JL107 variation tables");
   assert.ok(page.text.includes("JL108-1 原材料明细表") && page.text.includes("JL112 工程量表汇编"), "JL payment report page should show JL108-1 and JL112 forms");
   assert.ok(page.text.includes(moneyTextForVerify(data.finalPayment)) && page.text.includes(moneyTextForVerify(data.subtotal)), "JL payment report page should show current API values");
@@ -1623,20 +1629,22 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok(page.text.includes("覆盖方式") && page.text.includes("来源期次"), "JL payment report page should show JL108 settlement coverage metadata");
   assert.ok(page.text.includes("JL110 扣回材料垫付款一览表") && page.text.includes("JL111 扣回动员预付款一览表"), "JL payment report page should show JL110 and JL111 ledgers");
   assert.ok(page.text.includes("/api/payment/certificate") && page.text.includes("/api/payment/jl_validation") && page.text.includes("/api/payment/jl_lifecycle") && page.text.includes("/api/payment/jl_period_inheritance") && page.text.includes("/api/payment/jl_financial_continuity"), "JL payment report page should link certificate, validation, lifecycle, inheritance and financial continuity JSON");
+  assert.ok(page.text.includes("/api/payment/jl114") && page.text.includes("JL114 工程计量表"), "JL payment report page should show and link JL114 base measure form");
   assert.ok(page.text.includes("/api/payment/jl106") && page.text.includes("/api/payment/jl107"), "JL payment report page should link JL106/JL107 JSON");
   assert.ok(page.text.includes("/api/payment/jl102") && page.text.includes("/api/payment/jl103") && page.text.includes("/api/payment/jl108_raw_material") && page.text.includes("/api/payment/jl112") && page.text.includes("/api/payment/jl115"), "JL payment report page should link auxiliary JL JSON APIs");
   assert.ok(page.text.includes("/api/payment/jl_price_adjustment"), "JL payment report page should link price adjustment JSON");
   assert.ok(page.text.includes("/api/payment/jl_deductions"), "JL payment report page should link deduction ledger JSON");
   assert.ok(page.text.includes("/payment/jl_print_page") && page.text.includes("/payment/export_jl_report") && page.text.includes("/payment/export_jl_report_pdf"), "JL payment report page should link print preview, CSV export and PDF export");
+  assert.ok(page.text.includes("/payment/export_jl_form_pdf?formCode=JL101") && page.text.includes("/payment/export_jl_form_pdf?formCode=JL114") && page.text.includes("逐表PDF导出"), "JL payment report page should expose per-form JL PDF exports");
 
   const printPage = await requestText("/payment/jl_print_page?periodId=2");
   assert.strictEqual(printPage.response.status, 200, "JL payment print page should load");
   assert.ok(printPage.text.includes("JL计量支付报表打印预览"), "JL payment print page should show dedicated title");
-  assert.ok(["JL101 计量支付月报表", "JL102/JL103 流转与施工进度", "JL104 中期财务支付证书", "JL115 开工动员预付款支付证书", "JL106/JL107 变更明细", "JL108/JL116 价格调差", "JL108-1 原材料明细表", "JL112 工程量表汇编", "JL113 计量支付数量汇总表", "JL105 清单中期财务支付报表", "JL表单校验与生命周期", "JL105期次继承校验", "JL资金连续性校验", "JL110/JL111 专项扣款台账"].every((label) => printPage.text.includes(label)), "JL payment print page should include printable core sections");
+  assert.ok(["JL101 计量支付月报表", "JL102/JL103 流转与施工进度", "JL104 中期财务支付证书", "JL115 开工动员预付款支付证书", "JL106/JL107 变更明细", "JL108/JL116 价格调差", "JL108-1 原材料明细表", "JL112 工程量表汇编", "JL114 工程计量表", "JL113 计量支付数量汇总表", "JL105 清单中期财务支付报表", "JL表单校验与生命周期", "JL105期次继承校验", "JL资金连续性校验", "JL110/JL111 专项扣款台账"].every((label) => printPage.text.includes(label)), "JL payment print page should include printable core sections");
 
   const exportCsv = await requestText("/payment/export_jl_report?periodId=2");
   assert.strictEqual(exportCsv.response.status, 200, "JL payment CSV export should load");
-  assert.ok(exportCsv.text.includes("JL101月报摘要") && exportCsv.text.includes("JL104支付证书") && exportCsv.text.includes("JL113数量汇总") && exportCsv.text.includes("JL表单生命周期"), "JL payment CSV export should include JL101, certificate, JL113 and lifecycle rows");
+  assert.ok(exportCsv.text.includes("JL101月报摘要") && exportCsv.text.includes("JL104支付证书") && exportCsv.text.includes("JL114工程计量表") && exportCsv.text.includes("JL113数量汇总") && exportCsv.text.includes("JL表单生命周期"), "JL payment CSV export should include JL101, certificate, JL114, JL113 and lifecycle rows");
   assert.ok(exportCsv.text.includes("JL102计量支付报表传递单") && exportCsv.text.includes("JL103施工进度表") && exportCsv.text.includes("JL112工程量表汇编") && exportCsv.text.includes("JL115开工动员预付款支付证书"), "JL payment CSV export should include auxiliary JL form rows");
   assert.ok(exportCsv.text.includes("JL106清单工程量变更表") && exportCsv.text.includes("JL107清单单价变更一览表"), "JL payment CSV export should include JL106/JL107 variation rows");
   assert.ok(exportCsv.text.includes("JL108材料调差明细") && exportCsv.text.includes("JL108-1原材料明细表") && exportCsv.text.includes("JL116合同价格调表"), "JL payment CSV export should include JL108/JL108-1/JL116 price adjustment rows");
@@ -1649,6 +1657,17 @@ async function verifyJlPaymentReportPageLoop() {
   assert.ok((exportPdf.response.headers.get("content-type") || "").includes("application/pdf"), "JL payment PDF export should use application/pdf content type");
   assert.strictEqual(exportPdf.buffer.slice(0, 5).toString("latin1"), "%PDF-", "JL payment PDF export should return a real PDF file");
   assert.ok(exportPdf.buffer.includes(Buffer.from("/STSong-Light")), "JL payment PDF export should include a CJK-capable PDF font resource");
+
+  for (const code of ["JL101", "JL108-1", "JL114", "JL116"]) {
+    const formPdf = await requestBuffer(`/payment/export_jl_form_pdf?formCode=${encodeURIComponent(code)}&periodId=2`);
+    assert.strictEqual(formPdf.response.status, 200, `${code} per-form PDF export should load`);
+    assert.ok((formPdf.response.headers.get("content-type") || "").includes("application/pdf"), `${code} per-form PDF should use application/pdf content type`);
+    assert.strictEqual(formPdf.buffer.slice(0, 5).toString("latin1"), "%PDF-", `${code} per-form export should return a real PDF file`);
+    assert.ok(formPdf.buffer.includes(Buffer.from("/STSong-Light")), `${code} per-form PDF should include a CJK-capable PDF font resource`);
+  }
+  const badFormPdf = await requestJson("/payment/export_jl_form_pdf?formCode=JL999&periodId=2");
+  assert.strictEqual(badFormPdf.response.status, 400, "unknown JL per-form PDF export should reject the request");
+  assert.strictEqual(badFormPdf.json.code, 0, "unknown JL per-form PDF export should return a business error");
 
   const menuPage = await requestText("/sbr/sbr_com/9004");
   assert.strictEqual(menuPage.response.status, 200, "JL payment report menu page should load");
@@ -2863,6 +2882,29 @@ async function verifyDocumentDashboardLoop() {
     assert.ok(syzlDashboard.text.includes("试验资料管理看板"), "syzl dashboard should have a test-document title");
     assert.ok(syzlDashboard.text.includes("试验资料看板验证") && syzlDashboard.text.includes("SY-DASH-VERIFY"), "syzl dashboard should show saved test document");
     assert.ok(!syzlDashboard.text.includes("ZL-DASH-VERIFY"), "syzl dashboard recent list should focus on test documents");
+
+    const documentMenuPages = [
+      { url: "/sbr/sbr_com/411", title: "建设单位工程资料", marker: "开工报告", view: "unit-建设单位工程资料" },
+      { url: "/sbr/sbr_com/568", title: "试验室内部资料", marker: "试验检测资料", view: "syzl" },
+      { url: "/sbr/sbr_com/640", title: "施工质检类资料", marker: "路基压实度检验评定表", view: "quality-施工质检类资料" },
+      { url: "/sbr/sbr_com/641", title: "监理质检类资料", marker: "监理抽检记录", view: "quality-监理质检类资料" },
+      { url: "/sbr/sbr_com/642", title: "资料综合查询台帐", marker: "施工组织设计报审资料", view: "ledger" },
+      { url: "/sbr/sbr_com/670", title: "施工单位工程资料", marker: "施工组织设计报审资料", view: "unit-施工单位工程资料" },
+      { url: "/sbr/sbr_com/671", title: "监理单位工程资料", marker: "监理规划及旁站记录", view: "unit-监理单位工程资料" },
+      { url: "/sbr/sbr_com/672", title: "审计单位工程资料", marker: "计量支付审计底稿", view: "unit-审计单位工程资料" },
+      { url: "/sbr/sbr_com/673", title: "设计单位工程资料", marker: "施工图设计交底记录", view: "unit-设计单位工程资料" }
+    ];
+    const signatures = new Set();
+    for (const item of documentMenuPages) {
+      const page = await requestText(item.url);
+      assert.strictEqual(page.response.status, 200, `${item.title} menu page should load`);
+      assert.ok(page.text.includes(item.title), `${item.title} menu page should have its own title`);
+      assert.ok(page.text.includes(item.marker), `${item.title} menu page should show its category-specific document rows`);
+      assert.ok(page.text.includes(`data-document-view="${item.view}"`), `${item.title} menu page should carry a distinct document view key`);
+      assert.ok(["编辑", "附件", "权限"].every((label) => page.text.includes(label)), `${item.title} menu page should expose document operations`);
+      signatures.add(page.text.slice(0, 1200));
+    }
+    assert.strictEqual(signatures.size, documentMenuPages.length, "engineering document left menu pages should not all render the same content");
   } finally {
     if (ids.length) await postJson("/oaDataNode/delete_data_node", { ids: ids.join(",") });
   }

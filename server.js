@@ -1937,6 +1937,10 @@ function manualMeasureManagementPageHtml(req) {
     </div>`;
 }
 
+function requestLike(pathname, query = {}, params = {}) {
+  return { path: pathname, query, body: {}, params };
+}
+
 function contentForId(id) {
   if (String(id) === "46") return dataGatherDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "47") return billMeasureManagementPageHtml({ query: {}, body: {}, params: {} });
@@ -1949,9 +1953,15 @@ function contentForId(id) {
   if (String(id) === "376") return subItemLedgerHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "377") return reportDetailHtml();
   if (String(id) === "378") return variationPaymentDashboardHtml({ query: {}, body: {}, params: {} });
-  if (String(id) === "411" || String(id) === "670" || String(id) === "671" || String(id) === "672" || String(id) === "673") return documentManagementDashboardHtml({ query: {}, body: {}, params: {} });
-  if (String(id) === "568") return documentManagementDashboardHtml({ query: { type: "syzl" }, body: {}, params: {} });
-  if (String(id) === "640" || String(id) === "641" || String(id) === "642") return documentManagementDashboardHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "411") return documentManagementDashboardHtml(requestLike("/oaDataNode/get_data_manage_page", { type: "2" }));
+  if (String(id) === "568") return documentManagementDashboardHtml(requestLike("/syzl/page", { documentView: "syzl" }));
+  if (String(id) === "640") return documentManagementDashboardHtml(requestLike("/projectInformationNode/page/0", { documentView: "quality" }, { type: "0" }));
+  if (String(id) === "641") return documentManagementDashboardHtml(requestLike("/projectInformationNode/page/1", { documentView: "quality" }, { type: "1" }));
+  if (String(id) === "642") return documentManagementDashboardHtml(requestLike("/projectInformationParam/page", { documentView: "ledger" }));
+  if (String(id) === "670") return documentManagementDashboardHtml(requestLike("/oaDataNode/get_data_manage_page", { type: "0" }));
+  if (String(id) === "671") return documentManagementDashboardHtml(requestLike("/oaDataNode/get_data_manage_page", { type: "1" }));
+  if (String(id) === "672") return documentManagementDashboardHtml(requestLike("/oaDataNode/get_data_manage_page", { type: "3" }));
+  if (String(id) === "673") return documentManagementDashboardHtml(requestLike("/oaDataNode/get_data_manage_page", { type: "4" }));
   if (String(id) === "690") return engineeringContactDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "691") return variationManagementDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "692") return billMeasureDashboardHtml({ query: {}, body: {}, params: {} });
@@ -5650,6 +5660,7 @@ function projectPlanDashboardHtml(req) {
 }
 
 function documentNodePayload() {
+  ensureDocumentModuleCoverage();
   const nodes = engine.documentRows().map((item) => ({
     ...item,
     oaNodeId: item.nodeId,
@@ -5673,6 +5684,7 @@ function documentNodePayload() {
 }
 
 function projectInformationTreeRows() {
+  ensureDocumentModuleCoverage();
   return engine.documentRows().map((item) => ({
     ...item,
     id: item.nodeId,
@@ -5687,6 +5699,7 @@ function projectInformationTreeRows() {
 }
 
 function projectInformationHangRows() {
+  ensureDocumentModuleCoverage();
   const sections = engine.db.sections.length ? engine.db.sections : [{ sectionId: 0, sectionName: "" }];
   return engine.documentRows().map((doc, index) => {
     const section = sections[index % sections.length];
@@ -6087,34 +6100,150 @@ function saveDocumentPower(req) {
 function defaultDocuments() {
   return [
     { id: 1, nodeId: 1, title: "开工报告", type: "建设单位工程资料", createDate: "2026-01-10", fileCount: 3, parentId: 0 },
-    { id: 2, nodeId: 2, title: "试验检测资料", type: "试验室内部资料", createDate: "2026-02-02", fileCount: 8, parentId: 0 }
+    { id: 2, nodeId: 2, title: "试验检测资料", type: "试验室内部资料", createDate: "2026-02-02", fileCount: 8, parentId: 0 },
+    { id: 3, nodeId: 3, title: "施工组织设计报审资料", type: "施工单位工程资料", createDate: "2026-01-15", fileCount: 5, parentId: 0 },
+    { id: 4, nodeId: 4, title: "监理规划及旁站记录", type: "监理单位工程资料", createDate: "2026-01-18", fileCount: 4, parentId: 0 },
+    { id: 5, nodeId: 5, title: "路基压实度检验评定表", type: "施工质检类资料", createDate: "2026-02-12", fileCount: 6, parentId: 0 },
+    { id: 6, nodeId: 6, title: "监理抽检记录", type: "监理质检类资料", createDate: "2026-02-14", fileCount: 4, parentId: 0 },
+    { id: 7, nodeId: 7, title: "计量支付审计底稿", type: "审计单位工程资料", createDate: "2026-02-20", fileCount: 2, parentId: 0 },
+    { id: 8, nodeId: 8, title: "施工图设计交底记录", type: "设计单位工程资料", createDate: "2026-01-22", fileCount: 3, parentId: 0 }
   ];
 }
 
-function documentManagementDashboardHtml(req) {
+const documentUnitTypeMap = {
+  "0": "施工单位工程资料",
+  "1": "监理单位工程资料",
+  "2": "建设单位工程资料",
+  "3": "审计单位工程资料",
+  "4": "设计单位工程资料"
+};
+
+const documentQualityTypeMap = {
+  "0": "施工质检类资料",
+  "1": "监理质检类资料"
+};
+
+function documentSearchText(row) {
+  return `${row.title || ""} ${row.dataName || ""} ${row.nodeName || ""} ${row.type || ""} ${row.testName || ""} ${row.remark || ""}`;
+}
+
+function documentIsTestRow(row) {
+  return /试验|检测|试验室|sy/i.test(documentSearchText(row));
+}
+
+function documentMatchesCategory(row, category) {
+  if (!category) return true;
+  return documentSearchText(row).includes(category);
+}
+
+function ensureDocumentModuleCoverage() {
+  if (!Array.isArray(engine.db.documents)) engine.db.documents = [];
+  const seedRows = [
+    { title: "开工报告", type: "建设单位工程资料", dataNo: "JS-ZL-001", createDate: "2026-01-10", fileCount: 3, remark: "建设单位开工资料" },
+    { title: "施工组织设计报审资料", type: "施工单位工程资料", dataNo: "SG-ZL-001", createDate: "2026-01-15", fileCount: 5, remark: "施工单位报审资料" },
+    { title: "监理规划及旁站记录", type: "监理单位工程资料", dataNo: "JL-ZL-001", createDate: "2026-01-18", fileCount: 4, remark: "监理单位过程资料" },
+    { title: "计量支付审计底稿", type: "审计单位工程资料", dataNo: "SJ-ZL-001", createDate: "2026-02-20", fileCount: 2, remark: "审计复核资料" },
+    { title: "施工图设计交底记录", type: "设计单位工程资料", dataNo: "SJY-ZL-001", createDate: "2026-01-22", fileCount: 3, remark: "设计交底资料" },
+    { title: "混凝土抗压强度报告", type: "试验室内部资料", dataNo: "SY-ZL-001", createDate: "2026-02-02", fileCount: 8, testHouseName: "中心试验室", testName: "混凝土抗压强度", remark: "试验检测资料" },
+    { title: "路基压实度检验评定表", type: "施工质检类资料", dataNo: "ZJ-SG-001", createDate: "2026-02-12", fileCount: 6, remark: "施工单位质检资料" },
+    { title: "基层厚度检测记录", type: "施工质检类资料", dataNo: "ZJ-SG-002", createDate: "2026-02-16", fileCount: 4, remark: "施工质检实测记录" },
+    { title: "监理抽检记录", type: "监理质检类资料", dataNo: "ZJ-JL-001", createDate: "2026-02-14", fileCount: 4, remark: "监理抽检资料" },
+    { title: "旁站监理记录", type: "监理质检类资料", dataNo: "ZJ-JL-002", createDate: "2026-02-18", fileCount: 3, remark: "监理旁站资料" }
+  ];
+  const hasType = (type) => engine.db.documents.some((row) => documentMatchesCategory(row, type));
+  seedRows.forEach((seed) => {
+    if (hasType(seed.type)) return;
+    const nodeId = nextId(engine.db.documents, "nodeId");
+    engine.db.documents.push({
+      id: nodeId,
+      nodeId,
+      parentId: 0,
+      hangId: nodeId,
+      updateDate: seed.createDate,
+      createUserName: "ys1",
+      attachments: [
+        { attachmentId: 1, fileName: `${seed.title}.docx`, uploadDate: seed.createDate, uploadUser: "ys1", size: 2048, remark: seed.remark }
+      ],
+      ...seed
+    });
+  });
+}
+
+function documentViewConfig(req) {
   const sourcePath = String(req.path || "");
-  const showTestOnly = sourcePath.includes("/syzl");
+  const query = { ...(req.query || {}), ...(req.body || {}) };
+  const routeType = req.params && req.params.type !== undefined ? String(req.params.type) : "";
+  const queryType = query.type !== undefined ? String(query.type) : "";
+  const qualityType = routeType || query.qualityType || "";
+  if (sourcePath.includes("/syzl") || query.documentView === "syzl") {
+    return {
+      key: "syzl",
+      title: "试验室内部资料",
+      subtitle: "试验资料管理看板：试验检测资料、试验室台账、检测报告和附件归档。",
+      badge: "试验资料",
+      filter: documentIsTestRow
+    };
+  }
+  if (sourcePath.includes("/projectInformationParam") || query.documentView === "ledger") {
+    return {
+      key: "ledger",
+      title: "资料综合查询台帐",
+      subtitle: "跨单位、跨质检类别汇总检索资料节点、挂接文件和附件数量。",
+      badge: "综合台账",
+      filter: () => true
+    };
+  }
+  if (sourcePath.includes("/projectInformationNode/page") || query.documentView === "quality") {
+    const category = documentQualityTypeMap[String(qualityType)] || documentQualityTypeMap[String(queryType)] || "施工质检类资料";
+    return {
+      key: `quality-${category}`,
+      title: category,
+      subtitle: "按施工/监理质检类别维护检验评定、抽检、旁站和质量验收资料。",
+      badge: "质检资料",
+      filter: (row) => documentMatchesCategory(row, category)
+    };
+  }
+  if (sourcePath.includes("/oaDataNode/get_data_manage_page") || Object.prototype.hasOwnProperty.call(documentUnitTypeMap, queryType)) {
+    const category = documentUnitTypeMap[queryType] || "建设单位工程资料";
+    return {
+      key: `unit-${category}`,
+      title: category,
+      subtitle: "按参建单位归集工程资料节点、附件、经办人和归档状态。",
+      badge: "单位资料",
+      filter: (row) => documentMatchesCategory(row, category)
+    };
+  }
+  return {
+    key: "dashboard",
+    title: "项目资料管理看板",
+    subtitle: "汇总资料节点、资料挂接、试验检测资料、附件数量和最近更新，支撑项目资料归档与计量支付附件管理。",
+    badge: "总览",
+    filter: () => true
+  };
+}
+
+function documentManagementDashboardHtml(req) {
+  ensureDocumentModuleCoverage();
+  const view = documentViewConfig(req);
+  const showTestOnly = view.key === "syzl";
   const rows = engine.documentRows();
   const allTreeRows = projectInformationTreeRows();
   const allHangRows = projectInformationHangRows();
-  const isTestDocument = (row) => {
-    const text = `${row.title || ""} ${row.dataName || ""} ${row.nodeName || ""} ${row.type || ""} ${row.testName || ""}`;
-    return /试验|检测|sy/i.test(text);
-  };
-  const testRows = rows.filter(isTestDocument);
-  const displayRows = showTestOnly ? testRows : rows;
+  const testRows = rows.filter(documentIsTestRow);
+  const displayRows = rows.filter(view.filter);
   const displayIds = new Set(displayRows.map((row) => Number(row.nodeId || row.id || row.hangId)));
-  const treeRows = showTestOnly ? allTreeRows.filter((row) => displayIds.has(Number(row.nodeId || row.id || row.hangId))) : allTreeRows;
-  const hangRows = showTestOnly ? allHangRows.filter((row) => displayIds.has(Number(row.nodeId || row.id || row.hangId))) : allHangRows;
-  const totalFiles = rows.reduce((sum, row) => sum + Number(row.fileCount || 0), 0);
+  const treeRows = view.key === "dashboard" || view.key === "ledger" ? allTreeRows : allTreeRows.filter((row) => displayIds.has(Number(row.nodeId || row.id || row.hangId)));
+  const hangRows = view.key === "dashboard" || view.key === "ledger" ? allHangRows : allHangRows.filter((row) => displayIds.has(Number(row.nodeId || row.id || row.hangId)));
+  const totalFiles = displayRows.reduce((sum, row) => sum + Number(row.fileCount || 0), 0);
   const hangFileCount = hangRows.reduce((sum, row) => sum + Number(row.fileCount || 0), 0);
   const recentRows = [...displayRows].sort((a, b) => String(b.updateDate || b.createDate || "").localeCompare(String(a.updateDate || a.createDate || ""))).slice(0, 12);
   const sectionNames = [...new Set(hangRows.map((row) => row.projectInformationNode && row.projectInformationNode.sysSection && row.projectInformationNode.sysSection.sectionName).filter(Boolean))];
   const cards = [
-    ["资料节点", String(treeRows.length), "项目资料树节点"],
+    [view.badge, String(displayRows.length), view.title],
+    ["资料节点", String(treeRows.length), "当前范围资料树节点"],
     ["资料文件数", String(totalFiles), "全部资料附件数量"],
-    ["试验资料", String(testRows.length), "试验/检测资料"],
-    ["工程资料", String(Math.max(0, rows.length - testRows.length)), "施工与计量过程资料"],
+    ["试验资料", String(showTestOnly ? displayRows.length : testRows.length), "试验/检测资料"],
+    ["工程资料", String(Math.max(0, displayRows.length - (showTestOnly ? displayRows.length : displayRows.filter(documentIsTestRow).length))), "施工与计量过程资料"],
     ["已挂接", String(hangRows.length), `覆盖 ${sectionNames.length || 0} 个合同段`],
     ["挂接文件", String(hangFileCount), "已挂接资料附件"]
   ].map(([label, value, hint]) => `
@@ -6161,8 +6290,24 @@ function documentManagementDashboardHtml(req) {
       <td>${htmlEscape(row.updateDate || row.createDate || "")}</td>
       <td><a href="/oaDataNode/get_data_detail_page?nodeId=${row.nodeId || row.id}">详情</a></td>
     </tr>`).join("");
+  const scopeRows = displayRows.slice(0, 100).map((row) => `
+    <tr>
+      <td>${htmlEscape(row.dataNo || `ZL-${String(row.nodeId || row.id || "").padStart(3, "0")}`)}</td>
+      <td class="left">${htmlEscape(row.title || row.dataName || row.nodeName || "")}</td>
+      <td>${htmlEscape(row.type || "")}</td>
+      <td>${Number(row.fileCount || 0)}</td>
+      <td>${htmlEscape(row.createUserName || "ys1")}</td>
+      <td>${htmlEscape(row.updateDate || row.createDate || "")}</td>
+      <td>
+        <a href="/oaDataNode/edit_data_node_page?nodeId=${row.nodeId || row.id}">编辑</a>
+        <span style="color:#cbd5e1;">/</span>
+        <a href="/project_information_hang_file/page?hangId=${row.hangId || row.nodeId || row.id}">附件</a>
+        <span style="color:#cbd5e1;">/</span>
+        <a href="/oaDataNode/get_node_user_power_page?nodeId=${row.nodeId || row.id}">权限</a>
+      </td>
+    </tr>`).join("");
   return `
-    <div class="layui-fluid document-dashboard">
+    <div class="layui-fluid document-dashboard" data-document-view="${htmlEscape(view.key)}">
       <style>
         .document-dashboard { padding:16px; background:#f5f7fb; color:#172033; }
         .doc-shell { max-width:1380px; margin:0 auto; }
@@ -6187,8 +6332,8 @@ function documentManagementDashboardHtml(req) {
       <div class="doc-shell">
         <div class="doc-head">
           <div>
-            <h2>${showTestOnly ? "试验资料管理看板" : "项目资料管理看板"}</h2>
-            <p>汇总资料节点、资料挂接、试验检测资料、附件数量和最近更新，支撑项目资料归档与计量支付附件管理。</p>
+            <h2>${htmlEscape(view.title)}</h2>
+            <p>${htmlEscape(view.subtitle)}</p>
           </div>
           <div class="doc-actions">
             <a class="layui-btn layui-btn-sm" href="/oaDataNode/add_data_node_page">新增资料</a>
@@ -6198,6 +6343,13 @@ function documentManagementDashboardHtml(req) {
         </div>
         <div class="doc-cards">${cards}</div>
         <div class="doc-grid">
+          <div class="doc-panel doc-panel-wide">
+            <h3>${htmlEscape(view.title)}明细</h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>资料编号</th><th>资料名称</th><th>资料类型</th><th>文件数</th><th>经办人</th><th>更新日期</th><th>操作</th></tr></thead>
+              <tbody>${scopeRows || `<tr><td colspan="7" class="doc-empty">当前分类暂无资料，可点击新增资料补充</td></tr>`}</tbody>
+            </table>
+          </div>
           <div class="doc-panel">
             <h3>资料节点树</h3>
             <table class="layui-table" lay-size="sm">
@@ -7136,6 +7288,18 @@ function jlPaymentExportRows(req) {
     currentAmount: row.currentAmount,
     cumulativeAmount: row.cumulativeAmount
   }));
+  engine.jl114MeasureRows({ periodId, sectionId }).forEach((row) => push("JL114工程计量表", {
+    code: row.measureNo,
+    name: row.itemName,
+    sectionName: row.sectionName,
+    itemCode: row.itemCode,
+    unit: row.unit,
+    price: row.price,
+    quantity: row.quantity,
+    amount: row.amount,
+    source: row.sheetNo,
+    formula: row.formula
+  }));
   const jl106ExportRows = engine.jl106VariationQuantityRows({ periodId, sectionId });
   if (!jl106ExportRows.length) push("JL106清单工程量变更表", { name: "本期无工程量变更", amount: 0, source: "JL106" });
   jl106ExportRows.forEach((row) => push("JL106清单工程量变更表", {
@@ -7342,8 +7506,57 @@ function jlPaymentExportRows(req) {
   return rows;
 }
 
-function jlPaymentPdfBuffer(req) {
-  const rows = jlPaymentExportRows(req);
+const jlPaymentFormPdfDefinitions = [
+  { code: "JL101", name: "计量支付月报表", tables: ["JL101月报摘要"] },
+  { code: "JL102", name: "计量支付报表传递单", tables: ["JL102计量支付报表传递单"] },
+  { code: "JL103", name: "施工进度表", tables: ["JL103施工进度表"] },
+  { code: "JL104", name: "中期财务支付证书", tables: ["JL104支付证书", "JL104章级汇总", "JL104保留金连续台账"] },
+  { code: "JL105", name: "清单中期财务支付报表", tables: ["JL105清单支付", "JL105期次继承校验"] },
+  { code: "JL106", name: "清单工程量变更表", tables: ["JL106清单工程量变更表"] },
+  { code: "JL107", name: "清单单价变更一览表", tables: ["JL107清单单价变更一览表"] },
+  { code: "JL108", name: "永久性工程材料差价金额一览表", tables: ["JL108材料调差明细"] },
+  { code: "JL108-1", name: "原材料明细表", tables: ["JL108-1原材料明细表"] },
+  { code: "JL109", name: "工程材料到达现场计量表", tables: ["JL109材料到场"] },
+  { code: "JL110", name: "扣回材料垫付款一览表", tables: ["JL110材料扣回台账", "JL资金连续性校验"] },
+  { code: "JL111", name: "扣回动员预付款一览表", tables: ["JL111动员扣回台账", "JL资金连续性校验"] },
+  { code: "JL112", name: "工程量表汇编", tables: ["JL112工程量表汇编"] },
+  { code: "JL113", name: "计量支付数量汇总表", tables: ["JL113数量汇总"] },
+  { code: "JL114", name: "工程计量表", tables: ["JL114工程计量表"] },
+  { code: "JL115", name: "开工动员预付款支付证书", tables: ["JL115开工动员预付款支付证书"] },
+  { code: "JL116", name: "合同价格调表", tables: ["JL116合同价格调表", "JL116材料权重明细"] }
+];
+
+function normalizedJlFormCode(value) {
+  return String(value || "").trim().toUpperCase().replace(/_/g, "-");
+}
+
+function jlPaymentFormPdfDefinition(formCode) {
+  const code = normalizedJlFormCode(formCode);
+  return jlPaymentFormPdfDefinitions.find((item) => item.code === code) || null;
+}
+
+function jlPaymentFormPdfLinks(periodId, sectionId) {
+  return jlPaymentFormPdfDefinitions.map((item) => {
+    const href = `/payment/export_jl_form_pdf?formCode=${encodeURIComponent(item.code)}&periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}`;
+    return `<a class="layui-btn layui-btn-xs layui-btn-primary" href="${href}">${htmlEscape(item.code)} PDF</a>`;
+  }).join("");
+}
+
+function jlPaymentPdfBuffer(req, options = {}) {
+  const allRows = jlPaymentExportRows(req);
+  const form = jlPaymentFormPdfDefinition(options.formCode ?? req.query.formCode ?? req.body.formCode);
+  const rows = form ? allRows.filter((row) => form.tables.includes(row.table)) : allRows;
+  if (form && !rows.length) {
+    rows.push({
+      periodId: allRows[0]?.periodId || "",
+      periodDesc: allRows[0]?.periodDesc || "",
+      sectionId: allRows[0]?.sectionId || "",
+      table: `${form.code}${form.name}`,
+      item: "本期无明细",
+      status: "空表",
+      source: form.code
+    });
+  }
   const periodDesc = rows[0]?.periodDesc || "";
   const skipKeys = new Set(["periodId", "periodDesc", "sectionId", "table"]);
   const preferredKeys = [
@@ -7365,7 +7578,9 @@ function jlPaymentPdfBuffer(req) {
   ];
   const lines = [
     `期次：${periodDesc || "全部期次"}`,
-    "导出范围：JL101-JL116、JL104支付证书、JL105/JL113清单链路、JL109/JL110/JL111扣款台账、资金连续性校验与生命周期。"
+    form
+      ? `导出范围：${form.code} ${form.name}。`
+      : "导出范围：JL101-JL116、JL104支付证书、JL105/JL113清单链路、JL109/JL110/JL111扣款台账、资金连续性校验与生命周期。"
   ];
   let currentTable = "";
   rows.forEach((row, index) => {
@@ -7384,13 +7599,25 @@ function jlPaymentPdfBuffer(req) {
       .join("；");
     lines.push(`${index + 1}. ${body || "空行"}`);
   });
-  return buildSimplePdf("JL计量支付报表PDF导出", lines);
+  return buildSimplePdf(form ? `${form.code} ${form.name}PDF导出` : "JL计量支付报表PDF导出", lines);
 }
 
 function jlPaymentExportPdf(req, res) {
   const buffer = jlPaymentPdfBuffer(req);
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", 'attachment; filename="jl-payment-report.pdf"');
+  res.send(buffer);
+}
+
+function jlPaymentExportFormPdf(req, res) {
+  const form = jlPaymentFormPdfDefinition(req.query.formCode || req.body.formCode);
+  if (!form) {
+    res.status(400).json({ code: 0, msg: "未知JL表号", data: { formCode: req.query.formCode || req.body.formCode } });
+    return;
+  }
+  const buffer = jlPaymentPdfBuffer(req, { formCode: form.code });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${form.code.toLowerCase().replace(/[^a-z0-9-]/g, "-")}.pdf"`);
   res.send(buffer);
 }
 
@@ -7407,6 +7634,7 @@ function jlPaymentPrintableHtml(req) {
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
   const supportReport = engine.jlPaymentSupportReport({ periodId, sectionId });
   const financialContinuity = engine.jlFinancialContinuityReport({ periodId, sectionId });
+  const jl114Rows = engine.jl114MeasureRows({ periodId, sectionId });
   const jl106Rows = engine.jl106VariationQuantityRows({ periodId, sectionId });
   const jl107Rows = engine.jl107UnitPriceVariationRows({ periodId, sectionId });
   const materialDeductionLedger = engine.materialDeductionLedgerRows({ periodId, sectionId });
@@ -7513,6 +7741,13 @@ function jlPaymentPrintableHtml(req) {
         </tbody></table>
       </div>
       <div class="jl-print-section">
+        <h2>JL114 工程计量表</h2>
+        <table><thead><tr><th>计量单号</th><th>合同段</th><th>细目编号</th><th>细目名称</th><th>单位</th><th>数量</th><th>单价</th><th>金额</th><th>公式</th></tr></thead><tbody>
+          ${rows(jl114Rows, (row) => [row.measureNo, row.sectionName, row.itemCode, row.itemName, row.unit, row.quantity, moneyText(row.price), moneyText(row.amount), row.formula]) ||
+            `<tr><td colspan="9">本期暂无工程计量表</td></tr>`}
+        </tbody></table>
+      </div>
+      <div class="jl-print-section">
         <h2>JL113 计量支付数量汇总表</h2>
         <table><thead><tr><th>细目编号</th><th>细目名称</th><th>计量表编号</th><th>单位</th><th>单价</th><th>数量</th><th>金额</th></tr></thead><tbody>
           ${rows(certificate.jl113Rows, (row) => [row.itemCode || row.billNo || "", row.itemName || row.billName || "", row.measureRefs || "", row.unit || row.measureUnit || "", moneyText(row.price), row.quantity, moneyText(row.amount)])}
@@ -7585,6 +7820,7 @@ function jlPaymentReportPageHtml(req) {
   const priceAdjustmentReport = engine.jlPriceAdjustmentReport({ periodId, sectionId });
   const supportReport = engine.jlPaymentSupportReport({ periodId, sectionId });
   const financialContinuity = engine.jlFinancialContinuityReport({ periodId, sectionId });
+  const jl114Rows = engine.jl114MeasureRows({ periodId, sectionId });
   const jl106Rows = engine.jl106VariationQuantityRows({ periodId, sectionId });
   const jl107Rows = engine.jl107UnitPriceVariationRows({ periodId, sectionId });
   const materialDeductionLedger = engine.materialDeductionLedgerRows({ periodId, sectionId });
@@ -7620,6 +7856,19 @@ function jlPaymentReportPageHtml(req) {
       <td>${moneyText(row.price)}</td>
       <td>${htmlEscape(row.quantity)}</td>
       <td>${moneyText(row.amount)}</td>
+    </tr>`).join("");
+  const jl114HtmlRows = jl114Rows.slice(0, 120).map((row) => `
+    <tr>
+      <td>${htmlEscape(row.measureNo || "")}</td>
+      <td>${htmlEscape(row.measureDate || "")}</td>
+      <td class="left">${htmlEscape(row.sectionName || "")}</td>
+      <td>${htmlEscape(row.itemCode || "")}</td>
+      <td class="left">${htmlEscape(row.itemName || "")}</td>
+      <td>${htmlEscape(row.unit || "")}</td>
+      <td>${htmlEscape(row.quantity)}</td>
+      <td>${moneyText(row.price)}</td>
+      <td>${moneyText(row.amount)}</td>
+      <td class="left">${htmlEscape(row.formula || "")}</td>
     </tr>`).join("");
   const jl105Rows = certificate.jl105Rows.slice(0, 120).map((row) => `
     <tr>
@@ -7941,6 +8190,7 @@ function jlPaymentReportPageHtml(req) {
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl101?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL101 JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl102?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL102 JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl103?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL103 JSON</a>
+            <a class="layui-btn layui-btn-sm" href="/api/payment/jl114?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL114 JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl106?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL106 JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl107?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL107 JSON</a>
             <a class="layui-btn layui-btn-sm" href="/api/payment/jl108_raw_material?periodId=${encodeURIComponent(periodId || "")}&sectionId=${encodeURIComponent(sectionId || "")}">JL108-1 JSON</a>
@@ -7956,6 +8206,10 @@ function jlPaymentReportPageHtml(req) {
           </div>
         </div>
         <div class="core-cards">${cards}</div>
+        <div class="core-panel" style="margin-bottom:12px;">
+          <h3>逐表PDF导出 <span class="subtle">JL101-JL116 单表导出</span></h3>
+          <div class="quick-links">${jlPaymentFormPdfLinks(periodId, sectionId)}</div>
+        </div>
         <div class="core-panel" style="margin-bottom:12px; overflow:auto;">
           <h3>JL101 计量支付月报表</h3>
           <table class="layui-table" lay-size="sm">
@@ -8075,6 +8329,13 @@ function jlPaymentReportPageHtml(req) {
             <table class="layui-table" lay-size="sm">
               <thead><tr><th>序号</th><th>计量表编号</th><th>合同段</th><th>部位</th><th>明细数</th><th>金额</th><th>状态</th></tr></thead>
               <tbody>${jl112Rows || `<tr><td colspan="7" class="core-empty">本期暂无工程量表汇编</td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="core-panel">
+            <h3>JL114 工程计量表 <span class="subtle">本期计量基础明细</span></h3>
+            <table class="layui-table" lay-size="sm">
+              <thead><tr><th>计量单号</th><th>计量日期</th><th>合同段</th><th>细目编号</th><th>细目名称</th><th>单位</th><th>数量</th><th>单价</th><th>金额</th><th>公式</th></tr></thead>
+              <tbody>${jl114HtmlRows || `<tr><td colspan="10" class="core-empty">本期暂无工程计量表明细</td></tr>`}</tbody>
             </table>
           </div>
           <div class="core-panel">
@@ -12511,6 +12772,7 @@ app.all("/payment/jl_report_page", (req, res) => html(res, jlPaymentReportPageHt
 app.all("/payment/jl_print_page", (req, res) => html(res, jlPaymentPrintableHtml(req)));
 app.all("/payment/export_jl_report", (req, res) => csv(res, "jl-payment-report.csv", jlPaymentExportRows(req)));
 app.all("/payment/export_jl_report_pdf", (req, res) => jlPaymentExportPdf(req, res));
+app.all("/payment/export_jl_form_pdf", (req, res) => jlPaymentExportFormPdf(req, res));
 app.get("/sbr/sbr_com/:id", (req, res) => html(res, contentForId(req.params.id)));
 app.all("/sbr/sbr_com", (req, res) => html(res, contentForId(req.body.leftId || req.query.leftId || "")));
 
@@ -12543,6 +12805,7 @@ app.post("/api/admin/calculation_rules", (req, res) => mutate(res, () => saveCal
 app.get("/api/cost/bills", (req, res) => table(res, req, engine.billRows()));
 app.get("/api/cost/measures", (req, res) => table(res, req, engine.measureRows()));
 app.get("/api/cost/ledger", (req, res) => table(res, req, engine.billLedgerRows()));
+app.get("/api/payment/jl114", (req, res) => table(res, req, engine.jl114MeasureRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl113", (req, res) => table(res, req, engine.jl113Rows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl105", (req, res) => table(res, req, engine.jl105LedgerRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
 app.get("/api/payment/jl104_chapters", (req, res) => table(res, req, engine.jl104ChapterRows({ periodId: queryNumber(req, "periodId") || queryNumber(req, "gatherId"), sectionId: queryNumber(req, "sectionId") })));
