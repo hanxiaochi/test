@@ -28,6 +28,44 @@ scripts/sample-regression.js  第13/14期样本回归验证
 密码：000000
 ```
 
+## 交给其他 AI 或协作者部署时
+
+如果把部署任务交给 MiniMax、其他 AI 或运维协作者，可以直接让对方先读本节，再按本文档后续步骤执行。
+
+核心信息：
+
+```text
+项目 GitHub：
+https://github.com/hanxiaochi/test/tree/codex/zwkjy-clone
+
+主要部署文档：
+DEPLOYMENT.md
+
+本机项目路径：
+G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
+
+默认账号：
+ys1 / 000000
+
+云服务器建议部署目录：
+/opt/zwkjy-clone
+
+默认服务端口：
+3100
+```
+
+重要注意事项：
+
+```text
+1. data/runtime-db.json 是当前测试版数据库，部署和更新时不要覆盖。
+2. 如果云端需要和本机当前数据一致，要把本机 data/runtime-db.json 上传到服务器的 /opt/zwkjy-clone/data/runtime-db.json。
+3. CALCULATION_USAGE.md 是本机计算使用文档，不上传 GitHub；部署网站本身不依赖它。
+4. 数据库、账号权限、角色管控、后台审计和正式后台系统放到下一阶段处理。
+5. 每次更新代码前，先备份服务器上的 data/runtime-db.json。
+```
+
+如果对方从 GitHub 部署，按“方式 A：从 GitHub 拉取”执行；如果对方需要部署本机当前完整测试数据，除了拉代码以外，还必须额外上传本机的 `data/runtime-db.json`。
+
 ## 当前测试版数据说明
 
 当前版本不依赖 MySQL、PostgreSQL 或 SQLite，运行数据保存在本项目内的 JSON 文件：

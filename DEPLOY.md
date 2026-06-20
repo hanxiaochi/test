@@ -22,6 +22,40 @@ https://github.com/hanxiaochi/test/tree/codex/zwkjy-clone
 https://github.com/hanxiaochi/test/pull/1
 ```
 
+## 交给其他 AI 或协作者部署时
+
+如果把部署任务交给 MiniMax、其他 AI 或运维协作者，可以直接让对方先读本节。
+
+```text
+项目 GitHub：
+https://github.com/hanxiaochi/test/tree/codex/zwkjy-clone
+
+主要部署文档：
+DEPLOYMENT.md
+
+本机项目路径：
+G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
+
+默认账号：
+ys1 / 000000
+
+云服务器建议部署目录：
+/opt/zwkjy-clone
+
+默认服务端口：
+3100
+```
+
+关键提醒：
+
+```text
+1. data/runtime-db.json 是当前测试版数据库，部署和更新时不要覆盖。
+2. 如果云端需要和本机当前数据一致，要把本机 data/runtime-db.json 上传到服务器的 /opt/zwkjy-clone/data/runtime-db.json。
+3. CALCULATION_USAGE.md 是本机计算使用文档，不上传 GitHub；部署网站本身不依赖它。
+4. 数据库、账号权限、角色管控、后台审计和正式后台系统放到下一阶段处理。
+5. 每次更新代码前，先备份服务器上的 data/runtime-db.json。
+```
+
 ## 当前测试版数据持久化
 
 当前版本没有外接 MySQL、PostgreSQL 或 SQLite，运行数据保存在：
