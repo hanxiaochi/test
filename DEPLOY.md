@@ -52,8 +52,9 @@ ys1 / 000000
 1. data/runtime-db.json 是当前测试版数据库，部署和更新时不要覆盖。
 2. 如果云端需要和本机当前数据一致，要把本机 data/runtime-db.json 上传到服务器的 /opt/zwkjy-clone/data/runtime-db.json。
 3. CALCULATION_USAGE.md 是本机计算使用文档，不上传 GitHub；部署网站本身不依赖它。
-4. 数据库、账号权限、角色管控、后台审计和正式后台系统放到下一阶段处理。
-5. 每次更新代码前，先备份服务器上的 data/runtime-db.json。
+4. PAYMENT_REGRESSION_TEST_DATA.md 和 test-data/payment-regression-12-14.json 是给其他 AI/协作者验收用的三组非 PDF 测试数据。
+5. 数据库、账号权限、角色管控、后台审计和正式后台系统放到下一阶段处理。
+6. 每次更新代码前，先备份服务器上的 data/runtime-db.json。
 ```
 
 ## 当前测试版数据持久化

@@ -1,0 +1,293 @@
+{
+  "name": "第1合同段第12-14期计量支付非PDF回归测试数据",
+  "purpose": "给其他AI或协作者在不读取PDF的情况下，验证本网站计量支付计算结果是否一致。",
+  "derivedFromFolders": [
+    "D:\\xwechat_files\\Zalaens_947c\\msg\\file\\2026-06\\计量\\第1合同段第12期计量支付报表",
+    "D:\\xwechat_files\\Zalaens_947c\\msg\\file\\2026-06\\计量\\第1合同段第13期计量支付报表",
+    "D:\\xwechat_files\\Zalaens_947c\\msg\\file\\2026-06\\计量\\第1合同段第14期计量支付报表"
+  ],
+  "section": {
+    "sectionId": 101,
+    "sectionName": "第1合同段",
+    "contractTotal": 569846095
+  },
+  "calculationRules": {
+    "moneyDigits": 0,
+    "quantityDigits": 3,
+    "priceDigits": 2,
+    "includeBillMeasure": true,
+    "includeMaterialAdjust": true,
+    "includeManualMeasure": true,
+    "includeMaterialAdvance": true,
+    "includeRetention": true,
+    "materialAdvanceRate": 60,
+    "retentionRate": 10,
+    "mobilizationAdvanceRate": 10,
+    "mobilizationDeductionStartRate": 30,
+    "mobilizationDeductionEndRate": 80,
+    "formula": "实际支付 = 小计 + 价格调整 + 材料设备垫付款 - 保留金 - 扣回材料设备垫付款 - 扣回动员预付款；保留金 = round((小计 + 价格调整) * 10%)；材料设备垫付款 = round(材料到场金额 * 60%)；动员预付款30%后开始扣回，80%时扣完。"
+  },
+  "contractChapters": {
+    "100": {
+      "name": "总则",
+      "contractAmount": 48005876
+    },
+    "200": {
+      "name": "路基土石方",
+      "contractAmount": 65294750
+    },
+    "300": {
+      "name": "路面",
+      "contractAmount": 121328
+    },
+    "400": {
+      "name": "桥梁",
+      "contractAmount": 429336232
+    },
+    "900": {
+      "name": "暂定金额/预留合同额",
+      "contractAmount": 27087909
+    }
+  },
+  "openingBeforePeriod12": {
+    "description": "用于复算第12期的上期末累计基准，不是单独测试期。",
+    "periodId": 11,
+    "previousCumulativeSubtotal": 146206797,
+    "chapters": {
+      "100": 23001531,
+      "200": 17726486,
+      "300": 0,
+      "400": 105478780,
+      "900": 0
+    },
+    "materialAdvanceCumulative": 17520918,
+    "materialDeductionCumulative": 14234574,
+    "retentionCumulative": 15215995,
+    "mobilizationDeductionCumulative": 0
+  },
+  "testCases": [
+    {
+      "periodId": 12,
+      "periodName": "第12期",
+      "yearMonth": "2018-02",
+      "input": {
+        "previousCumulativeSubtotal": 146206797,
+        "currentChapterAmounts": {
+          "100": 3120000,
+          "200": 0,
+          "300": 0,
+          "400": 1974708,
+          "900": 0
+        },
+        "priceAdjustment": 0,
+        "materialArrivalMoney": 7549528.333333333,
+        "materialAdvanceMoney": 4529717,
+        "materialDeductionMoney": 1415578,
+        "mobilizationDeductionMoney": 0
+      },
+      "expected": {
+        "subtotal": 5094708,
+        "previousCumulativeSubtotal": 146206797,
+        "cumulativeSubtotal": 151301505,
+        "priceAdjustment": 0,
+        "materialAdvanceMoney": 4529717,
+        "materialDeductionMoney": 1415578,
+        "retentionBase": 5094708,
+        "retentionMoney": 509471,
+        "mobilizationDeductionMoney": 0,
+        "finalPayment": 7699376,
+        "jl113ByChapter": {
+          "100": 3120000,
+          "400": 1974708
+        },
+        "jl104Chapters": {
+          "100": {
+            "previous": 23001531,
+            "current": 3120000,
+            "cumulative": 26121531
+          },
+          "200": {
+            "previous": 17726486,
+            "current": 0,
+            "cumulative": 17726486
+          },
+          "300": {
+            "previous": 0,
+            "current": 0,
+            "cumulative": 0
+          },
+          "400": {
+            "previous": 105478780,
+            "current": 1974708,
+            "cumulative": 107453488
+          }
+        },
+        "materialLedger": {
+          "cumulativeAdvance": 22050635,
+          "previousDeduction": 14234574,
+          "periodDeduction": 1415578,
+          "cumulativeDeduction": 15650152,
+          "remainingAdvance": 6400483
+        },
+        "mobilizationLedger": {
+          "advance": 56984610,
+          "startThreshold": 170953828.5,
+          "endThreshold": 455876876,
+          "previousDeduction": 0,
+          "periodDeduction": 0,
+          "cumulativeDeduction": 0,
+          "remainingAdvance": 56984610
+        }
+      }
+    },
+    {
+      "periodId": 13,
+      "periodName": "第13期",
+      "yearMonth": "2018-03",
+      "input": {
+        "previousCumulativeSubtotal": 151301505,
+        "currentChapterAmounts": {
+          "100": 0,
+          "200": 1090781,
+          "300": 0,
+          "400": 1049329,
+          "900": 0
+        },
+        "priceAdjustment": 0,
+        "materialArrivalMoney": 6957078.333333333,
+        "materialAdvanceMoney": 4174247,
+        "materialDeductionMoney": 776825,
+        "mobilizationDeductionMoney": 0
+      },
+      "expected": {
+        "subtotal": 2140110,
+        "previousCumulativeSubtotal": 151301505,
+        "cumulativeSubtotal": 153441615,
+        "priceAdjustment": 0,
+        "materialAdvanceMoney": 4174247,
+        "materialDeductionMoney": 776825,
+        "retentionBase": 2140110,
+        "retentionMoney": 214011,
+        "mobilizationDeductionMoney": 0,
+        "finalPayment": 5323521,
+        "jl113ByChapter": {
+          "200": 1090781,
+          "400": 1049329
+        },
+        "jl104Chapters": {
+          "100": {
+            "previous": 26121531,
+            "current": 0,
+            "cumulative": 26121531
+          },
+          "200": {
+            "previous": 17726486,
+            "current": 1090781,
+            "cumulative": 18817267
+          },
+          "300": {
+            "previous": 0,
+            "current": 0,
+            "cumulative": 0
+          },
+          "400": {
+            "previous": 107453488,
+            "current": 1049329,
+            "cumulative": 108502817
+          }
+        },
+        "materialLedger": {
+          "cumulativeAdvance": 26224882,
+          "previousDeduction": 15650152,
+          "periodDeduction": 776825,
+          "cumulativeDeduction": 16426977,
+          "remainingAdvance": 9797905
+        },
+        "mobilizationLedger": {
+          "advance": 56984610,
+          "startThreshold": 170953828.5,
+          "endThreshold": 455876876,
+          "previousDeduction": 0,
+          "periodDeduction": 0,
+          "cumulativeDeduction": 0,
+          "remainingAdvance": 56984610
+        }
+      }
+    },
+    {
+      "periodId": 14,
+      "periodName": "第14期",
+      "yearMonth": "2018-04",
+      "input": {
+        "previousCumulativeSubtotal": 153441615,
+        "currentChapterAmounts": {
+          "100": 3856523,
+          "200": 8789651,
+          "300": 0,
+          "400": 7972446,
+          "900": 0
+        },
+        "priceAdjustment": 2139953,
+        "materialArrivalMoney": 8762490,
+        "materialAdvanceMoney": 5257494,
+        "materialDeductionMoney": 1093940,
+        "mobilizationDeductionMoney": 621281
+      },
+      "expected": {
+        "subtotal": 20618620,
+        "previousCumulativeSubtotal": 153441615,
+        "cumulativeSubtotal": 174060235,
+        "priceAdjustment": 2139953,
+        "materialAdvanceMoney": 5257494,
+        "materialDeductionMoney": 1093940,
+        "retentionBase": 22758573,
+        "retentionMoney": 2275857,
+        "mobilizationDeductionMoney": 621281,
+        "finalPayment": 24024989,
+        "jl113ByChapter": {
+          "100": 3856523,
+          "200": 8789651,
+          "400": 7972446
+        },
+        "jl104Chapters": {
+          "100": {
+            "previous": 26121531,
+            "current": 3856523,
+            "cumulative": 29978054
+          },
+          "200": {
+            "previous": 18817267,
+            "current": 8789651,
+            "cumulative": 27606918
+          },
+          "300": {
+            "previous": 0,
+            "current": 0,
+            "cumulative": 0
+          },
+          "400": {
+            "previous": 108502817,
+            "current": 7972446,
+            "cumulative": 116475263
+          }
+        },
+        "materialLedger": {
+          "cumulativeAdvance": 31482376,
+          "previousDeduction": 16426977,
+          "periodDeduction": 1093940,
+          "cumulativeDeduction": 17520917,
+          "remainingAdvance": 13961459
+        },
+        "mobilizationLedger": {
+          "advance": 56984610,
+          "startThreshold": 170953828.5,
+          "endThreshold": 455876876,
+          "previousDeduction": 0,
+          "periodDeduction": 621281,
+          "cumulativeDeduction": 621281,
+          "remainingAdvance": 56363329
+        }
+      }
+    }
+  ]
+}
