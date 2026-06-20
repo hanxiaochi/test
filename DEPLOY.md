@@ -22,6 +22,26 @@ https://github.com/hanxiaochi/test/tree/codex/zwkjy-clone
 https://github.com/hanxiaochi/test/pull/1
 ```
 
+## 当前测试版数据持久化
+
+当前版本没有外接 MySQL、PostgreSQL 或 SQLite，运行数据保存在：
+
+```text
+data/runtime-db.json
+```
+
+这个文件就是测试版数据库。部署到云服务器后，只要服务器上的 `data/runtime-db.json` 不被删除或覆盖，重启服务后数据仍然保留。这个方案适合作为测试先行版、小范围试用和演示版；数据库升级、账号权限、角色管控、后台审计和更完整的管理后台放到下一阶段处理。
+
+部署和更新时最重要的一点：保护 `data/runtime-db.json`。
+
+服务器备份命令：
+
+```bash
+cd /opt/zwkjy-clone
+mkdir -p data/backups
+cp data/runtime-db.json data/backups/runtime-db-$(date +%F-%H%M%S).json
+```
+
 ## 服务器网络先决条件
 
 如果本机 SSH 连接超时，请先检查云服务器控制台和系统防火墙：
@@ -71,6 +91,22 @@ cd /opt/zwkjy-clone
 git clone -b codex/zwkjy-clone https://github.com/hanxiaochi/test.git .
 ```
 
+如果要把本机当前测试数据一起部署上去，在 Windows 本机上传 JSON 数据库：
+
+```powershell
+cd G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
+scp .\data\runtime-db.json root@服务器IP:/opt/zwkjy-clone/data/runtime-db.json
+```
+
+然后在服务器执行：
+
+```bash
+cd /opt/zwkjy-clone
+git update-index --skip-worktree data/runtime-db.json
+```
+
+这样后续 `git pull` 时不容易把服务器运行数据覆盖成仓库里的基线数据。
+
 安装依赖并验证：
 
 ```bash
@@ -84,7 +120,7 @@ npm run verify
 
 ```powershell
 cd G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
-Compress-Archive -Path assets,common,css,data,img,js,scripts,constructionData.js,costEngine.js,index.html,login.html,package.json,package-lock.json,pageoffice.js,server.js,work_form_http.js,README.md,DEPLOY.md -DestinationPath zwkjy-clone.zip -Force
+Compress-Archive -Path assets,common,css,data,img,js,scripts,constructionData.js,costEngine.js,index.html,login.html,package.json,package-lock.json,pageoffice.js,server.js,work_form_http.js,README.md,DEPLOY.md,DEPLOYMENT.md -DestinationPath zwkjy-clone.zip -Force
 scp .\zwkjy-clone.zip root@服务器IP:/opt/
 ```
 
@@ -197,20 +233,54 @@ http://服务器IP/
 
 ```bash
 cd /opt/zwkjy-clone
+mkdir -p data/backups
+cp data/runtime-db.json data/backups/runtime-db-$(date +%F-%H%M%S).json
+cp data/runtime-db.json /tmp/zwkjy-runtime-db.json
 git pull
 npm ci
-npm run verify
+cp /tmp/zwkjy-runtime-db.json data/runtime-db.json
 systemctl restart zwkjy-clone
+npm run verify
 ```
 
 如果使用 zip 上传部署，重新上传 zip 后执行：
 
 ```bash
 cd /opt/zwkjy-clone
+mkdir -p data/backups
+cp data/runtime-db.json data/backups/runtime-db-$(date +%F-%H%M%S).json
+cp data/runtime-db.json /tmp/zwkjy-runtime-db.json
 unzip -o /opt/zwkjy-clone.zip
 npm ci
-npm run verify
+cp /tmp/zwkjy-runtime-db.json data/runtime-db.json
 systemctl restart zwkjy-clone
+npm run verify
+```
+
+## 建议开启自动备份
+
+创建每日备份脚本：
+
+```bash
+cat >/usr/local/bin/zwkjy-backup-jsondb.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR=/opt/zwkjy-clone
+BACKUP_DIR="$APP_DIR/data/backups"
+
+mkdir -p "$BACKUP_DIR"
+cp "$APP_DIR/data/runtime-db.json" "$BACKUP_DIR/runtime-db-$(date +%F-%H%M%S).json"
+find "$BACKUP_DIR" -name 'runtime-db-*.json' -mtime +14 -delete
+EOF
+
+chmod +x /usr/local/bin/zwkjy-backup-jsondb.sh
+```
+
+加入每天凌晨 2 点自动备份：
+
+```bash
+(crontab -l 2>/dev/null; echo "0 2 * * * /usr/local/bin/zwkjy-backup-jsondb.sh") | crontab -
 ```
 
 ## 常见问题
@@ -250,3 +320,12 @@ data/runtime-db.json
 ```
 
 部署前建议保留该文件，它包含演示数据和当前复刻系统的运行数据。生成的导出文件在 `data/exports/`，该目录不需要提交到 Git。
+
+如果更新后发现数据变回去了，通常是 `data/runtime-db.json` 被覆盖。先停止服务，再从 `data/backups/` 恢复一个最近的备份：
+
+```bash
+cd /opt/zwkjy-clone
+systemctl stop zwkjy-clone
+cp data/backups/你的备份文件.json data/runtime-db.json
+systemctl start zwkjy-clone
+```
