@@ -7,7 +7,7 @@
 本机代码目录：
 
 ```text
-C:\Users\hxc\Documents\Codex\2026-06-11\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
+G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
 ```
 
 GitHub 分支：
@@ -83,7 +83,7 @@ npm run verify
 在 Windows 本机项目目录执行：
 
 ```powershell
-cd C:\Users\hxc\Documents\Codex\2026-06-11\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
+cd G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
 Compress-Archive -Path assets,common,css,data,img,js,scripts,constructionData.js,costEngine.js,index.html,login.html,package.json,package-lock.json,pageoffice.js,server.js,work_form_http.js,README.md,DEPLOY.md -DestinationPath zwkjy-clone.zip -Force
 scp .\zwkjy-clone.zip root@服务器IP:/opt/
 ```

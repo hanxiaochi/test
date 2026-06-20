@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "verify": "node scripts/verify.js"
+    "verify": "node scripts/verify.js",
+    "sample:regression": "node scripts/sample-regression.js"
   },
   "dependencies": {
     "express": "^4.19.2"

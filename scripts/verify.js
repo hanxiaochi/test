@@ -245,7 +245,7 @@ function verifyCostMath() {
     cumulativeSubtotal: summary.measuredMoney + summary.manualMoney
   });
   assert.strictEqual(expectedCertificate.finalPayment, summary.payableMoney);
-  assert.strictEqual(summary.paymentCertificate.retentionMoney, round((summary.measuredMoney + summary.manualMoney) * (summary.calculationRules.retentionRate / 100)));
+  assert.strictEqual(summary.paymentCertificate.retentionMoney, round((summary.measuredMoney + summary.materialDiasMoney + summary.manualMoney) * (summary.calculationRules.retentionRate / 100)));
   assert.strictEqual(round(report.reduce((sum, item) => sum + item.totalPayMoney, 0)), summary.payableMoney);
 }
 
@@ -318,10 +318,10 @@ async function verifyStandaloneCostCalculator() {
   assert.strictEqual(data.materialArrivalMoney, 104, "calculator material arrival should track quantity times price");
   assert.strictEqual(data.manualMoney, 50, "calculator manual money should use manual quantity times price");
   assert.strictEqual(data.paymentCertificate.materialAdvanceMoney, 62.4, "calculator should advance 60% of material arrival value");
-  assert.strictEqual(data.paymentCertificate.retentionMoney, 45, "calculator should deduct 10% retention from subtotal");
+  assert.strictEqual(data.paymentCertificate.retentionMoney, 46.5, "calculator should deduct 10% retention from subtotal plus price adjustment");
   assert.strictEqual(data.paymentCertificate.mobilizationDeductionMoney, 18, "calculator should deduct mobilization advance after 30% threshold");
-  assert.strictEqual(data.payableMoney, 464.4, "calculator payable money should follow JL104 formula");
-  assert.strictEqual(data.payRate, 38.7, "calculator pay rate should use payable divided by final money");
+  assert.strictEqual(data.payableMoney, 462.9, "calculator payable money should follow JL104 formula");
+  assert.strictEqual(data.payRate, 38.57, "calculator pay rate should use payable divided by final money");
   assert.strictEqual(data.details.materialLedger[0].coverageRate, 160, "calculator material ledger should compare arrival quantity with adjustment quantity");
 }
 
@@ -2453,23 +2453,23 @@ async function verifyGatherPeriodCalculationLoop() {
   assert.strictEqual(summary.materialAdjustMoney, 560, "period material adjustment should use quantity times price difference");
   assert.strictEqual(summary.materialArrivalMoney, 2190, "period material arrival should be tracked separately");
   assert.strictEqual(summary.materialAdvanceMoney, 1314, "period material arrival should create 60% material advance");
-  assert.strictEqual(summary.retentionMoney, 402.1, "period should deduct 10% retention from subtotal");
+  assert.strictEqual(summary.retentionMoney, 458.1, "period should deduct 10% retention from subtotal plus price adjustment");
   assert.strictEqual(summary.manualMoney, 321, "period manual measure money should match manual detail");
-  assert.strictEqual(summary.payableMoney, 5492.9, "period payable money should follow JL104 formula");
-  assert.strictEqual(summary.auditSubmitMoney, 5492.9, "period audit submit money should start from payable money");
-  assert.strictEqual(summary.auditFinalMoney, round(5492.9 * 0.985), "period audit final money should apply the audit chain");
-  assert.strictEqual(summary.auditDeductionMoney, round(5492.9 - (5492.9 * 0.985)), "period audit deduction should equal submit minus final audit");
+  assert.strictEqual(summary.payableMoney, 5436.9, "period payable money should follow JL104 formula");
+  assert.strictEqual(summary.auditSubmitMoney, 5436.9, "period audit submit money should start from payable money");
+  assert.strictEqual(summary.auditFinalMoney, round(5436.9 * 0.985), "period audit final money should apply the audit chain");
+  assert.strictEqual(summary.auditDeductionMoney, round(5436.9 - (5436.9 * 0.985)), "period audit deduction should equal submit minus final audit");
 
   const { json: collectJson } = await postJson("/dataGather/data_collect_gather", { gatherId });
   assert.strictEqual(collectJson.data.collected, true, "gather collection should create a snapshot");
   assert.strictEqual(collectJson.data.snapshot.materialArrivalMoney, 2190, "collected snapshot should keep material arrival tracking money");
   assert.strictEqual(collectJson.data.snapshot.materialAdvanceMoney, 1314, "collected snapshot should keep material advance money");
-  assert.strictEqual(collectJson.data.snapshot.auditFinalMoney, round(5492.9 * 0.985), "collected snapshot should keep final audit money");
-  assert.strictEqual(collectJson.data.snapshot.auditDeductionMoney, round(5492.9 - (5492.9 * 0.985)), "collected snapshot should keep audit deduction");
+  assert.strictEqual(collectJson.data.snapshot.auditFinalMoney, round(5436.9 * 0.985), "collected snapshot should keep final audit money");
+  assert.strictEqual(collectJson.data.snapshot.auditDeductionMoney, round(5436.9 - (5436.9 * 0.985)), "collected snapshot should keep audit deduction");
   const gatherRowsAfterCollect = await requestJson("/sysGather/get_gather_data_list?page=1&limit=1000");
   const collectedGather = gatherRowsAfterCollect.json.data.find((row) => Number(row.gatherId || row.id) === Number(gatherId));
   assert.ok(collectedGather, "collected gather period should remain queryable");
-  assert.strictEqual(Number(collectedGather.auditFinalMoney || 0), round(5492.9 * 0.985), "gather period row should persist final audit money");
+  assert.strictEqual(Number(collectedGather.auditFinalMoney || 0), round(5436.9 * 0.985), "gather period row should persist final audit money");
 
   const { json: nextGatherJson } = await postJson("/sysGather/save_gather", {
     periodDesc: "验证专用 5 月期",
@@ -2511,9 +2511,9 @@ async function verifyGatherPeriodCalculationLoop() {
   assert.ok(dashboard.text.includes("清单计量") && dashboard.text.includes("材料补差") && dashboard.text.includes("材料到场") && dashboard.text.includes("手动计量"), "gather dashboard should include current-period components");
   assert.ok(dashboard.text.includes("2,190.00"), "gather dashboard should show period material arrival tracking money");
   assert.ok(dashboard.text.includes("最近采集快照") && dashboard.text.includes("材料到场"), "gather snapshot table should include material arrival tracking column");
-  assert.ok(dashboard.text.includes("5,492.90"), "gather dashboard should show period payable money");
+  assert.ok(dashboard.text.includes("5,436.90"), "gather dashboard should show period payable money");
   assert.ok(dashboard.text.includes("最终审核") && dashboard.text.includes("本期核减"), "gather dashboard should show audit cards");
-  assert.ok(dashboard.text.includes(moneyTextForVerify(round(5492.9 * 0.985))), "gather dashboard should show final audit money");
+  assert.ok(dashboard.text.includes(moneyTextForVerify(round(5436.9 * 0.985))), "gather dashboard should show final audit money");
   assert.ok(dashboard.text.includes("最近采集快照") && dashboard.text.includes(String(collectJson.data.snapshotId)), "gather dashboard should show latest snapshot");
 
   await cleanupGatherVerifyData();
@@ -2631,7 +2631,7 @@ async function verifyFinancialChainIntegrationLoop() {
     varyMoney: 560
   };
   expected.materialAdvanceMoney = round(expected.materialArrivalMoney * 0.6);
-  expected.retentionMoney = round((expected.billMeasureMoney + expected.manualMoney) * 0.1);
+  expected.retentionMoney = round((expected.billMeasureMoney + expected.materialAdjustMoney + expected.manualMoney) * 0.1);
   expected.payableMoney = round(expected.billMeasureMoney + expected.materialAdjustMoney + expected.manualMoney + expected.materialAdvanceMoney - expected.retentionMoney);
 
   let measureId = 0;

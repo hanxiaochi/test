@@ -1229,7 +1229,7 @@ function calculationRulesPageHtml() {
               <label><input type="checkbox" name="includeMaterialAdjust" ${checked(rules.includeMaterialAdjust)}>材料补差进入应付</label>
               <label><input type="checkbox" name="includeMaterialArrival" ${checked(rules.includeMaterialArrival)}>材料到场进入应付</label>
               <label><input type="checkbox" name="includeMaterialAdvance" ${checked(rules.includeMaterialAdvance)}>JL109材料到场按预付率进入JL104</label>
-              <label><input type="checkbox" name="includeRetention" ${checked(rules.includeRetention)}>按小计扣保留金</label>
+              <label><input type="checkbox" name="includeRetention" ${checked(rules.includeRetention)}>按小计+价格调整扣保留金</label>
               <label><input type="checkbox" name="includeManualMeasure" ${checked(rules.includeManualMeasure)}>手动计量进入应付</label>
             </div>
             <div class="calc-admin-formula">当前公式：<strong>${htmlEscape(summary.payableFormula)}</strong></div>
@@ -1434,7 +1434,7 @@ function adminDashboardHtml() {
     ["材料补差", moneyText(summary.materialDiasMoney), "材料价差应付"],
     ["手动计量", moneyText(summary.manualMoney), "现场签证/零星工程"],
     ["材料设备垫付款", moneyText(summary.materialAdvanceMoney), "JL109到场金额按预付率计算"],
-    ["保留金", moneyText(summary.retentionMoney), "按小计预扣"],
+    ["保留金", moneyText(summary.retentionMoney), "按小计+价格调整预扣"],
     ["JL104实际支付", moneyText(summary.payableMoney), summary.payableFormula]
   ]);
   const entries = [
@@ -7834,7 +7834,7 @@ function jlPaymentReportPageHtml(req) {
     ["价格调整", moneyText(certificate.priceAdjustment), "JL108材料调差"],
     ["材料设备垫付款", moneyText(certificate.materialAdvanceMoney), `JL109 × ${rules.materialAdvanceRate}%`],
     ["扣回材料垫付款", moneyText(certificate.materialDeductionMoney), "JL110本期扣回"],
-    ["保留金", moneyText(certificate.retentionMoney), `${rules.retentionRate}% × 小计`],
+    ["保留金", moneyText(certificate.retentionMoney), `${rules.retentionRate}% × (小计 + 价格调整)`],
     ["扣回动员预付款", moneyText(certificate.mobilizationDeductionMoney), "JL111阈值扣回"]
   ]);
   const chapterRows = certificate.chapters.map((row) => `
@@ -8066,7 +8066,7 @@ function jlPaymentReportPageHtml(req) {
     `本期实际支付 = 小计 + 价格调整 + 材料设备垫付款 - 扣回材料设备垫付款 - 保留金 - 扣回动员预付款`,
     `价格调整 = Σ[折算数量×(现行价-基价)]；JL116合同价格调表：T=F×[(X+Σ权重×价格指数)-1]`,
     `材料设备垫付款 = 材料到场金额 × ${rules.materialAdvanceRate}%`,
-    `保留金 = 小计 × ${rules.retentionRate}%`,
+    `保留金 = (小计 + 价格调整) × ${rules.retentionRate}%`,
     `动员预付款扣回：累计小计达到合同价 ${rules.mobilizationDeductionStartRate}% 后开始，${rules.mobilizationDeductionEndRate}% 时扣完`
   ].map((line) => `<li>${htmlEscape(line)}</li>`).join("");
   const referenceRows = [

@@ -233,7 +233,7 @@ function payableFormulaText(rules = calculationRules()) {
   const parts = [`小计(${subtotalParts.join(" + ") || "0"})`];
   if (rules.includeMaterialAdjust) parts.push("价格调整(JL108)");
   if (rules.includeMaterialAdvance) parts.push(`材料设备垫付款=材料到场金额×${rules.materialAdvanceRate}%`);
-  if (rules.includeRetention) parts.push(`-保留金=${rules.retentionRate}%×小计`);
+  if (rules.includeRetention) parts.push(`-保留金=${rules.retentionRate}%×(小计+价格调整)`);
   parts.push("-扣回材料设备垫付款(JL110)");
   parts.push("-扣回动员预付款(JL111)");
   return `JL104本期实际支付 = ${parts.join(" + ")}`.replace(/\+ -/g, "- ");
@@ -277,8 +277,9 @@ function calculatePaymentCertificate(parts = {}, rules = calculationRules()) {
     ? numberOr(parts.materialAdvanceMoney, 0)
     : (rules.includeMaterialAdvance ? round(materialArrivalMoney * (rules.materialAdvanceRate / 100), moneyDigits) : 0);
   const materialDeductionMoney = configuredMaterialDeduction(parts, rules);
+  const retentionBase = round(subtotal + priceAdjustment, moneyDigits);
   const retentionMoney = rules.includeRetention
-    ? positive(parts.retentionMoney !== undefined ? parts.retentionMoney : round(subtotal * (rules.retentionRate / 100), moneyDigits))
+    ? positive(parts.retentionMoney !== undefined ? parts.retentionMoney : round(retentionBase * (rules.retentionRate / 100), moneyDigits))
     : 0;
   const contractTotal = numberOr(parts.contractTotal ?? parts.finalMoney ?? parts.contractSumMoney, 0);
   const previousCumulativeSubtotal = numberOr(parts.previousCumulativeSubtotal, 0);
@@ -318,6 +319,7 @@ function calculatePaymentCertificate(parts = {}, rules = calculationRules()) {
     materialArrivalMoney: round(materialArrivalMoney, moneyDigits),
     materialAdvanceMoney: round(materialAdvanceMoney, moneyDigits),
     materialDeductionMoney: round(materialDeductionMoney, moneyDigits),
+    retentionBase,
     retentionMoney: round(retentionMoney, moneyDigits),
     mobilizationAdvanceMoney: round(mobilizationAdvanceMoney, moneyDigits),
     mobilizationDeductionMoney: round(mobilizationDeductionMoney, moneyDigits),
@@ -1776,7 +1778,7 @@ function jlPaymentValidation(options = {}) {
       materialAdvance: `JL109材料设备垫付款 = 到场金额 * ${rules.materialAdvanceRate}%`,
       jl109Jl110Cumulative: "JL110累计预付 = ΣJL109各期预付金额",
       materialDeductionContinuity: "第N期到上期末扣回 = 第N-1期到本期末扣回；本期扣回 = 本期末累计扣回 - 上期末累计扣回",
-      retentionContinuity: `保留金 = 小计 * ${rules.retentionRate}%；第N期到上期末保留金 = 第N-1期到本期末保留金`,
+      retentionContinuity: `保留金 = (小计 + 价格调整) * ${rules.retentionRate}%；第N期到上期末保留金 = 第N-1期到本期末保留金`,
       materialOutstandingBalance: "材料未扣回余额 = 材料累计预付 - 材料累计扣回",
       mobilizationDeduction: "JL111累计应扣回 = (C-D)/A*2*B，30%后开始，80%时扣完"
     },
@@ -1957,9 +1959,9 @@ function jlFinancialContinuityReport(options = {}) {
       previousRetention,
       periodRetention,
       cumulativeRetention,
-      formula: `保留金=小计×${rules.retentionRate}%`
+      formula: `保留金=(小计+价格调整)×${rules.retentionRate}%`
     };
-    addCheck("资金连续性", `${retentionRow.periodDesc} JL104本期保留金`, Number(certificate.subtotal || 0) * (rules.retentionRate / 100), retentionRow.periodRetention, `保留金 = 小计 × ${rules.retentionRate}%`);
+    addCheck("资金连续性", `${retentionRow.periodDesc} JL104本期保留金`, Number(certificate.retentionBase ?? (Number(certificate.subtotal || 0) + Number(certificate.priceAdjustment || 0))) * (rules.retentionRate / 100), retentionRow.periodRetention, `保留金 = (小计 + 价格调整) × ${rules.retentionRate}%`);
     addCheck("资金连续性", `${retentionRow.periodDesc} 保留金上期连续`, previousRetention, retentionRow.previousRetention, "第N期到上期末保留金 = 第N-1期到本期末保留金");
     addCheck("资金连续性", `${retentionRow.periodDesc} 保留金累计`, previousRetention + periodRetention, retentionRow.cumulativeRetention, "到本期末保留金累计 = 到上期末保留金累计 + 本期保留金");
     return retentionRow;
@@ -2044,7 +2046,7 @@ function jlFinancialContinuityReport(options = {}) {
       jl109ToJl110: "JL110累计预付 = ΣJL109各期预付金额",
       materialDeduction: "本期扣回 = 到本期末累计扣回 - 到上期末累计扣回",
       materialOutstandingBalance: "材料未扣回余额 = 材料累计预付 - 材料累计扣回",
-      retention: `保留金 = 小计 × ${rules.retentionRate}%；到本期末累计 = 到上期末累计 + 本期保留金`,
+      retention: `保留金 = (小计 + 价格调整) × ${rules.retentionRate}%；到本期末累计 = 到上期末累计 + 本期保留金`,
       mobilizationDeduction: "JL111累计应扣回 = (C-D)/A*2*B，30%后开始，80%时扣完"
     },
     materialLedger,
