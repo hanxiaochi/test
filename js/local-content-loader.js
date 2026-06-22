@@ -3,7 +3,7 @@
   var lastHref = "";
   var activeSeq = 0;
 
-  window.__ZWKJY_LOCAL_LOADER_VERSION__ = VERSION;
+  window.__APP_LOCAL_LOADER_VERSION__ = VERSION;
   document.documentElement.setAttribute("data-local-loader-version", VERSION);
 
   function normalizeHref(href) {
@@ -159,9 +159,9 @@
     window.setTimeout(ensureContent, delay);
   }
 
-  window.zwkjyLoadLocalPage = loadLocalPage;
-  window.zwkjyNavigateLocal = navigateShell;
-  window.zwkjyReloadCurrentContent = shellReload;
+  window.appLoadLocalPage = loadLocalPage;
+  window.appNavigateLocal = navigateShell;
+  window.appReloadCurrentContent = shellReload;
 
   document.addEventListener("click", function (event) {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;

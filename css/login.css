@@ -283,22 +283,22 @@ body {
 	border-color: #0099CC;
 }
 
-.zwsoftlink {
+.applink {
 	color: #F8F8F8;
 	/*text-decoration: none;*/
 }
 
-.zwsoftlink:hover {
+.applink:hover {
 	color: #F8F8F8;
 	/*text-decoration: none;*/
 }
 
-.zwsoftlink:visited {
+.applink:visited {
 	color: #F8F8F8;
 	/*text-decoration: none;*/
 }
 
-.zwsoftlink:link {
+.applink:link {
 	color: #F8F8F8;
 	/*text-decoration: none;*/
 }

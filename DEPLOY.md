@@ -1,6 +1,6 @@
 # 部署文档
 
-本文档用于把 `zwkjy-local-clone` 部署到 Linux 云服务器。项目是 Node.js + Express 应用，默认监听 `3100` 端口，也可以通过 `PORT` 环境变量修改。
+本文档用于把 `app-local-clone` 部署到 Linux 云服务器。项目是 Node.js + Express 应用，默认监听 `3100` 端口，也可以通过 `PORT` 环境变量修改。
 
 ## 代码位置
 
@@ -176,7 +176,7 @@ npm run verify
 ```bash
 cat >/etc/systemd/system/zwkjy-clone.service <<'EOF'
 [Unit]
-Description=ZWKJY Local Clone
+Description=APP Local Clone
 After=network.target
 
 [Service]

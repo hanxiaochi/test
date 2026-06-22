@@ -1,7 +1,7 @@
 layui.config({
   base: 'assets/common-plus/lay-module/'
 }).extend({ //设定模块别名
-	zwInit: 'zwInit',
+	appInit: 'appInit',
 	Ewin: 'Ewin',
 	zwUtil: 'zwUtil',
 	zwOnline: 'zwOnline',

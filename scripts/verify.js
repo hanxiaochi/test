@@ -5,7 +5,7 @@ const assert = require("assert");
 const engine = require("../costEngine");
 
 const ROOT = path.resolve(__dirname, "..");
-const BASE_URL = process.env.ZWKJY_BASE_URL || "http://localhost:3100";
+const BASE_URL = process.env.APP_BASE_URL || "http://localhost:3100";
 const CONTRACTS_PATH = path.resolve(ROOT, "..", "..", "work", "page_contracts.json");
 
 function round(value, digits = 2) {

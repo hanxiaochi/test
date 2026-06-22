@@ -86,7 +86,7 @@ function findAttachment(id,type,tableBody,delBtnShow){
 								  title:'预览文件',
 								  area: ['70%', '80%'],
 								  type: 2, 
-								  content: 'http://www.zwxmglkqy.cn:8112/onlinePreview?url='+encodeURIComponent(Base64.encode(url))
+								  content: 'https://preview.example.com/onlinePreview?url='+encodeURIComponent(Base64.encode(url))
 								}); 
 								//POBrowser.openWindowModeless(CommonUtil.webPath()+'/page_office/see_file?fileUrl='+encodeURI(encodeURI($(this).attr("data-url"))),'width=1200px;height=800px;');
 								return false;

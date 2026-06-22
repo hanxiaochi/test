@@ -6,28 +6,28 @@
     <link href="assets/zTree/css/zTreeStyle.css" rel="stylesheet"
           type="text/css">
 <style type="text/css">
-    .zwsoft{
+    .app{
         height: calc(100% - 10px);
     }
-.zwsoft>.zwsoft-tree,.zwsoft>.zwsoft-content{
+.app>.app-tree,.app>.app-content{
     display: inline-block;
     position: relative;
     height: 100%;
 }
-.zwsoft>.zwsoft-tree{
+.app>.app-tree{
     width: 350px;
     background-color: #f8f8f8;
     overflow: auto;
 }
-    .zwsoft .zwsoft-left-content{
+    .app .app-left-content{
         overflow: auto;
     }
-.zwsoft>.zwsoft-content{
+.app>.app-content{
     width: calc(100% - 380px);
     overflow: auto;
     min-width: 500px;
 }
-    .zwsoft .zwsoft-tree-btns{
+    .app .app-tree-btns{
         padding: 10px;
         position: fixed;
         width: 350px;
@@ -35,25 +35,25 @@
         box-shadow: 0 0 5px #dddddd;
         background-color: #F8F8F8;
 }
-    .zwsoft .ztree{
+    .app .ztree{
         margin-top: 85px;
     }
-    .zwsoft .ztree * {
+    .app .ztree * {
         font-size: 14px;
     }
 
-    .zwsoft .ztree li a:hover {
+    .app .ztree li a:hover {
         text-decoration: none
     }
 
-    .zwsoft .ztree li a.curSelectedNode {
+    .app .ztree li a.curSelectedNode {
         background-color: #eeeeee;
         color: #3c8dbc;
         border: none;
         opacity: 1;
     }
 
-    .zwsoft .ztree li span {
+    .app .ztree li span {
         margin-left: 5px;
     }
     #billAnalzeListTableName{
@@ -64,11 +64,11 @@
 </style>
 </head>
 <body>
-    <div class="zwsoft">
+    <div class="app">
         <!--加载分部分项树 -->
-        <div class="zwsoft-tree">
-            <div class="zwsoft-left-content">
-                <div class="zwsoft-tree-btns">
+        <div class="app-tree">
+            <div class="app-left-content">
+                <div class="app-tree-btns">
                     <div class="layui-btn-group">
                         <button  	class="layui-btn layui-btn-xs layui-btn-primary" data-type="import">导入清单</button>
                         <button  	class="layui-btn layui-btn-xs" data-type="hang">挂接清单</button>
@@ -86,7 +86,7 @@
             </div>
         </div>
         <!--点击树节点显示table内容 -->
-        <div class="zwsoft-content">
+        <div class="app-content">
             <div><i class="glyphicon glyphicon-list-alt"></i><span id="billAnalzeListTableName">清单</span></div>
             <table id="billAnalzeListTable" lay-filter="billAnalzeListTable">
             </table>
@@ -95,11 +95,11 @@
     <script src="assets/zTree/jquery.ztree.all.min.js"
             type="text/javascript"></script>
     <script>
-        layui.use(['table','util','zwInit'], function(){
+        layui.use(['table','util','appInit'], function(){
             var amountNum = getValue("numDecimals");
             var priceNum = getValue("priceDecimals");
             var moneyNum = getValue("moneyDecimals");
-            var table = layui.table,zwInit=layui.zwInit;
+            var table = layui.table,appInit=layui.appInit;
         /**加载左侧树节点**/
         var setting = {
             view: {
@@ -206,10 +206,10 @@
                         return d.measureUnit;
                     }},
                 {"align":"center","title":"清单数量",rowspan:2,"width": 80,"templet":function(d){
-                        return zwInit.retainDecimalPlaces(d.amount,amountNum);
+                        return appInit.retainDecimalPlaces(d.amount,amountNum);
                     }},
                 {"align":"center","title":"清单单价",rowspan:2,"width": 80,"templet":function(d){
-                        return zwInit.retainDecimalPlaces(d.unitPrice,priceNum);
+                        return appInit.retainDecimalPlaces(d.unitPrice,priceNum);
                     }},
                 {"align":"center","title":"施工图",colspan:2},
                 {"align":"center","title":"修正",colspan:2},
@@ -236,22 +236,22 @@
             ],
             [
                 {"width": 85,"align":"center","title":"数量","templet":function(d){
-                        return zwInit.retainDecimalPlaces(d.workDrawAmount,amountNum);
+                        return appInit.retainDecimalPlaces(d.workDrawAmount,amountNum);
                     }},
                 {"width": 85,"align":"center","title":"金额","templet":function(d){
-                        return zwInit.retainDecimalPlaces(d.workDrawMoney,moneyNum);
+                        return appInit.retainDecimalPlaces(d.workDrawMoney,moneyNum);
                     }},
                 {"width": 85,"align":"center","title":"数量","templet":function(d){
-                        return zwInit.retainDecimalPlaces(d.modifyAmount,amountNum);
+                        return appInit.retainDecimalPlaces(d.modifyAmount,amountNum);
                     }},
                 {"width": 85,"align":"center","title":"金额","templet":function(d){
-                        return zwInit.retainDecimalPlaces(d.modifyMoney,moneyNum);
+                        return appInit.retainDecimalPlaces(d.modifyMoney,moneyNum);
                     }},
                 {"width": 85,"align":"center","title":"数量","templet":function(d){
-                        return zwInit.retainDecimalPlaces(d.finalAmount,amountNum);
+                        return appInit.retainDecimalPlaces(d.finalAmount,amountNum);
                     }},
                 {"width": 85,"align":"center","title":"金额","templet":function(d){
-                        return zwInit.retainDecimalPlaces(d.finalMoney,moneyNum);
+                        return appInit.retainDecimalPlaces(d.finalMoney,moneyNum);
                     }}
             ]
         ];
@@ -495,7 +495,7 @@
                 }
             }
             //按钮组单击监听 data-type！=button 的按钮
-            $(".zwsoft-tree-btns button[data-type]").on("click", function() {
+            $(".app-tree-btns button[data-type]").on("click", function() {
                 var dataType=$(this).attr("data-type");
                 $.ajax({
                     url : "main_controller/mainReturnSectionFlag",

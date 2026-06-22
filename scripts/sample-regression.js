@@ -286,8 +286,8 @@ function buildFixture(baseDb, extracted) {
     sectionId,
     projectId: 1,
     sectionName: "第1合同段",
-    contractor: "中铁十五局集团有限公司",
-    supervisor: "浙江公路水运工程咨询公司",
+    contractor: "施工单位A",
+    supervisor: "监理单位A",
     contractNo: "REG-JL-001"
   }];
   db.billModels = [];

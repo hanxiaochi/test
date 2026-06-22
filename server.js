@@ -35,7 +35,7 @@ function readJson(file, fallback) {
 }
 
 function authCookie(req) {
-  return (req.headers.cookie || "").includes("zwkjy_local_auth=1");
+  return (req.headers.cookie || "").includes("app_local_auth=1");
 }
 
 function html(res, value) {
@@ -1235,7 +1235,7 @@ function calculationRulesPageHtml() {
             <div class="calc-admin-formula">当前公式：<strong>${htmlEscape(summary.payableFormula)}</strong></div>
             <div class="calc-admin-actions">
               <button type="button" class="layui-btn" id="save-calc-rules">保存规则</button>
-              <button type="button" class="layui-btn layui-btn-primary" onclick="(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())">刷新汇总</button>
+              <button type="button" class="layui-btn layui-btn-primary" onclick="(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())">刷新汇总</button>
               <span id="calc-rules-msg" style="color:#64748b;"></span>
             </div>
           </form>
@@ -1259,7 +1259,7 @@ function calculationRulesPageHtml() {
               .then(function(res){ return res.json(); })
               .then(function(result){
                 msg.textContent = result && result.code === 1 ? '已保存，正在刷新...' : '保存失败';
-                setTimeout(function(){ (window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload()); }, 500);
+                setTimeout(function(){ (window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload()); }, 500);
               })
               .catch(function(){ msg.textContent = '保存失败'; });
           });
@@ -1354,7 +1354,7 @@ function coreInteractionScript(rootSelector = ".core-page") {
         var root = document.querySelector('${rootSelector}') || document;
         if (window.layui && layui.form) layui.form.render();
         function reloadContent() {
-          if (window.zwkjyReloadCurrentContent) window.zwkjyReloadCurrentContent();
+          if (window.appReloadCurrentContent) window.appReloadCurrentContent();
           else location.reload();
         }
         function post(url, data) {
@@ -2029,7 +2029,7 @@ function modalFormHtml(title, sourcePath = "") {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/api/local/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/api/local/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存</button>
           </div>
         </div>
       </form>
@@ -2616,7 +2616,7 @@ function billFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/secBill/save_bill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存清单</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/secBill/save_bill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存清单</button>
           </div>
         </div>
       </form>
@@ -3006,7 +3006,7 @@ function materialFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('${saveUrl}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存材料</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('${saveUrl}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存材料</button>
           </div>
         </div>
       </form>
@@ -3104,7 +3104,7 @@ function billModelFormHtmlClean(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/billModel/save_model',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存范本</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/billModel/save_model',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存范本</button>
           </div>
         </div>
       </form>
@@ -3161,7 +3161,7 @@ function billModelFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/billModel/save_model',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存范本</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/billModel/save_model',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存范本</button>
           </div>
         </div>
       </form>
@@ -3234,7 +3234,7 @@ function billMeasureDetailHtml(req) {
       <td>${row.measureNum}</td>
       <td>${row.price}</td>
       <td>${row.measureMoney}</td>
-      <td><button type="button" class="layui-btn layui-btn-danger layui-btn-xs" onclick="(function(btn){fetch('/bill_measure/delete_detail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({billMeasureId:${measureId},detailIndex:${row.detailIndex}})}).then(function(r){return r.json()}).then(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())});})(this)">删除</button></td>
+      <td><button type="button" class="layui-btn layui-btn-danger layui-btn-xs" onclick="(function(btn){fetch('/bill_measure/delete_detail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({billMeasureId:${measureId},detailIndex:${row.detailIndex}})}).then(function(r){return r.json()}).then(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())});})(this)">删除</button></td>
     </tr>`).join("");
   return `
     <div class="layui-card" style="margin-top:10px;">
@@ -3265,7 +3265,7 @@ function billMeasureAddDetailHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/bill_measure/save_detail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存明细</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/bill_measure/save_detail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存明细</button>
           </div>
         </div>
         ${billMeasureDetailHtml(req)}
@@ -3370,7 +3370,7 @@ function billMeasureFormHtml(req, mode = "edit") {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/bill_measure/save_measure',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存计量单</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/bill_measure/save_measure',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存计量单</button>
           </div>
         </div>
       </form>
@@ -3720,7 +3720,7 @@ function manualMeasureFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/manualMeasure/save_measure',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存手动计量</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/manualMeasure/save_measure',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存手动计量</button>
           </div>
         </div>
       </form>
@@ -4008,7 +4008,7 @@ function manualMeasureManagementDashboardHtml(req) {
                 body: JSON.stringify({ ids: link.getAttribute('data-id'), manualId: link.getAttribute('data-id') })
               }).then(function(r){ return r.json(); }).then(function(r){
                 if (window.layer) layer.msg(r.msg || '处理完成');
-                setTimeout(function(){ (window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload()); }, 450);
+                setTimeout(function(){ (window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload()); }, 450);
               });
             };
           });
@@ -4078,7 +4078,7 @@ function variationDetailFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/vary_detail/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存变更明细</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/vary_detail/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存变更明细</button>
           </div>
         </div>
       </form>
@@ -4173,7 +4173,7 @@ function variationFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/vary_measure/save_measure',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存变更</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/vary_measure/save_measure',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存变更</button>
           </div>
         </div>
       </form>
@@ -4264,7 +4264,7 @@ function contactFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/engineering_contact_bill/save_bill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存联系单</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/engineering_contact_bill/save_bill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存联系单</button>
           </div>
         </div>
       </form>
@@ -4612,7 +4612,7 @@ function materialDiasFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/meterialdiasmeasure/save_detail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存材料补差</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/meterialdiasmeasure/save_detail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存材料补差</button>
           </div>
         </div>
       </form>
@@ -4946,7 +4946,7 @@ function materialDiasManagementDashboardHtml(req) {
                 body: JSON.stringify({ ids: link.getAttribute('data-id'), diasId: link.getAttribute('data-id') })
               }).then(function(r){ return r.json(); }).then(function(r){
                 if (window.layer) layer.msg(r.msg || '处理完成');
-                setTimeout(function(){ (window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload()); }, 450);
+                setTimeout(function(){ (window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload()); }, 450);
               });
             };
           });
@@ -5235,7 +5235,7 @@ function materialArrivalManagementDashboardHtml(req) {
                 body: JSON.stringify({ ids: link.getAttribute('data-id'), arrivalId: link.getAttribute('data-id') })
               }).then(function(r){ return r.json(); }).then(function(r){
                 if (window.layer) layer.msg(r.msg || '处理完成');
-                setTimeout(function(){ (window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload()); }, 450);
+                setTimeout(function(){ (window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload()); }, 450);
               });
             };
           });
@@ -5301,7 +5301,7 @@ function materialArrivalFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/meterialInMeasure/save_detail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存材料进场</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/meterialInMeasure/save_detail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存材料进场</button>
           </div>
         </div>
       </form>
@@ -5457,7 +5457,7 @@ function gatherFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/sysGather/save_gather',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存工期</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/sysGather/save_gather',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存工期</button>
           </div>
         </div>
       </form>
@@ -5535,7 +5535,7 @@ function planFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/secProjectPlan/save_plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存计划</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/secProjectPlan/save_plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存计划</button>
           </div>
         </div>
       </form>
@@ -5807,7 +5807,7 @@ function documentAttachmentPageHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/projectInformationNode/upload_attachment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'上传成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">上传附件</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/projectInformationNode/upload_attachment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'上传成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">上传附件</button>
           </div>
         </div>
       </form>
@@ -5822,7 +5822,7 @@ function documentAttachmentPageHtml(req) {
               method:'POST',
               headers:{'Content-Type':'application/json'},
               body:JSON.stringify({ hangId:'${htmlEscape(item.hangId || item.nodeId || id || "")}', attachmentId:btn.getAttribute('data-delete') })
-            }).then(function(r){return r.json()}).then(function(){ (window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload()); });
+            }).then(function(r){return r.json()}).then(function(){ (window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload()); });
           };
         });
       </script>
@@ -5915,7 +5915,7 @@ function documentFormHtml(req, mode = "node") {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('${saveUrl}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">${submitLabel}</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('${saveUrl}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">${submitLabel}</button>
           </div>
         </div>
       </form>
@@ -5956,7 +5956,7 @@ function documentFormHtmlClean(req, mode = "node") {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('${saveUrl}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">${submitLabel}</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('${saveUrl}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">${submitLabel}</button>
           </div>
         </div>
       </form>
@@ -6002,7 +6002,7 @@ function documentPowerFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={permissions:[]};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){if(el.type==='checkbox'){if(el.checked)data.permissions.push(el.value)}else{data[el.name]=el.value}});fetch('/oaDataNode/save_node_user_power',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'权限已保存')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存权限</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={permissions:[]};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){if(el.type==='checkbox'){if(el.checked)data.permissions.push(el.value)}else{data[el.name]=el.value}});fetch('/oaDataNode/save_node_user_power',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'权限已保存')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存权限</button>
           </div>
         </div>
       </form>
@@ -6035,7 +6035,7 @@ function projectInformationHangHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/oaDataNode/save_data_node',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'挂接成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存挂接</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/oaDataNode/save_data_node',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'挂接成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存挂接</button>
           </div>
         </div>
       </form>
@@ -6609,7 +6609,7 @@ function importMeasureDashboardHtml(req) {
             <h2>清单计量导入管理</h2>
             <p>管理计量 Excel 附件、解析预览、生成计量单、重解析、清空导入数据和删除附件。</p>
           </div>
-          <form class="import-tools" onsubmit="event.preventDefault();var f=this;fetch('/import_measure/upload_excel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fileName:f.fileName.value,size:f.size.value})}).then(function(r){return r.json()}).then(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())});">
+          <form class="import-tools" onsubmit="event.preventDefault();var f=this;fetch('/import_measure/upload_excel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fileName:f.fileName.value,size:f.size.value})}).then(function(r){return r.json()}).then(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())});">
             <input name="fileName" value="本地计量导入-${today()}.xlsx">
             <input name="size" value="4096" style="min-width:90px;width:90px;">
             <button class="layui-btn layui-btn-sm" type="submit">上传解析</button>
@@ -10266,7 +10266,7 @@ function analyzeNodeFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/billAnalyzeNode/save_node',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存节点</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/billAnalyzeNode/save_node',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存节点</button>
           </div>
         </div>
       </form>
@@ -10599,7 +10599,7 @@ function billAnalyzeSelectionHtml(req) {
           </div>
           <div class="layui-form-item">
             <div class="layui-input-block">
-              <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={nodeId:form.nodeId.value,billIds:form.billIds.value};fetch('/billAnalyze/hang_bill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'挂接成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存挂接</button>
+              <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={nodeId:form.nodeId.value,billIds:form.billIds.value};fetch('/billAnalyze/hang_bill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'挂接成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存挂接</button>
             </div>
           </div>
         </form>
@@ -10628,7 +10628,7 @@ function billAnalyzeSelectionHtml(req) {
               <thead><tr><th style="width:50px;">选择</th><th>清单编号</th><th>清单名称</th><th>单位</th><th>数量</th><th>单价</th><th>最终金额</th></tr></thead>
               <tbody>${body}</tbody>
             </table>
-            <button type="button" class="layui-btn layui-btn-sm" onclick="(function(btn){var root=btn.closest('form');var ids=Array.prototype.map.call(root.querySelectorAll('input[name=billIds]:checked'),function(el){return el.value}).join(',');fetch('/billAnalyze/hang_bill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nodeId:${nodeId},billIds:ids})}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'挂接成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存挂接</button>
+            <button type="button" class="layui-btn layui-btn-sm" onclick="(function(btn){var root=btn.closest('form');var ids=Array.prototype.map.call(root.querySelectorAll('input[name=billIds]:checked'),function(el){return el.value}).join(',');fetch('/billAnalyze/hang_bill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nodeId:${nodeId},billIds:ids})}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'挂接成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存挂接</button>
           </form>
         </div>
       </div>
@@ -11540,7 +11540,7 @@ function adjustmentFormHtml(req, type, title) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/workflow/adjust_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'调整成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存调整</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/workflow/adjust_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'调整成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存调整</button>
           </div>
         </div>
       </form>
@@ -11569,7 +11569,7 @@ function returnOrderFormHtml(req, type, title) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn layui-btn-danger" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/workflow/withdraw_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'已退回')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">确认退回</button>
+            <button type="button" class="layui-btn layui-btn-danger" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/workflow/withdraw_order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'已退回')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">确认退回</button>
           </div>
         </div>
       </form>
@@ -11750,7 +11750,7 @@ function archiveUploadFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/vary_measure/save_archive_pic',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'归档成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存归档</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/vary_measure/save_archive_pic',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'归档成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存归档</button>
           </div>
         </div>
       </form>
@@ -11777,7 +11777,7 @@ function archiveUploadFormHtmlClean(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/vary_measure/save_archive_pic',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'归档成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存归档</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/vary_measure/save_archive_pic',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'归档成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存归档</button>
           </div>
         </div>
       </form>
@@ -11856,7 +11856,7 @@ function importSecBillHtml() {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/secBill/import_bill_data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'导入成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">导入清单</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/secBill/import_bill_data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'导入成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">导入清单</button>
           </div>
         </div>
       </form>
@@ -11893,7 +11893,7 @@ function importBillModelHtml() {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/billModel/import_bill_model_data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'导入成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">导入范本</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/billModel/import_bill_model_data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'导入成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">导入范本</button>
             <a class="layui-btn layui-btn-primary" href="/billModel/import_model_template">下载模板</a>
           </div>
         </div>
@@ -11931,7 +11931,7 @@ function meetingFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/vary_meeting/save_meeting',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存会议</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/vary_meeting/save_meeting',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存会议</button>
           </div>
         </div>
       </form>
@@ -12001,7 +12001,7 @@ function meetingUserFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/vary_meeting/save_meeting',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">保存参会人员</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/vary_meeting/save_meeting',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'保存成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">保存参会人员</button>
           </div>
         </div>
       </form>
@@ -12417,7 +12417,7 @@ function dataGatherDashboardHtml(req) {
           </div>
           <div class="gather-actions">
             <select onchange="location.href='/dataGather/gather_dashboard_page?gatherId='+this.value">${gatherOptions}</select>
-            <button class="layui-btn layui-btn-sm" onclick="fetch('/dataGather/data_collect_gather',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({gatherId:${current.gatherId || 0}})}).then(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())})">采集本期</button>
+            <button class="layui-btn layui-btn-sm" onclick="fetch('/dataGather/data_collect_gather',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({gatherId:${current.gatherId || 0}})}).then(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())})">采集本期</button>
             <a class="layui-btn layui-btn-sm layui-btn-primary" href="/reportManager/dashboard_page">支付报表</a>
           </div>
         </div>
@@ -12682,7 +12682,7 @@ function importAnalyzeFormHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){if(el.type==='checkbox'){data[el.name]=el.checked?el.value:''}else{data[el.name]=el.value}});fetch('/billAnalyze/import_analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'导入成功')} setTimeout(function(){(window.zwkjyReloadCurrentContent?window.zwkjyReloadCurrentContent():location.reload())},500)});})(this)">开始导入</button>
+            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){if(el.type==='checkbox'){data[el.name]=el.checked?el.value:''}else{data[el.name]=el.value}});fetch('/billAnalyze/import_analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'导入成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">开始导入</button>
             <a class="layui-btn layui-btn-primary" href="/billAnalyze/dashboard_page">返回看板</a>
           </div>
         </div>
@@ -12708,7 +12708,7 @@ app.get("/main", (req, res) => html(res, dashboardHtml("综合工作台")));
 
 app.post("/dologin", (req, res) => {
   if (req.body.user_account === "ys1" && req.body.password === "000000") {
-    res.setHeader("Set-Cookie", "zwkjy_local_auth=1; Path=/; HttpOnly; SameSite=Lax");
+    res.setHeader("Set-Cookie", "app_local_auth=1; Path=/; HttpOnly; SameSite=Lax");
     operationOk(res, {
       userId: 563,
       userAccount: "ys1",
@@ -12724,7 +12724,7 @@ app.post("/dologin", (req, res) => {
 });
 
 app.get("/loginout", (req, res) => {
-  res.setHeader("Set-Cookie", "zwkjy_local_auth=; Path=/; Max-Age=0");
+  res.setHeader("Set-Cookie", "app_local_auth=; Path=/; Max-Age=0");
   operationOk(res);
 });
 
@@ -13679,5 +13679,5 @@ app.use((req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`ZWKJY local clone running at http://localhost:${port}`);
+  console.log(`APP local clone running at http://localhost:${port}`);
 });

@@ -125,15 +125,7 @@ var ZWMENU={
 				$("#left-menu-list").empty();
 				$("body").attr("class","skin-blue-light sidebar-mini fixed-zw sidebar-collapse");
 				if(350==parentId){
-					$.ajax({
-						url : topUrl+'/SingleModule?username=admin&password=ca2924d86691a890bd96ad5e11620c4a#/app/WebMap',
-						type : 'get',
-						dataType : 'jsonp',
-						async:false,
-						error:function(){
-							window.open(topUrl);
-						}
-					});
+					window.open(topUrl);
 					return false;
 				}
 				//window.location.href = topUrl;

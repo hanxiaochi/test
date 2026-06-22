@@ -55,7 +55,7 @@
 /* Local shell pages are injected into this single content pane. The original
    fixed-height rule can collapse under the captured layout, hiding valid HTML. */
 .layui-layout-admin .layui-body,
-.zwsoft-mini .layui-layout-admin .layui-body,
+.app-mini .layui-layout-admin .layui-body,
 .layui-zw-max-body .layui-body{
 	position:fixed !important;
 	top:50px !important;

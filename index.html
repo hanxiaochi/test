@@ -37,8 +37,8 @@
 <link rel="stylesheet" href="assets/bootstrap-switch/bootstrap-switch.css" >
 <link rel="stylesheet" href="assets/layui/css/layui.css">
 <link rel="stylesheet" href="assets/layui/css/layui-zw.css">
-<link rel="stylesheet" href="assets/common-plus/css/zw-index.css">
-<link rel="stylesheet" href="assets/common-plus/css/zw-custom.css">
+<link rel="stylesheet" href="assets/common-plus/css/app-index.css">
+<link rel="stylesheet" href="assets/common-plus/css/app-custom.css">
 <!-- 日期控件 -->
 <link rel="stylesheet" href="assets/jeDate/jeDate-test.css">
 <link rel="stylesheet" href="assets/jeDate/jedate.css">
@@ -86,7 +86,7 @@
 						<dd>
 							<a href="javascript:;" data-user-base><i class="layui-icon layui-icon-username"></i> 个人中心</a>
 						</dd>
-						<dd class="zwsoft-select-bgcolor">
+						<dd class="app-select-bgcolor">
 							<a href="javascript:;"><i class="layui-icon layui-icon-layouts"></i> 主题切换</a>
 						</dd>
 						<!-- <dd>
@@ -101,7 +101,7 @@
 		</div>
 		<div class="layui-side layui-bg-black layui-zw-bg-black">
 			<div class="layui-side-scroll  layui-left-menu">
-				<div class="zwsoft-tool" data-zwsoft-indent="1"><i class="fa fa-dedent"></i></div>
+				<div class="app-tool" data-app-indent="1"><i class="fa fa-dedent"></i></div>
 				<!-- 左侧导航区域（可配合layui已有的垂直导航） -->
 				<ul class="layui-nav layui-nav-tree zw-left-menu-pc" l 
 				ay-shrink="all" lay-filter="zw-left-menu">
@@ -198,10 +198,10 @@
 		    securityJsCode:"e6cc11ad7ff88abb2ed5619f31bc799c",
 	}
 	//JavaScript代码区域
-	layui.use(['layer','element','zwInit','jquery','zwOnline'], function(){
-		  var element = layui.element,$ = layui.$,zwOnline = layui.zwOnline,zwInit = layui.zwInit,layer = layui.layer;;
-		  zwInit.init({});//初始化 页面导航
-		  zwInit.listen();//监听hash地址变化
+	layui.use(['layer','element','appInit','jquery','zwOnline'], function(){
+		  var element = layui.element,$ = layui.$,zwOnline = layui.zwOnline,appInit = layui.appInit,layer = layui.layer;;
+		  appInit.init({});//初始化 页面导航
+		  appInit.listen();//监听hash地址变化
 		  zwOnline.loadCurrUserInfo();//加载登录用户的信息以及打开webSocket
 		  $('body').on('mouseover','.layui-table-body .layui-table-cell',function (){
 			 	$(this).parent().attr("title",$(this).text());
@@ -265,9 +265,9 @@
 	});
 
 	(function () {
-		if (window.__ZWKJY_LOCAL_LOADER_VERSION__) return;
+		if (window.__APP_LOCAL_LOADER_VERSION__) return;
 		var VERSION = 'local-content-loader-20260618-2';
-		window.__ZWKJY_LOCAL_LOADER_VERSION__ = VERSION;
+		window.__APP_LOCAL_LOADER_VERSION__ = VERSION;
 		function contentBox() {
 			return document.querySelector('.lay-zw-content-page');
 		}
@@ -301,7 +301,7 @@
 					setContent('<div style="margin:12px;padding:16px;background:#fff;border:1px solid #fecaca;color:#b91c1c;">页面加载失败：' + href + '，状态：' + err.message + '</div>');
 				});
 		}
-		window.zwkjyLoadLocalPage = loadLocalPage;
+		window.appLoadLocalPage = loadLocalPage;
 		document.addEventListener('click', function (event) {
 			var target = event.target && event.target.closest ? event.target.closest('[data-one-page]') : null;
 			if (!target) return;
@@ -327,7 +327,7 @@
 		}, 1200);
 	})();
 
-	window.addEventListener('zwkjy-disabled-unload', function () {
+	window.addEventListener('app-disabled-unload', function () {
 		$.ajax({
 						url : "/loginout",
 						type : "get",	

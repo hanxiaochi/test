@@ -247,7 +247,7 @@ npm ci
 ```bash
 cat >/etc/systemd/system/zwkjy-clone.service <<'EOF'
 [Unit]
-Description=ZWKJY Local Clone
+Description=APP Local Clone
 After=network.target
 
 [Service]

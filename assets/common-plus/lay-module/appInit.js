@@ -1,4 +1,4 @@
-layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports) {
+﻿layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports) {
 	var element = layui.element, $ = layui.$, layer = layui.layer,zwUtil=layui.zwUtil,table=layui.table;
 	var headerMenuUrl="menu/header_menu";//顶部菜单URL
 	var leftMenuUrl="menu/left_menu";//左侧菜单URL
@@ -31,11 +31,11 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
 	var changeHeader = function (){
 		var showCount = autoHeaderWidth();
 		if($('.zw-header-menu-pc>li').length!=showCount){
-			zwInit.headerMenu($headerMenuData,$currHeaderMenuId);
+			appInit.headerMenu($headerMenuData,$currHeaderMenuId);
 		}
 	}
 	//默认
-	var zwInit = new function(){
+	var appInit = new function(){
 		/**
          *  系统配置
          * @param name
@@ -58,9 +58,9 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
 		 * 页面初始化构造头部导航及左侧菜单
 		 */
 		this.init=function(data){
-			zwInit.initBgColor();
-			zwInit.initDevice();
-			zwInit.initPage();
+			appInit.initBgColor();
+			appInit.initDevice();
+			appInit.initPage();
 			var locationHref = window.location.href;
             var urlArr = locationHref.split("#/");
             var hashHref ="";
@@ -77,9 +77,9 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
 					  if(res.code==1){
 						  var hashId=res.other.id;
 						  $headerMenuData=res.data;
-						  var defaultId = zwInit.headerMenu(res.data,hashId);//加载顶部菜单，返回需要选中的id
+						  var defaultId = appInit.headerMenu(res.data,hashId);//加载顶部菜单，返回需要选中的id
 						  $currHeaderMenuId = defaultId;
-						  zwInit.leftMenuJSON({parentId:defaultId});
+						  appInit.leftMenuJSON({parentId:defaultId});
 						  if(hashHref!=""){
 							  $('.zw-left-menu-pc [data-one-page="'+hashHref+'"]').parent().parent().parent().addClass('layui-nav-itemed');
 							  $('.zw-left-menu-pc [data-one-page="'+hashHref+'"]').parent().addClass('layui-this');
@@ -98,18 +98,18 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
             var urlArr = locationHref.split("#/");
             if (urlArr.length >= 2) {
                 var href = urlArr.pop();
-                zwInit.initConten(href);
-                //zwInit.initPageTitle(href);
+                appInit.initConten(href);
+                //appInit.initPageTitle(href);
             }else{
-            	zwInit.initConten("main"); 
+            	appInit.initConten("main"); 
             }
         };
 		/**
          * 初始化设备端
          */
         this.initDevice = function () {
-            if (zwInit.checkMobile()) {
-                $('.layui-layout-body').attr('class', 'layui-layout-body zwsoft-mini');
+            if (appInit.checkMobile()) {
+                $('.layui-layout-body').attr('class', 'layui-layout-body app-mini');
             }
         };
 		
@@ -120,7 +120,7 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
         this.initHome = function (data) {
             var localhostHref = window.location.href;
             if (!localhostHref.match(RegExp(/#/))) {
-            	zwInit.initConten(data.href, false);
+            	appInit.initConten(data.href, false);
             }
         };
         
@@ -136,7 +136,7 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
 				  dataType:'json',
 				  success:function(res){
 					  if(res.code==1){
-						  zwInit.leftMenu(res.data);
+						  appInit.leftMenu(res.data);
 					  }
 				  }
 			  })
@@ -223,7 +223,7 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
          * 监听hash地址变化
          */
         this.listen = function () {
-            if (window.zwkjyLoadLocalPage) {
+            if (window.appLoadLocalPage) {
                 return;
             }
             window.onhashchange = function (hash) {
@@ -235,9 +235,9 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
                 var urlArr = locationHref.split("#/");
                 if (urlArr.length >= 2) {
                     var href = urlArr.pop();
-                    zwInit.initConten(href);
+                    appInit.initConten(href);
                 } else {
-                    zwInit.initConten("main");
+                    appInit.initConten("main");
                 }
             };
         };
@@ -248,8 +248,8 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
          * @param isHash
          */
         this.initConten = function (href, isHash) {
-            if (window.zwkjyLoadLocalPage) {
-                window.zwkjyLoadLocalPage(href, { force: true });
+            if (window.appLoadLocalPage) {
+                window.appLoadLocalPage(href, { force: true });
                 return;
             }
             var container = '.lay-zw-content-page';
@@ -422,11 +422,11 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
          * 初始化背景色
          */
         this.initBgColor = function () {
-            var bgcolorId = sessionStorage.getItem('zwsoftBgcolorId');
+            var bgcolorId = sessionStorage.getItem('appBgcolorId');
             if (bgcolorId == null || bgcolorId == undefined || bgcolorId == '') {
-                bgcolorId = zwInit.config('BgColorDefault');
+                bgcolorId = appInit.config('BgColorDefault');
             }
-            var bgcolorData = zwInit.bgColorConfig(bgcolorId);
+            var bgcolorData = appInit.bgColorConfig(bgcolorId);
             var styleHtml = '.layui-layout-admin .layui-header{background-color:' + bgcolorData.headerRight + '!important;}\n' +
                 '.layui-header>ul>.layui-nav-item.layui-this,.layuimini-tool i:hover{background-color:' + bgcolorData.headerRightThis + '!important;}\n' +
                 '.layui-layout-admin .layui-logo ,.layui-logo-mini{background-color:' + bgcolorData.headerLogo + '; color:'+bgcolorData.headerLogoFont+'}\n' +
@@ -437,8 +437,8 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
                 '}.layui-nav-tree .layui-nav-bar{background-color:' + bgcolorData.menuLeftHover + ';}\n';
             styleHtml +='.layui-nav-itemed > .layui-nav-child{background-color: '+bgcolorData.menuLeftChild+' !important;}\n';
             styleHtml +='.layui-nav-tree .layui-nav-child a{color: '+bgcolorData.menuLeftFont+' !important;}\n';
-            styleHtml +='.zwsoft-tool:hover i{color: '+bgcolorData.menuLeftThis+' !important;}\n';
-            styleHtml +='.zwsoft-tool{color: '+bgcolorData.menuLeftFont+' !important;}\n';
+            styleHtml +='.app-tool:hover i{color: '+bgcolorData.menuLeftThis+' !important;}\n';
+            styleHtml +='.app-tool{color: '+bgcolorData.menuLeftFont+' !important;}\n';
             styleHtml +='.zw-left-menu-pc .layui-nav-itemed > a{color: '+bgcolorData.menuLeftFont+' !important;}\n';
             styleHtml +='.zw-left-menu-pc .layui-nav-item a{color: '+bgcolorData.menuLeftFont+' !important;}\n';
             styleHtml +='.zw-left-menu-pc .layui-nav-more{  border-top-color: '+bgcolorData.menuLeftFont+' !important;}\n';
@@ -495,11 +495,11 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
          */
         this.buildBgColorHtml = function () {
             var html = '';
-            var bgcolorId = sessionStorage.getItem('zwsoftBgcolorId');
+            var bgcolorId = sessionStorage.getItem('appBgcolorId');
             if (bgcolorId == null || bgcolorId == undefined || bgcolorId == '') {
-            	bgcolorId = zwInit.config('BgColorDefault');
+            	bgcolorId = appInit.config('BgColorDefault');
             }
-            var bgColorConfig = zwInit.bgColorConfig();
+            var bgColorConfig = appInit.bgColorConfig();
             $.each(bgColorConfig, function (key, val) {
                 if (key == bgcolorId) {
                     html += '<li class="layui-this" data-select-bgcolor="' + key + '">\n';
@@ -522,7 +522,7 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
             var urlArr = locationHref.split("#/");
             if (urlArr.length >= 2) {
                 var href = urlArr.pop();
-                zwInit.initConten(href);
+                appInit.initConten(href);
             }
         };
         /**
@@ -573,8 +573,8 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
 		}
 		$currHeaderMenuId=$(this).attr("data-header-menu");
 		$currLeftMenuId=0;
-		zwInit.leftMenuJSON({parentId:$currHeaderMenuId});
-		zwInit.initConten("sbr/header_content?headerMenuId="+$currHeaderMenuId);
+		appInit.leftMenuJSON({parentId:$currHeaderMenuId});
+		appInit.initConten("sbr/header_content?headerMenuId="+$currHeaderMenuId);
 		layer.close(loading);
 	})
 	/**
@@ -585,18 +585,6 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
 		$currLeftMenuId=$(this).attr('data-one-page-id');
 		var href = $(this).attr('data-one-page'), target = $(this).attr('target');
 		if (target == '_blank') {
-			if(href=="http://121.43.178.64:26974/localsense"){//先暂时这么写
-				$.ajax({
-					url : href+'/SingleModule?username=admin&password=ca2924d86691a890bd96ad5e11620c4a#/app/WebMap',
-					type : 'get',
-					dataType : 'jsonp',
-					async:false,
-					error:function(){
-						window.open(href);
-					}
-				});
-				return false;
-			}
 			changeHeader();
 			layer.close(loading);
 			window.open(href, "_blank");
@@ -612,11 +600,11 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
             if (urlArr.length >= 2) {
                 var href2 = urlArr.pop();
                 if(href2==href){
-                	zwInit.refresh(); 
+                	appInit.refresh(); 
                 }
             }
        }
-		zwInit.hash(href);
+		appInit.hash(href);
 		layer.close(loading);
 	});
 	/**
@@ -624,19 +612,19 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
      */
     $('body').on('click', '[data-refresh]', function () {
         var loading = layer.load(0, {shade: false, time: 2 * 1000});
-        zwInit.refresh();
+        appInit.refresh();
         layer.close(loading);
-        zwInit.msg_success('刷新成功');
+        appInit.msg_success('刷新成功');
     });
     /**
      * 选择配色方案
      */
     $('body').on('click', '[data-select-bgcolor]', function () {
         var bgcolorId = $(this).attr('data-select-bgcolor');
-        $('.zwsoft-bg-color .color-content ul .layui-this').attr('class', '');
+        $('.app-bg-color .color-content ul .layui-this').attr('class', '');
         $(this).attr('class', 'layui-this');
-        sessionStorage.setItem('zwsoftBgcolorId', bgcolorId);
-        zwInit.initBgColor();
+        sessionStorage.setItem('appBgcolorId', bgcolorId);
+        appInit.initBgColor();
     });
     /**
      * 注销
@@ -682,31 +670,31 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
      * 切换用户
      */
     $('body').on('click', '[data-switch-user]', function () {
-    	zwInit.loginMini(1,'切换用户');
+    	appInit.loginMini(1,'切换用户');
     	$(this).parent().removeClass('layui-this');
     });
     layui.$.ajaxSetup({
         complete : function(xhr, status) {
             if (xhr.status == 401) {// 系统登录过期
-                //zwInit.loginMini(0,'登录失效，请重新登录');
+                //appInit.loginMini(0,'登录失效，请重新登录');
                 //页面层
                 window.location.reload();
             }else if(xhr.status == 404){// 请求不存在
-                zwInit.msg_error('状态:' + xhr.status + '，请求不存在！');
+                appInit.msg_error('状态:' + xhr.status + '，请求不存在！');
             }else if(xhr.status == 405){// 没有方法权限
                 var JsonObject = JSON.parse(xhr.responseText);
                 $.ajax({
                     url : "error_page/no_jurisdiction",
                     data:{"message":JsonObject.msg},
                     success : function(result) {
-                        zwInit.msg_error('状态:' + xhr.status + '，' + result + '！');
+                        appInit.msg_error('状态:' + xhr.status + '，' + result + '！');
                     }
                 });
             }else if(xhr.status == 500){// 服务器内部异常
                 var fixedResponse = xhr.responseText.replace(/\\'/g, "'");
                 var jsonObj = JSON.parse(fixedResponse);
 				console.log(jsonObj);
-//                zwInit.msg_error('状态:' + xhr.status + '，' + xhr.statusText + '，请稍后再试！');
+//                appInit.msg_error('状态:' + xhr.status + '，' + xhr.statusText + '，请稍后再试！');
 //    					$.ajax({
 //    	    				url : "error_page/server_error",
 //    	    				data:{"message":jsonObj.message},
@@ -802,7 +790,7 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
 					  closeBtn: 0,
 					  shadeClose: true,
 					  offset: ['l','200px'],
-					  content:["https://zwsoft-1257476422.cos.ap-chengdu.myqcloud.com/assets/image/instructions.gif", 'no']
+					  content:["https://preview.example.com/instructions.gif", 'no']
 					});
 	          }
 	    });
@@ -813,22 +801,22 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
     /**
      * 监听左侧菜单栏缩进/展开  
      */
-    $('body').on('click','[data-zwsoft-indent]', function(){
-    	if($(".zwsoft-mini").length>0){
+    $('body').on('click','[data-app-indent]', function(){
+    	if($(".app-mini").length>0){
     		$(".layui-layout-body").attr("class","layui-layout-body");
-    		$(this).attr("data-zwsoft-indent","1");
+    		$(this).attr("data-app-indent","1");
     		$(this).children("i").attr("class","fa fa-dedent");
     	}else{
-    		$(".layui-layout-body").attr("class","layui-layout-body zwsoft-mini");
-    		$(this).attr("data-zwsoft-indent","0");
+    		$(".layui-layout-body").attr("class","layui-layout-body app-mini");
+    		$(this).attr("data-app-indent","0");
     		$(this).children("i").attr("class","fa fa-indent");
     	}
 	});
-    $('body').on('click','.zwsoft-select-bgcolor', function(){
+    $('body').on('click','.app-select-bgcolor', function(){
     	var loading = layer.load(0, {shade: false, time: 2 * 1000});
         var clientHeight = (document.documentElement.clientHeight) - 95;
-        var bgColorHtml = zwInit.buildBgColorHtml();
-        var html = '<div class="zwsoft-bg-color">\n' +
+        var bgColorHtml = appInit.buildBgColorHtml();
+        var html = '<div class="app-bg-color">\n' +
             '<div class="color-title">\n' +
             '<span><i class="layui-icon layui-icon-layouts"></i> 主题切换</span>\n' +
             '</div>\n' +
@@ -843,12 +831,12 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
             shade: 0.2,
             anim: 2,
             shadeClose: true,
-            id: 'zwsoftBgColor',
+            id: 'appBgColor',
             area: ['340px', clientHeight + 'px'],
             offset: 'rb',
             content: html,
             end: function () {
-                $('.zwsoft-select-bgcolor').removeClass('layui-this');
+                $('.app-select-bgcolor').removeClass('layui-this');
             }
         });
         layer.close(loading);
@@ -859,13 +847,13 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
     $("body").on("mouseenter", ".layui-menu-tips", function () {
         var classInfo = $(this).attr('class'),
             tips = $(this).children('span').text(),
-            isShow = $('[data-zwsoft-indent]').attr('data-zwsoft-indent');
+            isShow = $('[data-app-indent]').attr('data-app-indent');
         if (isShow == 0) {
             openTips = layer.tips(tips, $(this), {tips: [2, '#2f4056'], time: 30000});
         }
     });
     $("body").on("mouseleave", ".layui-menu-tips", function () {
-        var isShow = $('[data-zwsoft-indent]').attr('data-zwsoft-indent');
+        var isShow = $('[data-app-indent]').attr('data-app-indent');
         if (isShow == 0) {
             try {
                 layer.close(openTips);
@@ -880,5 +868,5 @@ layui.define([ "element", "jquery", "layer","zwUtil","table" ], function(exports
     window.onresize = function () {
     	changeHeader();
     }
-	exports('zwInit', zwInit);
+	exports('appInit', appInit);
 });
