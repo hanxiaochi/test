@@ -72,6 +72,8 @@ data/runtime-db.json            旧版 JSON 数据源，仅用于首次迁移和
 
 应急回滚到旧 JSON 模式时显式设置 `APP_STORAGE=json`。回滚模式不使用 SQLite 修订历史，只用于排障；确认问题后应回到默认 `sqlite`。
 
+SQLite 版本按单个 Node.js 写入实例部署，不要启用 cluster 或同时运行多个服务副本。意外并发写入会返回 HTTP `409` 并重新加载已提交数据，刷新页面后再重试，避免静默覆盖。
+
 服务器备份命令：
 
 ```bash

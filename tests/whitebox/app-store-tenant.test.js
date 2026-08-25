@@ -5,6 +5,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const test = require("node:test");
+const { SqliteRuntimeStore } = require("../../lib/storage/sqlite-runtime-store");
 
 function freshStore(mode, root) {
   if (mode === undefined) delete process.env.APP_STORAGE;
@@ -70,11 +71,26 @@ test("JSON tenant state persists separately without exposing default rows", () =
 test("SQLite tenant state uses a separate transactional database", () => {
   const root = tempRoot();
   const originalEnv = { storage: process.env.APP_STORAGE, json: process.env.APP_RUNTIME_DB_PATH, sqlite: process.env.APP_SQLITE_DB_PATH };
+  let store;
+  let external;
   try {
-    const { context, store } = freshStore("sqlite", root);
+    const fresh = freshStore("sqlite", root);
+    const { context } = fresh;
+    store = fresh.store;
     const template = { rows: [{ id: 1 }], calculationRules: { moneyDigits: 2 } };
     const defaultState = store.load(template);
     context.configure({ defaultState, loadTenant: (tenantId, projectId, source) => store.loadScope(tenantId, projectId, source) });
+    external = new SqliteRuntimeStore(path.join(root, "runtime.db"));
+    external.load();
+    external.save({ ...defaultState, rows: [{ id: 7 }] }, { actor: "external" });
+    defaultState.rows.push({ id: 8 });
+    assert.throws(
+      () => context.runForScope("default", "1", () => store.save(defaultState, { actor: "stale" })),
+      (error) => error.code === "SQLITE_RUNTIME_CONFLICT"
+    );
+    assert.deepEqual(defaultState.rows, [{ id: 7 }]);
+    defaultState.rows = [{ id: 10 }];
+    assert.equal(context.runForScope("default", "1", () => store.save(defaultState, { actor: "retry" })).version, 3);
     const tenantState = context.stateForTenant("tenant-b");
     tenantState.rows.push({ id: 9 });
     const saved = context.runForTenant("tenant-b", () => store.save(tenantState, { actor: "tester", action: "tenant-write" }));
@@ -83,9 +99,10 @@ test("SQLite tenant state uses a separate transactional database", () => {
     assert.equal(status.tenantId, "tenant-b");
     assert.ok(status.version >= 2);
     assert.ok(store.tenantSqliteFile("tenant-b").includes(`${path.sep}tenants${path.sep}`));
-    assert.deepEqual(defaultState.rows, [{ id: 1 }]);
-    store.close();
+    assert.deepEqual(defaultState.rows, [{ id: 10 }]);
   } finally {
+    if (external) external.close();
+    if (store) store.close();
     if (originalEnv.storage === undefined) delete process.env.APP_STORAGE; else process.env.APP_STORAGE = originalEnv.storage;
     if (originalEnv.json === undefined) delete process.env.APP_RUNTIME_DB_PATH; else process.env.APP_RUNTIME_DB_PATH = originalEnv.json;
     if (originalEnv.sqlite === undefined) delete process.env.APP_SQLITE_DB_PATH; else process.env.APP_SQLITE_DB_PATH = originalEnv.sqlite;

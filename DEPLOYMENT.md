@@ -25,6 +25,8 @@ GitHub：https://github.com/hanxiaochi/test/tree/codex/zwkjy-clone
 
 SQLite 是默认模式，不需要 MySQL 或 PostgreSQL。账号、RBAC、租户/项目隔离、审计、规则版本、备份恢复和数据交换后台均已包含在当前版本中。
 
+当前 SQLite 部署应保持一个 Node.js 写入实例，不要启用 Node cluster 或同时启动多个 systemd 副本。存储层带版本化乐观并发保护：意外重复实例或外部写入不会静默覆盖数据，陈旧表单会收到 HTTP `409`，服务端会重新加载已提交状态，用户刷新后可重试。需要水平扩展时，应先升级为共享数据库和跨实例事务架构。
+
 ## 首次 JSON 到 SQLite 迁移
 
 首次启动时，如果目标 SQLite 库中没有业务状态，程序会读取对应旧 JSON，创建 SQLite 第一个检查点，并保留 JSON 原文件。

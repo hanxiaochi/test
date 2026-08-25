@@ -14760,6 +14760,28 @@ app.use((req, res) => {
   html(res, modalFormHtml("本地页面", req.path));
 });
 
+app.use((error, req, res, _next) => {
+  if (error && error.code === "SQLITE_RUNTIME_CONFLICT") {
+    res.status(409).json({
+      code: 0,
+      msg: "数据已被其他操作更新，请刷新后重试",
+      data: null,
+      errorCode: error.code,
+      expectedVersion: error.expectedVersion,
+      actualVersion: error.actualVersion
+    });
+    return;
+  }
+  const reportedStatus = Number(error && (error.status || error.statusCode));
+  const status = reportedStatus >= 400 && reportedStatus <= 599 ? reportedStatus : 500;
+  console.error("request failed", req.method, req.path, error && error.stack ? error.stack : error);
+  res.status(status).json({
+    code: 0,
+    msg: status === 413 ? "请求数据超过限制" : status < 500 ? "请求数据无效" : "服务器处理失败",
+    data: null
+  });
+});
+
 const server = app.listen(port, () => {
   console.log(`APP local clone running at http://localhost:${port}`);
 });

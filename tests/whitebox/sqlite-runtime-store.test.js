@@ -72,3 +72,38 @@ test("invalid path and transaction failure surface clear errors", () => {
     assert.deepEqual(store.load(), { value: 1 });
   });
 });
+
+test("concurrent connections initialize atomically and reject stale writes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "zwkjy-store-test-"));
+  const file = path.join(root, "runtime.db");
+  const first = new SqliteRuntimeStore(file);
+  const second = new SqliteRuntimeStore(file);
+  let blind;
+  try {
+    assert.deepEqual(first.initialize({ value: 1 }, { actor: "first" }), { value: 1 });
+    assert.deepEqual(second.initialize({ value: 999 }, { actor: "second" }), { value: 1 });
+    assert.equal(first.history(10).length, 1);
+
+    assert.deepEqual(second.load(), { value: 1 });
+    assert.equal(first.save({ value: 2 }, { actor: "first" }).version, 2);
+    assert.throws(
+      () => second.save({ value: 3 }, { actor: "second" }),
+      (error) => error.code === "SQLITE_RUNTIME_CONFLICT" && error.expectedVersion === 1 && error.actualVersion === 2
+    );
+    assert.deepEqual(first.load(), { value: 2 });
+    assert.deepEqual(second.load(), { value: 2 });
+    assert.equal(second.save({ value: 3 }, { actor: "second" }).version, 3);
+
+    blind = new SqliteRuntimeStore(file);
+    assert.throws(
+      () => blind.save({ value: 4 }, { actor: "blind" }),
+      (error) => error.code === "SQLITE_RUNTIME_CONFLICT" && error.expectedVersion === null && error.actualVersion === 3
+    );
+    assert.deepEqual(first.load(), { value: 3 });
+  } finally {
+    if (blind) blind.close();
+    second.close();
+    first.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

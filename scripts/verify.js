@@ -75,6 +75,10 @@ async function verifyUnauthenticatedAccess() {
   assert.strictEqual(protectedApi.json.code, 0, "unauthenticated API response should use a failure envelope");
   const runtimeDebug = await requestJson("/api/debug/runtime");
   assert.strictEqual(runtimeDebug.response.status, 401, "runtime diagnostics should reject unauthenticated requests");
+  const malformed = await requestJson("/dologin", { method: "POST", body: "{" });
+  assert.strictEqual(malformed.response.status, 400, "malformed JSON should retain its client-error status");
+  assert.strictEqual(malformed.json.code, 0, "malformed JSON should use a failure envelope");
+  assert.strictEqual(malformed.json.stack, undefined, "request errors must not expose server stacks");
 }
 
 async function verifyLoginFlow() {
@@ -197,6 +201,37 @@ async function verifyAuthorizationFlow() {
   const restoredBackup = await postJson(`/api/admin/backups/${encodeURIComponent(backupCreated.json.data.fileName)}/restore`, {});
   assert.strictEqual(restoredBackup.json.code, 1, "validated managed backup should restore successfully");
   assert.ok(restoredBackup.json.data.safetyBackup.fileName.startsWith("pre-restore-"), "restore should create a safety backup first");
+}
+
+async function verifyConcurrentBusinessWriteConflict() {
+  if (String(process.env.APP_STORAGE || "").toLowerCase() !== "sqlite") return;
+  const { SqliteRuntimeStore } = require("../lib/storage/sqlite-runtime-store");
+  const external = new SqliteRuntimeStore(process.env.APP_SQLITE_DB_PATH);
+  const externalMarker = `EXTERNAL-${Date.now()}`;
+  const rejectedMarker = `REJECTED-${Date.now()}`;
+  try {
+    const state = external.load();
+    const rows = Array.isArray(state.billModels) ? state.billModels : [];
+    const nextId = rows.reduce((maximum, row) => Math.max(maximum, Number(row.modelId || row.id || 0)), 0) + 1;
+    state.billModels = [...rows, { id: nextId, modelId: nextId, modelName: externalMarker, modelType: "并发外部写入" }];
+    external.save(state, { actor: "external-regression", action: "concurrency-test", checkpoint: true });
+  } finally {
+    external.close();
+  }
+
+  const rejected = await postJson("/billModel/save_model", { modelName: rejectedMarker, modelType: "并发冲突" });
+  assert.strictEqual(rejected.response.status, 409, "stale HTTP mutations should return a conflict response");
+  assert.strictEqual(rejected.json.errorCode, "SQLITE_RUNTIME_CONFLICT", "conflict responses should expose a stable machine code");
+  assert.ok(rejected.json.actualVersion > rejected.json.expectedVersion, "conflict responses should expose the competing versions");
+
+  const afterConflict = await requestJson("/billModel/get_bill_model_list?page=1&limit=1000");
+  assert.ok(afterConflict.json.data.some((row) => row.modelName === externalMarker), "conflict recovery should reload the committed external state");
+  assert.ok(!afterConflict.json.data.some((row) => row.modelName === rejectedMarker), "a rejected mutation must not remain in server memory");
+
+  const retried = await postJson("/billModel/save_model", { modelName: rejectedMarker, modelType: "并发冲突重试" });
+  assert.strictEqual(retried.response.status, 200, "a refreshed mutation should succeed on retry");
+  const afterRetry = await requestJson("/billModel/get_bill_model_list?page=1&limit=1000");
+  assert.ok(afterRetry.json.data.some((row) => row.modelName === rejectedMarker), "successful retry should persist and read back");
 }
 
 async function verifyDataExchangeFlow() {
@@ -3599,6 +3634,7 @@ async function main() {
   await verifyUnauthenticatedAccess();
   await verifyLoginFlow();
   await verifyAuthorizationFlow();
+  await verifyConcurrentBusinessWriteConflict();
   await verifyDataExchangeFlow();
   await verifyInternationalContractFlow();
   await verifyTenantBusinessIsolation();
