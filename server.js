@@ -2207,40 +2207,41 @@ function dataExchangeManagementHtml(req) {
 function internationalSettingsHtml(req) {
   const settings = currentInternationalSettings();
   const catalog = internationalSettingsService.publicCatalog();
+  const t = (key) => internationalSettingsService.translate(settings.locale, key);
   const localeOptions = catalog.locales.map((item) => `<option value="${item.code}"${item.code === settings.locale ? " selected" : ""}>${htmlEscape(item.name)} (${item.code})</option>`).join("");
   const standardOptions = catalog.certificateStandards.map((item) => `<option value="${item}"${item === settings.certificateStandard ? " selected" : ""}>${item}</option>`).join("");
-  return `<div class="core-page" data-core-page="international-settings">
+  return `<div class="core-page" data-core-page="international-settings" lang="${htmlEscape(settings.locale)}" dir="${htmlEscape(settings.direction)}">
     ${corePageStyle("#0369a1")}
     <div class="core-shell">
       <div class="core-head">
-        <div><h2>国际合同设置</h2><p>当前项目：${htmlEscape(req.businessContext.projectId)}</p></div>
-        <div class="core-tools"><a class="layui-btn layui-btn-sm layui-btn-primary" href="/admin/dashboard_page">返回后台</a></div>
+        <div><h2>${htmlEscape(t("international.title"))}</h2><p>${htmlEscape(t("international.project"))}：${htmlEscape(req.businessContext.projectId)}</p></div>
+        <div class="core-tools"><a class="layui-btn layui-btn-sm layui-btn-primary" href="/admin/dashboard_page">${htmlEscape(t("international.back"))}</a></div>
       </div>
       <div class="core-grid">
         <form class="core-panel" id="international-settings-form">
-          <h3>项目参数</h3>
-          <div class="layui-form-item"><label class="layui-form-label">界面语言</label><div class="layui-input-block"><select name="locale" class="layui-select">${localeOptions}</select></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">基础币种</label><div class="layui-input-block"><input class="layui-input" name="baseCurrency" maxlength="3" value="${htmlEscape(settings.baseCurrency)}"></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">证书标准</label><div class="layui-input-block"><select name="certificateStandard" class="layui-select">${standardOptions}</select></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">金额位数</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" max="4" step="1" name="moneyDigits" value="${settings.moneyDigits}"></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">保留金率(%)</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" max="100" step="0.01" name="retentionRate" value="${htmlEscape(settings.retentionRate)}"></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">保留金限额</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" step="0.01" name="retentionLimitAmount" value="${htmlEscape(settings.retentionLimitAmount)}"></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">最低证书金额</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" step="0.01" name="minimumCertificateAmount" value="${htmlEscape(settings.minimumCertificateAmount)}"></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">合同汇率(JSON)</label><div class="layui-input-block"><textarea class="layui-textarea" name="exchangeRates" rows="5">${htmlEscape(JSON.stringify(settings.exchangeRates, null, 2))}</textarea></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">币种位数(JSON)</label><div class="layui-input-block"><textarea class="layui-textarea" name="currencyDigits" rows="4">${htmlEscape(JSON.stringify(settings.currencyDigits, null, 2))}</textarea></div></div>
-          <div class="core-tools"><button class="layui-btn layui-btn-sm" type="submit">保存项目设置</button></div>
+          <h3>${htmlEscape(t("international.parameters"))}</h3>
+          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.locale"))}</label><div class="layui-input-block"><select name="locale" class="layui-select">${localeOptions}</select></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.baseCurrency"))}</label><div class="layui-input-block"><input class="layui-input" name="baseCurrency" maxlength="3" value="${htmlEscape(settings.baseCurrency)}"></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.standard"))}</label><div class="layui-input-block"><select name="certificateStandard" class="layui-select">${standardOptions}</select></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.moneyDigits"))}</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" max="4" step="1" name="moneyDigits" value="${settings.moneyDigits}"></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.retentionRate"))}</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" max="100" step="0.01" name="retentionRate" value="${htmlEscape(settings.retentionRate)}"></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.retentionLimit"))}</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" step="0.01" name="retentionLimitAmount" value="${htmlEscape(settings.retentionLimitAmount)}"></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.minimumCertificate"))}</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" step="0.01" name="minimumCertificateAmount" value="${htmlEscape(settings.minimumCertificateAmount)}"></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.exchangeRates"))}</label><div class="layui-input-block"><textarea class="layui-textarea" name="exchangeRates" rows="5">${htmlEscape(JSON.stringify(settings.exchangeRates, null, 2))}</textarea></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.currencyDigits"))}</label><div class="layui-input-block"><textarea class="layui-textarea" name="currencyDigits" rows="4">${htmlEscape(JSON.stringify(settings.currencyDigits, null, 2))}</textarea></div></div>
+          <div class="core-tools"><button class="layui-btn layui-btn-sm" type="submit">${htmlEscape(t("international.save"))}</button></div>
           <div id="international-settings-message" class="core-note" style="margin-top:10px;"></div>
         </form>
         <div class="core-panel">
-          <h3>付款证书试算</h3>
-          <div class="layui-form-item"><label class="layui-form-label">证书行(JSON)</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-lines" rows="13">${htmlEscape(JSON.stringify([
+          <h3>${htmlEscape(t("international.calculator"))}</h3>
+          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.lines"))}</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-lines" rows="13">${htmlEscape(JSON.stringify([
             { code: "WORK-001", description: "Interim work", category: "work", amount: "100000", currency: settings.baseCurrency },
             { code: "ADV-REC-001", description: "Advance repayment", category: "advanceRepayment", amount: "5000", currency: settings.baseCurrency }
           ], null, 2))}</textarea></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">上期保留金</label><div class="layui-input-block"><input class="layui-input" id="fidic-previous-retention" type="number" min="0" step="0.01" value="0"></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">本期释放</label><div class="layui-input-block"><input class="layui-input" id="fidic-retention-release" type="number" min="0" step="0.01" value="0"></div></div>
-          <div class="core-tools"><button class="layui-btn layui-btn-sm layui-btn-normal" type="button" id="fidic-calculate">计算付款证书</button></div>
-          <table class="layui-table" lay-size="sm"><tbody id="fidic-totals"><tr><td class="core-empty">尚未计算</td></tr></tbody></table>
+          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.previousRetention"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-previous-retention" type="number" min="0" step="0.01" value="0"></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.retentionRelease"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-retention-release" type="number" min="0" step="0.01" value="0"></div></div>
+          <div class="core-tools"><button class="layui-btn layui-btn-sm layui-btn-normal" type="button" id="fidic-calculate">${htmlEscape(t("international.calculate"))}</button></div>
+          <table class="layui-table" lay-size="sm"><tbody id="fidic-totals"><tr><td class="core-empty">${htmlEscape(t("international.notCalculated"))}</td></tr></tbody></table>
         </div>
       </div>
     </div>
@@ -2249,7 +2250,7 @@ function internationalSettingsHtml(req) {
       var form=root.querySelector('#international-settings-form'),message=root.querySelector('#international-settings-message'),totals=root.querySelector('#fidic-totals');
       function escapeHtml(value){var node=document.createElement('div');node.textContent=String(value==null?'':value);return node.innerHTML}
       function request(url,body){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json().then(function(result){if(!response.ok||result.code!==1)throw new Error(result.msg||'操作失败');return result.data})})}
-      form.addEventListener('submit',function(event){event.preventDefault();var data=new FormData(form),payload={locale:data.get('locale'),baseCurrency:data.get('baseCurrency'),certificateStandard:data.get('certificateStandard'),moneyDigits:Number(data.get('moneyDigits')),retentionRate:data.get('retentionRate'),retentionLimitAmount:data.get('retentionLimitAmount'),minimumCertificateAmount:data.get('minimumCertificateAmount')};try{payload.exchangeRates=JSON.parse(data.get('exchangeRates')||'{}');payload.currencyDigits=JSON.parse(data.get('currencyDigits')||'{}')}catch(error){message.textContent='JSON格式错误：'+error.message;return}request('/api/admin/international_settings',payload).then(function(){message.textContent='项目设置已保存'}).catch(function(error){message.textContent=error.message})});
+      form.addEventListener('submit',function(event){event.preventDefault();var data=new FormData(form),payload={locale:data.get('locale'),baseCurrency:data.get('baseCurrency'),certificateStandard:data.get('certificateStandard'),moneyDigits:Number(data.get('moneyDigits')),retentionRate:data.get('retentionRate'),retentionLimitAmount:data.get('retentionLimitAmount'),minimumCertificateAmount:data.get('minimumCertificateAmount')};try{payload.exchangeRates=JSON.parse(data.get('exchangeRates')||'{}');payload.currencyDigits=JSON.parse(data.get('currencyDigits')||'{}')}catch(error){message.textContent='JSON: '+error.message;return}request('/api/admin/international_settings',payload).then(function(){message.textContent=${JSON.stringify(t("international.saved"))}}).catch(function(error){message.textContent=error.message})});
       root.querySelector('#fidic-calculate').addEventListener('click',function(){var payload;try{payload={lines:JSON.parse(root.querySelector('#fidic-lines').value||'[]'),previousRetention:root.querySelector('#fidic-previous-retention').value,retentionRelease:root.querySelector('#fidic-retention-release').value}}catch(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>';return}request('/api/international/certificate/calculate',payload).then(function(result){var order=['grossCertified','lineDeductions','currentRetention','retentionRelease','netCertified','payableNow','carriedForward','cumulativeCertified'];totals.innerHTML=order.map(function(key){return '<tr><th>'+escapeHtml(key)+'</th><td>'+escapeHtml(result.totals[key])+' '+escapeHtml(result.baseCurrency)+'</td></tr>'}).join('')}).catch(function(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>'})});
     })();</script>
   </div>`;
@@ -13511,6 +13512,7 @@ app.get("/loginout", (req, res) => {
 
 app.get("/user/curr_user_info", (req, res) => {
   const user = req.authUser;
+  const internationalSettings = currentInternationalSettings();
   operationOk(res, {
     userId: user.id,
     userAccount: user.account,
@@ -13521,14 +13523,21 @@ app.get("/user/curr_user_info", (req, res) => {
     permissions: user.permissions,
     mustChangePassword: user.mustChangePassword,
     projects: authService.store.accessibleProjects(user.id, user.tenantId),
-    currentProjectId: req.businessContext.projectId
+    currentProjectId: req.businessContext.projectId,
+    locale: internationalSettings.locale,
+    direction: internationalSettings.direction,
+    baseCurrency: internationalSettings.baseCurrency,
+    translations: internationalSettingsService.translationsFor(internationalSettings.locale)
   });
 });
 
 app.get("/api/session/projects", (req, res) => {
+  const internationalSettings = currentInternationalSettings();
   operationOk(res, {
     projects: authService.store.accessibleProjects(req.authUser.id, req.authUser.tenantId),
-    currentProjectId: req.businessContext.projectId
+    currentProjectId: req.businessContext.projectId,
+    internationalSettings,
+    translations: internationalSettingsService.translationsFor(internationalSettings.locale)
   });
 });
 

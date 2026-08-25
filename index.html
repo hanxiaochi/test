@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN" dir="ltr">
 <head>
 <meta charset="UTF-8">
 <meta name="renderer" content="webkit">
@@ -51,6 +51,16 @@
 <link rel="stylesheet" href="css/loadPage.css" />
 <link rel="stylesheet" href="css/style.css">
 <style id="layui-zw-bg-color"></style>
+<style>
+html[dir="rtl"] body{direction:rtl;}
+html[dir="rtl"] .layui-layout-admin .layui-logo{left:auto;right:0;}
+html[dir="rtl"] .layui-layout-admin .layui-side{left:auto;right:0;}
+html[dir="rtl"] .layui-layout-admin .layui-body{left:0;right:200px;}
+html[dir="rtl"] .layui-layout-admin .layui-footer{left:0;right:200px;}
+html[dir="rtl"] .layui-layout-left{left:auto;right:200px;}
+html[dir="rtl"] .layui-layout-right{right:auto;left:0;}
+html[dir="rtl"] .layui-nav-tree .layui-nav-item a{text-align:right;}
+</style>
 	<link rel="stylesheet" type="text/css" href="assets/fullcalendar/css/fullcalendar.css" />
 	<link rel="stylesheet" type="text/css" href="assets/fullcalendar/css/index.css"/>
 </head>
@@ -70,12 +80,12 @@
 	<div class="layui-layout layui-layout-admin layui-zw-admin">
 		<div class="layui-header layui-zw-header">
 			<span class="layui-logo-mini" data-zw-main><img alt="" src="img/logo-mini.png" ></span>
-			<span class="layui-logo" data-zw-main>工程项目信息化管理云</span>
+			<span class="layui-logo" data-zw-main data-i18n="shell.productName">工程项目信息化管理云</span>
 			<!-- 加载头部导航 -->
 			<ul class="layui-nav layui-layout-left zw-header-menu-pc"></ul>
 			<ul class="layui-nav layui-layout-right zw-header-set-pc">
 				<li class="layui-nav-item" style="padding:0 10px;">
-					<select id="app-project-switch" aria-label="当前项目" style="height:32px;min-width:180px;border:1px solid rgba(255,255,255,.35);background:#fff;color:#172033;padding:0 8px;"></select>
+					<select id="app-project-switch" aria-label="当前项目" data-i18n-aria="shell.currentProject" style="height:32px;min-width:180px;border:1px solid rgba(255,255,255,.35);background:#fff;color:#172033;padding:0 8px;"></select>
 				</li>
 				<li class="layui-nav-item">
 	                <a href="javascript:;" data-refresh="刷新"><i class="layui-icon layui-icon-refresh-3"></i></a>
@@ -87,16 +97,16 @@
 					</a>
 					<dl class="layui-nav-child">
 						<dd>
-							<a href="javascript:;" data-user-base><i class="layui-icon layui-icon-username"></i> 个人中心</a>
+							<a href="javascript:;" data-user-base><i class="layui-icon layui-icon-username"></i> <span data-i18n="shell.profile">个人中心</span></a>
 						</dd>
 						<dd class="app-select-bgcolor">
-							<a href="javascript:;"><i class="layui-icon layui-icon-layouts"></i> 主题切换</a>
+							<a href="javascript:;"><i class="layui-icon layui-icon-layouts"></i> <span data-i18n="shell.theme">主题切换</span></a>
 						</dd>
 						<!-- <dd>
 							<a href="javascript:;" data-switch-user><i class="fa fa-street-view"></i> 切换用户</a>
 						</dd> -->
 						<dd>
-							<a href="javascript:;" data-user-layout><i class="layui-icon layui-icon-close-fill"></i> 注销</a>
+							<a href="javascript:;" data-user-layout><i class="layui-icon layui-icon-close-fill"></i> <span data-i18n="shell.logout">注销</span></a>
 						</dd>
 					</dl>
 				</li>
@@ -111,7 +121,7 @@
 				</ul>
 			</div>
 			<footer class="zw-footer"  id="gonggaoMeassgeIndex">
-				<a class="zw-bottom-title"><i class="glyphicon glyphicon-bullhorn"></i> 公告信息 <span class="label label-success pull-right" data-id="gonggaoMessageCountId"></span></a>
+				<a class="zw-bottom-title"><i class="glyphicon glyphicon-bullhorn"></i> <span data-i18n="shell.announcements">公告信息</span> <span class="label label-success pull-right" data-id="gonggaoMessageCountId"></span></a>
 			</footer>
 		</div>
 		<div class="layui-body" style="z-index:20;">
@@ -206,8 +216,17 @@
 		  appInit.init({});//初始化 页面导航
 		  appInit.listen();//监听hash地址变化
 		  zwOnline.loadCurrUserInfo();//加载登录用户的信息以及打开webSocket
+		  function applyProjectLocale(settings,translations){
+			  settings=settings||{};translations=translations||{};
+			  document.documentElement.lang=settings.locale||'zh-CN';
+			  document.documentElement.dir=settings.direction||'ltr';
+			  if(translations['shell.productName'])document.title=translations['shell.productName'];
+			  Array.prototype.forEach.call(document.querySelectorAll('[data-i18n]'),function(node){var key=node.getAttribute('data-i18n');if(translations[key])node.textContent=translations[key]});
+			  Array.prototype.forEach.call(document.querySelectorAll('[data-i18n-aria]'),function(node){var key=node.getAttribute('data-i18n-aria');if(translations[key])node.setAttribute('aria-label',translations[key])});
+		  }
 		  fetch('/api/session/projects',{headers:{'Accept':'application/json'}}).then(function(response){return response.json()}).then(function(result){
 			  if(!result||result.code!==1)return;
+			  applyProjectLocale(result.data.internationalSettings,result.data.translations);
 			  var select=document.getElementById('app-project-switch');
 			  (result.data.projects||[]).forEach(function(project){
 				  var option=document.createElement('option'); option.value=project.projectId; option.textContent=project.name; option.selected=String(project.projectId)===String(result.data.currentProjectId); select.appendChild(option);

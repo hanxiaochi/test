@@ -44,6 +44,13 @@ test("partial updates inherit the current project settings", () => {
   assert.equal(updated.minimumCertificateAmount, "1000");
   assert.equal(settings.publicCatalog().locales.length, 6);
   assert.ok(settings.publicCatalog().certificateStandards.includes("FIDIC_YELLOW_2017"));
+  assert.equal(settings.translate("en-US", "international.title"), "International Contract Settings");
+  assert.equal(settings.translate("ar-SA", "shell.logout"), "تسجيل الخروج");
+  assert.equal(settings.translate("xx", "shell.logout"), "注销");
+  assert.equal(settings.translate("en-US", "unknown.key"), "unknown.key");
+  assert.equal(Object.keys(settings.translationsFor("fr-FR")).length, Object.keys(settings.TRANSLATIONS["zh-CN"]).length);
+  const baselineKeys = Object.keys(settings.TRANSLATIONS["zh-CN"]).sort();
+  Object.values(settings.TRANSLATIONS).forEach((catalog) => assert.deepEqual(Object.keys(catalog).sort(), baselineKeys));
 });
 
 test("invalid settings fail closed", () => {

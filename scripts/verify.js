@@ -158,6 +158,7 @@ async function verifyAuthorizationFlow() {
   assert.ok(page.text.includes("项目目录") && page.text.includes("create-project-form") && page.text.includes("保存项目"), "user administration page should expose project directory and assignment controls");
   const shell = await requestText("/index.html");
   assert.ok(shell.text.includes("app-project-switch") && shell.text.includes("/api/session/project"), "main shell should expose a persistent project switcher");
+  assert.ok(shell.text.includes("data-i18n=\"shell.productName\"") && shell.text.includes("applyProjectLocale") && shell.text.includes("html[dir=\"rtl\"]"), "main shell should apply project translations and RTL layout at runtime");
   const audit = await requestJson("/api/admin/security_audit?limit=50");
   assert.ok(audit.json.data.some((row) => row.action === "login" && row.result === "denied"), "security audit should retain failed login attempts");
   const mutationAudit = audit.json.data.find((row) => row.action === "http.mutation" && row.target_id === "POST /api/admin/projects");
@@ -294,6 +295,11 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(saved.json.data.settings.baseCurrency, "USD", "project should persist its own base currency");
   const projectSettings = await requestJson(`/api/admin/international_settings?projectId=${projectId}`);
   assert.deepStrictEqual(projectSettings.json.data.exchangeRates, { "CNY:USD": "0.14" }, "project should read back normalized contract exchange rates");
+  const englishPage = await requestText(`/admin/international_settings_page?projectId=${projectId}`);
+  assert.ok(englishPage.text.includes("International Contract Settings") && englishPage.text.includes('lang="en-US"') && englishPage.text.includes('dir="ltr"'), "English project should render the international settings page in English and LTR");
+  const englishSession = await requestJson(`/api/session/projects?projectId=${projectId}`);
+  assert.strictEqual(englishSession.json.data.internationalSettings.locale, "en-US", "session context should expose the selected project's locale");
+  assert.strictEqual(englishSession.json.data.translations["shell.logout"], "Sign out", "session context should expose shell translations");
 
   const certificate = await postJson("/api/international/certificate/calculate", {
     projectId,
@@ -315,6 +321,11 @@ async function verifyInternationalContractFlow() {
   assert.deepStrictEqual(afterInvalid.json.data, projectSettings.json.data, "failed settings updates must not mutate project state");
   const defaultAfter = await requestJson("/api/admin/international_settings?projectId=1");
   assert.deepStrictEqual(defaultAfter.json.data, defaultSettings.json.data, "international settings must remain isolated by project");
+  const arabicProjectId = "exchange-roundtrip-project";
+  const arabicSaved = await postJson("/api/admin/international_settings", { projectId: arabicProjectId, locale: "ar-SA" });
+  assert.strictEqual(arabicSaved.json.data.settings.direction, "rtl", "Arabic project should persist RTL direction");
+  const arabicPage = await requestText(`/admin/international_settings_page?projectId=${arabicProjectId}`);
+  assert.ok(arabicPage.text.includes("إعدادات العقود الدولية") && arabicPage.text.includes('lang="ar-SA"') && arabicPage.text.includes('dir="rtl"'), "Arabic project should render localized RTL administration markup");
   const audit = await requestJson("/api/admin/security_audit?limit=200");
   assert.ok(audit.json.data.some((row) => row.action === "international_settings.update" && row.result === "success"), "successful international settings updates should be audited");
   assert.ok(audit.json.data.some((row) => row.action === "international_settings.update" && row.result === "failure"), "failed international settings updates should be audited");
