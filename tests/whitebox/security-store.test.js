@@ -74,6 +74,31 @@ test("sessions expire and disabled users or tenants fail closed", () => withStor
   assert.equal(store.authenticate({ account: "ys1", password: "000000" }), null);
 }));
 
+test("password change validates the current secret, enforces policy, and revokes sessions", () => withStore((store) => {
+  const boot = store.bootstrap({ account: "ys1", password: "000000" });
+  const login = store.authenticate({ account: "ys1", password: "000000" });
+  assert.throws(() => store.changePassword({ tenantId: "default", userId: boot.userId, currentPassword: "wrong", newPassword: "New-Password-42!" }), /当前密码不正确/);
+  assert.throws(() => store.changePassword({ tenantId: "default", userId: boot.userId, currentPassword: "000000", newPassword: "weak" }), /密码/);
+  assert.throws(() => store.changePassword({ tenantId: "default", userId: boot.userId, currentPassword: "000000", newPassword: "000000" }), /密码/);
+  assert.throws(() => store.changePassword({ tenantId: "default", userId: 9999, currentPassword: "000000", newPassword: "New-Password-42!" }), /当前密码不正确/);
+
+  const changed = store.changePassword({
+    tenantId: "default",
+    userId: boot.userId,
+    currentPassword: "000000",
+    newPassword: "New-Password-42!",
+    ipAddress: "127.0.0.1",
+    userAgent: "test"
+  });
+  assert.equal(changed.mustChangePassword, false);
+  assert.equal(store.getSession(login.token), null);
+  assert.equal(store.authenticate({ account: "ys1", password: "000000" }), null);
+  assert.ok(store.authenticate({ account: "ys1", password: "New-Password-42!" }));
+  const passwordAudits = store.auditRows().filter((row) => row.action === "password.change");
+  assert.ok(passwordAudits.some((row) => row.result === "denied"));
+  assert.ok(passwordAudits.some((row) => row.result === "success"));
+}));
+
 test("user creation validates password and roles transactionally", () => withStore((store) => {
   store.bootstrap({ account: "ys1", password: "000000" });
   assert.throws(() => store.createUser({ account: "", password: "Strong-Pass-42!" }), /Account is required/);

@@ -68,6 +68,7 @@ const publicPathRules = [
 ];
 
 function requiredPermission(req) {
+  if (req.path === "/api/account/password") return null;
   if (req.path === "/api/international/certificate/calculate") return "data:read";
   if (/^\/api\/debug(?:\/|$)/.test(req.path)) return "admin:access";
   if (/^\/(?:admin|api\/admin)(?:\/|$)/.test(req.path)) return "admin:access";
@@ -299,8 +300,18 @@ app.use((req, res, next) => {
     res.status(401).json({ code: 0, msg: "登录已失效，请重新登录", data: null });
     return;
   }
+  const passwordChangeAllowed = new Set(["/account/password_page", "/api/account/password", "/user/curr_user_info", "/loginout"]);
+  if (session.user.mustChangePassword && !passwordChangeAllowed.has(req.path)) {
+    const wantsJson = req.path.startsWith("/api/") || req.xhr || String(req.headers.accept || "").includes("application/json");
+    if (wantsJson) {
+      res.status(428).json({ code: 0, msg: "首次登录必须先修改密码", data: null, errorCode: "PASSWORD_CHANGE_REQUIRED" });
+      return;
+    }
+    res.redirect("/account/password_page");
+    return;
+  }
   const required = requiredPermission(req);
-  if (!authCore.hasPermission(session.user.permissions, required)) {
+  if (required && !authCore.hasPermission(session.user.permissions, required)) {
     res.status(403).json({ code: 0, msg: "无权执行该操作", data: null, requiredPermission: required });
     return;
   }
@@ -394,6 +405,19 @@ function authCookie(req) {
 
 function html(res, value) {
   res.type("html").send(value);
+}
+
+function passwordChangePageHtml(user) {
+  return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>修改登录密码</title><style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#eef3f7;color:#172033;font-family:Arial,"Microsoft YaHei",sans-serif}.password-panel{width:calc(100% - 32px);max-width:440px;background:#fff;border:1px solid #d8e0e8;padding:28px;box-shadow:0 12px 28px rgba(23,32,51,.12)}h1{font-size:22px;margin:0 0 8px}p{margin:0 0 22px;color:#5d6876;line-height:1.6}label{display:block;margin:14px 0 6px;font-weight:600}input{width:100%;height:40px;border:1px solid #b9c4d0;padding:0 12px;font-size:14px}button{width:100%;height:42px;margin-top:22px;border:0;background:#0b8ed8;color:#fff;font-size:15px;cursor:pointer}button:disabled{opacity:.6;cursor:wait}.message{min-height:22px;margin-top:12px;color:#c62828;font-size:13px}</style></head>
+<body><main class="password-panel"><h1>修改登录密码</h1><p>账号 ${htmlEscape(user.account)} 首次登录需要设置新密码。修改成功后请重新登录。</p>
+<form id="password-form"><label for="current-password">当前密码</label><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" required>
+<label for="new-password">新密码</label><input id="new-password" name="newPassword" type="password" autocomplete="new-password" minlength="10" required>
+<label for="confirm-password">确认新密码</label><input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" minlength="10" required>
+<button type="submit">保存并重新登录</button><div id="message" class="message" role="alert"></div></form></main>
+<script>(function(){var form=document.getElementById('password-form'),message=document.getElementById('message'),button=form.querySelector('button');form.addEventListener('submit',function(event){event.preventDefault();message.textContent='';var data=Object.fromEntries(new FormData(form).entries());if(data.newPassword!==data.confirmPassword){message.textContent='两次输入的新密码不一致';return}button.disabled=true;fetch('/api/account/password',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(data)}).then(function(response){return response.json().then(function(body){if(!response.ok||body.code!==1)throw new Error(body.msg||'修改失败');return body})}).then(function(){window.location.replace('/')}).catch(function(error){message.textContent=error.message;button.disabled=false})})})();</script></body></html>`;
 }
 
 function json(res, value) {
@@ -13475,6 +13499,10 @@ function deleteGenericNode(req) {
 }
 
 app.get("/", (req, res) => {
+  if (req.currentSession && req.currentSession.user.mustChangePassword) {
+    res.redirect("/account/password_page");
+    return;
+  }
   const fileName = authCookie(req) ? "index.html" : "login.html";
   html(res, readText(path.join(root, fileName)));
 });
@@ -13482,6 +13510,25 @@ app.get("/", (req, res) => {
 app.get("/index", (req, res) => res.redirect("/"));
 app.get("/index.html", (req, res) => html(res, readText(path.join(root, "index.html"))));
 app.get("/main", (req, res) => html(res, dashboardHtml("综合工作台")));
+app.get("/account/password_page", (req, res) => html(res, passwordChangePageHtml(req.authUser)));
+
+app.post("/api/account/password", (req, res) => {
+  try {
+    if (String(req.body.newPassword || "") !== String(req.body.confirmPassword || "")) throw new Error("两次输入的新密码不一致");
+    const user = authService.store.changePassword({
+      tenantId: req.authUser.tenantId,
+      userId: req.authUser.id,
+      currentPassword: req.body.currentPassword,
+      newPassword: req.body.newPassword,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"]
+    });
+    res.setHeader("Set-Cookie", ["app_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0", "app_project=; Path=/; SameSite=Lax; Max-Age=0"]);
+    operationOk(res, { userId: user.id, mustChangePassword: user.mustChangePassword, reauthenticationRequired: true });
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
 
 app.post("/dologin", (req, res) => {
   const identity = {

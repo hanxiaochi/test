@@ -4,6 +4,7 @@ const net = require("net");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
+const { authenticateTestSession } = require("./test-auth-client");
 
 const root = path.resolve(__dirname, "..");
 const fixtureFile = path.join(root, "test-data", "payment-regression-12-14.json");
@@ -319,39 +320,8 @@ function requestJson(port, pathname) {
   });
 }
 
-function login(port) {
-  return new Promise((resolve, reject) => {
-    const body = new URLSearchParams({ user_account: "ys1", password: "000000", remember_me: "false" }).toString();
-    const req = http.request({
-      hostname: "127.0.0.1",
-      port,
-      path: "/dologin",
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Content-Length": Buffer.byteLength(body)
-      }
-    }, (res) => {
-      let responseBody = "";
-      res.setEncoding("utf8");
-      res.on("data", (chunk) => { responseBody += chunk; });
-      res.on("end", () => {
-        try {
-          const payload = JSON.parse(responseBody);
-          const setCookie = res.headers["set-cookie"] || [];
-          if (res.statusCode !== 200 || payload.code !== 1 || !setCookie.length) throw new Error(payload.msg || "login failed");
-          sessionCookie = setCookie[0].split(";")[0];
-          resolve();
-        } catch (error) {
-          reject(new Error(`test login failed: ${error.message}`));
-        }
-      });
-    });
-    req.on("error", reject);
-    req.setTimeout(5000, () => req.destroy(new Error("test login timed out")));
-    req.end(body);
-  });
+async function login(port) {
+  sessionCookie = await authenticateTestSession(port);
 }
 
 function freePort(start = 3320) {

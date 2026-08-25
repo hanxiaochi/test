@@ -112,6 +112,29 @@ async function verifyLoginFlow() {
   assert.ok(authCookieHeader.startsWith("app_session="), "login should issue an opaque server-side session cookie");
   assert.strictEqual(json.code, 1, "ys1 / 000000 should authenticate successfully");
   assert.strictEqual(json.data.userAccount, "ys1", "login response should return the authenticated account");
+  assert.strictEqual(json.data.mustChangePassword, true, "bootstrap administrator should be forced to replace the initial password");
+  const forcedApi = await requestJson("/api/cost/summary");
+  assert.strictEqual(forcedApi.response.status, 428, "business APIs should be unavailable until the initial password is changed");
+  assert.strictEqual(forcedApi.json.errorCode, "PASSWORD_CHANGE_REQUIRED", "forced password response should be machine readable");
+  const passwordPage = await requestText("/account/password_page");
+  assert.ok(passwordPage.text.includes("password-form") && passwordPage.text.includes("保存并重新登录"), "forced password page should expose the complete change form");
+  const mismatch = await postJson("/api/account/password", { currentPassword: "000000", newPassword: "Admin-Regression-42!", confirmPassword: "different" });
+  assert.strictEqual(mismatch.response.status, 400, "password confirmation mismatch should fail");
+  const changed = await postJson("/api/account/password", { currentPassword: "000000", newPassword: "Admin-Regression-42!", confirmPassword: "Admin-Regression-42!" });
+  assert.strictEqual(changed.json.code, 1, "initial password should change successfully");
+  assert.strictEqual(changed.json.data.reauthenticationRequired, true, "password change should require a fresh login");
+  const revoked = await requestJson("/user/curr_user_info");
+  assert.strictEqual(revoked.response.status, 401, "password change should revoke the current session");
+
+  const reloginBody = new URLSearchParams({ user_account: "ys1", password: "Admin-Regression-42!", remember_me: "false" });
+  const relogin = await requestJson("/dologin", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: reloginBody.toString()
+  });
+  assert.strictEqual(relogin.json.code, 1, "administrator should authenticate with the replacement password");
+  assert.strictEqual(relogin.json.data.mustChangePassword, false, "replacement password should clear the forced-change flag");
+  authCookieHeader = relogin.response.headers.get("set-cookie").split(";")[0];
 }
 
 async function verifyLoginRateLimit() {
@@ -438,6 +461,26 @@ async function verifyTenantBusinessIsolation() {
   });
   assert.strictEqual(tenantLogin.json.code, 1, "second tenant should authenticate through the real login contract");
   authCookieHeader = tenantLogin.response.headers.get("set-cookie").split(";")[0];
+  assert.strictEqual(tenantLogin.json.data.mustChangePassword, true, "second tenant bootstrap account should also require an initial password change");
+  const tenantChanged = await postJson("/api/account/password", {
+    currentPassword: "Tenant-Admin-42!",
+    newPassword: "Tenant-Ready-42!",
+    confirmPassword: "Tenant-Ready-42!"
+  });
+  assert.strictEqual(tenantChanged.json.code, 1, "second tenant administrator should complete the forced password change");
+  const tenantReloginBody = new URLSearchParams({
+    tenant_id: "regression-tenant",
+    user_account: "tenant_admin",
+    password: "Tenant-Ready-42!",
+    remember_me: "false"
+  });
+  const tenantRelogin = await requestJson("/dologin", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: tenantReloginBody.toString()
+  });
+  assert.strictEqual(tenantRelogin.json.code, 1, "second tenant should reauthenticate with its replacement password");
+  authCookieHeader = tenantRelogin.response.headers.get("set-cookie").split(";")[0];
   const tenantSummary = await requestJson("/api/cost/summary");
   assert.strictEqual(Number(tenantSummary.json.data.contractSumMoney || 0), 0, "new tenant must not inherit the default tenant contract data");
   const tenantMaterialExport = await requestText("/api/admin/data_exchange/materials/export?format=json");
