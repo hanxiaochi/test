@@ -19,6 +19,7 @@ const { AttachmentStore } = require("./lib/attachments/attachment-store");
 const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
 const { browserMutationGuard, securityHeaders } = require("./lib/security/http-security");
 const { WorkflowError, WorkflowStore, defaultDefinition } = require("./lib/workflow/workflow-store");
+const workflowCoordinator = require("./lib/workflow/workflow-coordinator");
 const engine = require("./costEngine");
 
 (engine.db.projects || []).forEach((project) => {
@@ -110,6 +111,37 @@ function requiredPermission(req) {
 
 function businessStateChecksum() {
   return crypto.createHash("sha256").update(JSON.stringify(engine.db), "utf8").digest("hex");
+}
+
+function replaceBusinessState(snapshot) {
+  Reflect.ownKeys(engine.db).forEach((key) => Reflect.deleteProperty(engine.db, key));
+  Object.assign(engine.db, snapshot);
+}
+
+function recoverWorkflowScope(tenantId, projectId) {
+  if (!Array.isArray(engine.db[workflowCoordinator.PENDING_KEY]) || !engine.db[workflowCoordinator.PENDING_KEY].length) {
+    return { changed: false, committed: 0, rolledBack: 0, transactionIds: [] };
+  }
+  const beforeRecovery = JSON.parse(JSON.stringify(engine.db));
+  try {
+    const recovery = workflowCoordinator.recoverPending(engine.db, {
+      workflowStore,
+      tenantId,
+      projectId,
+      resolveConfig: workflowConfig
+    });
+    if (recovery.changed) {
+      appStore.save(engine.db, {
+        actor: "system",
+        action: `workflow-recovery:${recovery.transactionIds.join(",")}`,
+        checkpoint: true
+      });
+    }
+    return recovery;
+  } catch (error) {
+    replaceBusinessState(beforeRecovery);
+    throw error;
+  }
 }
 
 function backupFileName(prefix = "runtime") {
@@ -361,6 +393,7 @@ app.use((req, res, next) => {
     ? effectiveProjectId
     : String((accessibleProjects[0] || {}).projectId || "1");
   return businessContext.runForScope(session.user.tenantId, authorizedEffectiveProjectId, () => {
+  recoverWorkflowScope(session.user.tenantId, authorizedEffectiveProjectId);
   const ruleScopeKey = `${session.user.tenantId}::${authorizedEffectiveProjectId}`;
   if (!initializedRuleTenants.has(ruleScopeKey)) {
     const tenantRules = ruleStore.getActive(session.user.tenantId, authorizedEffectiveProjectId);
@@ -536,7 +569,7 @@ function workflowLabel(row, idField) {
   return row.measureNo || row.varyNo || row.contactNo || row.meetingNo || row[idField] || row.id || "";
 }
 
-function addWorkflowLog({ module, businessId, businessNo, action, result, userName = "ys1", remark = "" }) {
+function addWorkflowLog({ module, businessId, businessNo, action, result, userName = "ys1", remark = "", workflowTransactionId = "" }) {
   const logs = ensureWorkflowLogs();
   const id = nextId(logs, "logId");
   const time = new Date().toISOString().slice(0, 19).replace("T", " ");
@@ -550,7 +583,8 @@ function addWorkflowLog({ module, businessId, businessNo, action, result, userNa
     userName,
     result,
     time,
-    remark
+    remark,
+    ...(workflowTransactionId ? { workflowTransactionId } : {})
   });
   return id;
 }
@@ -12466,8 +12500,12 @@ function executeWorkflowBatchTransition(req, moduleValue, businessIds, action, o
   const snapshots = targets.map((target) => ({ row: target.row, value: JSON.parse(JSON.stringify(target.row)) }));
   const logs = ensureWorkflowLogs();
   const previousLogLength = logs.length;
+  const transactionId = crypto.randomUUID();
+  let pendingPersisted = false;
   const remark = options.remark !== undefined ? options.remark : req.body.remark || req.body.returnReason || req.query.remark || req.query.returnReason || "";
-  const result = workflowStore.transitionBatch({
+  let result;
+  try {
+    result = workflowStore.transitionBatch({
     tenantId,
     projectId,
     module,
@@ -12484,24 +12522,43 @@ function executeWorkflowBatchTransition(req, moduleValue, businessIds, action, o
     permissions: req.currentSession.user.permissions,
     applyState: (transitions) => {
       try {
+        const logIds = [];
         transitions.forEach((transition, index) => {
           const target = targets[index];
           target.row.workflowInstanceKey = target.instanceKey;
           target.row.states = transition.toStateLabel;
           if (transition.action === "return") target.row.measureState = 0;
-          addWorkflowLog({
+          logIds.push(addWorkflowLog({
             module,
             businessId: Number(target.row[target.config.key] || target.row.id || 0),
             businessNo: workflowLabel(target.row, target.config.key),
             action: options.logAction || transition.action,
             result: transition.toStateLabel,
             userName: req.authUser.account,
-            remark
-          });
+            remark,
+            workflowTransactionId: transactionId
+          }));
         });
         if (typeof options.mutateRows === "function") options.mutateRows(targets, transitions);
+        workflowCoordinator.beginPending(engine.db, {
+          id: transactionId,
+          tenantId,
+          projectId,
+          module,
+          action,
+          logIds,
+          targets: transitions.map((transition, index) => ({
+            businessId: String(targets[index].row[targets[index].config.key] || targets[index].row.id),
+            instanceKey: targets[index].instanceKey,
+            expectedRevision: transition.instance.revision,
+            expectedState: transition.toState,
+            before: snapshots[index].value
+          }))
+        });
         appStore.save(engine.db, { actor: req.authUser.account, action: `workflow-batch:${module}:${action}:${targets.length}` });
+        pendingPersisted = true;
       } catch (error) {
+        workflowCoordinator.finalizePending(engine.db, transactionId);
         snapshots.forEach((snapshot) => {
           Reflect.ownKeys(snapshot.row).forEach((key) => Reflect.deleteProperty(snapshot.row, key));
           Object.assign(snapshot.row, JSON.parse(JSON.stringify(snapshot.value)));
@@ -12510,7 +12567,35 @@ function executeWorkflowBatchTransition(req, moduleValue, businessIds, action, o
         throw error;
       }
     }
-  });
+    });
+  } catch (error) {
+    if (pendingPersisted) {
+      const pendingState = JSON.parse(JSON.stringify(engine.db));
+      try {
+        workflowCoordinator.recoverPending(engine.db, { workflowStore, tenantId, projectId, resolveConfig: workflowConfig });
+        appStore.save(engine.db, { actor: req.authUser.account, action: `workflow-compensate:${module}:${action}:${targets.length}`, checkpoint: true });
+      } catch (recoveryError) {
+        replaceBusinessState(pendingState);
+        error.recoveryError = recoveryError.message;
+      }
+    }
+    throw error;
+  }
+  const pendingRecord = JSON.parse(JSON.stringify(engine.db[workflowCoordinator.PENDING_KEY] || []))
+    .find((item) => item.id === transactionId);
+  workflowCoordinator.finalizePending(engine.db, transactionId);
+  try {
+    appStore.save(engine.db, { actor: req.authUser.account, action: `workflow-finalize:${module}:${action}:${targets.length}` });
+  } catch (error) {
+    if (pendingRecord) {
+      workflowCoordinator.beginPending(engine.db, pendingRecord);
+      const logIds = new Set(pendingRecord.logIds || []);
+      ensureWorkflowLogs().forEach((log) => {
+        if (logIds.has(log.logId)) log.workflowTransactionId = transactionId;
+      });
+    }
+    console.error("workflow finalization deferred", error.message);
+  }
   authService.store.audit({
     tenantId,
     userId: req.authUser.id,

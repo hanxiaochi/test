@@ -163,6 +163,17 @@ test("batch transitions validate every item and commit atomically", () => withSt
   }), /business batch save failed/);
   assert.equal(store.getInstance("tenant-a", "project-a", "manualmeasure", 304), null);
   assert.equal(store.getInstance("tenant-a", "project-a", "manualmeasure", 305), null);
+
+  let externalBusinessSaved = false;
+  assert.throws(() => store.transitionBatch({
+    tenantId: "tenant-a", projectId: "project-a", module: "manualmeasure",
+    action: "submit", actorAccount: "admin", permissions: ["data:write"],
+    items: [{ businessId: 306 }],
+    applyState: () => { externalBusinessSaved = true; },
+    beforeCommit: () => { throw new Error("injected workflow commit failure"); }
+  }), /injected workflow commit failure/);
+  assert.equal(externalBusinessSaved, true);
+  assert.equal(store.getInstance("tenant-a", "project-a", "manualmeasure", 306), null);
 }));
 
 test("tampered workflow definitions fail closed before reads or activation", () => withStore((store) => {
