@@ -678,7 +678,11 @@ async function verifyContractUrls() {
     const { response, text } = await requestText(`/${url}`);
     const lower = text.toLowerCase();
     const problem = [];
-    if (response.status >= 400) problem.push(`http-${response.status}`);
+    let expectedSelectionFailure = false;
+    if (response.status === 400) {
+      try { expectedSelectionFailure = JSON.parse(text).errorCode === "WORKFLOW_SELECTION_REQUIRED"; } catch {}
+    }
+    if (response.status >= 400 && !expectedSelectionFailure) problem.push(`http-${response.status}`);
     if (text.includes("status\":404")) problem.push("404-body");
     if (lower.includes("not implemented") || text.includes("鍗犱綅") || text.includes("本地复刻未缓存") || lower.includes("placeholder")) problem.push("placeholder");
     if (/\bNaN\b/.test(text)) problem.push("NaN");
@@ -718,7 +722,7 @@ async function verifyCachedPageActions() {
     }
     const data = json && json.data;
     if (
-      response.status >= 400 ||
+      (response.status >= 400 && !(response.status === 400 && json && json.errorCode === "WORKFLOW_SELECTION_REQUIRED")) ||
       text.includes("placeholder") ||
       text.includes("local-form-") ||
       (data && data.saved === true && data.path) ||
@@ -2394,6 +2398,8 @@ async function verifyWorkflowAdjustReturnLoop() {
   assert.strictEqual(adjustedRow.price, 120, "workflow adjustment should update price");
   assert.strictEqual(adjustedRow.measureMoney, 360, "workflow adjustment should update computed money");
   assert.strictEqual(adjustedRow.states, "已调整", "workflow adjustment should set clean Chinese state");
+  const adjustedWorkflow = await requestJson(`/api/workflows/manualmeasure/${manualId}`);
+  assert.strictEqual(adjustedWorkflow.json.data.instance.currentState, "adjusted", "legacy adjustment endpoint should create a structured workflow transition");
 
   const { json: returned } = await postJson("/workflow/withdraw_order", {
     businessType: "manualmeasure",
@@ -2413,6 +2419,8 @@ async function verifyWorkflowAdjustReturnLoop() {
   assert.ok(track.text.includes(adjustRemark), "workflow track should include adjustment remark");
   assert.ok(track.text.includes(returnReason), "workflow track should include return reason");
   assert.ok(track.text.includes("已退回"), "workflow track should include returned state");
+  const returnedWorkflow = await requestJson(`/api/workflows/manualmeasure/${manualId}`);
+  assert.deepStrictEqual(returnedWorkflow.json.data.events.map((event) => event.action), ["return", "adjust"], "legacy adjust and return endpoints should append the structured event chain");
 
   await postJson(`/manualMeasure/delete/${manualId}`, { ids: String(manualId) });
 }
@@ -2622,6 +2630,9 @@ async function verifyVariationArchiveLoop() {
     assert.ok(archived, "archived variation should remain in list");
     assert.strictEqual(archived.states, "已归档", "archived variation should show clean archived state");
     assert.strictEqual(archived.archivePicName, "归档照片-验证.jpg", "archived variation should keep attachment name");
+    const archivedWorkflow = await requestJson(`/api/workflows/varyapplication/${varyId}`);
+    assert.strictEqual(archivedWorkflow.json.data.instance.currentState, "archived", "archive attachment endpoint should advance the structured workflow instance");
+    assert.strictEqual(archivedWorkflow.json.data.events[0].action, "archive", "archive attachment endpoint should retain a structured archive event");
 
     const track = await requestText(`/vary_measure/track_page?measureType=varyapplication&ids=${varyId}`);
     assert.ok(track.text.includes("BG-ARCHIVE-VERIFY"), "archive workflow track should include variation number");
@@ -3847,8 +3858,11 @@ async function verifyOriginalParameterAliasesLoop() {
   try {
     assert.ok((await postJson("/bill_measure/up_order", { billMeasureIds: String(measureId) })).json.data.changed >= 1, "bill measure should accept billMeasureIds");
     assert.ok((await postJson("/meterialdiasmeasure/up_order", { mdmIds: String(diasId) })).json.data.changed >= 1, "material dias should accept mdmIds");
+    assert.ok((await postJson("/meterialInMeasure/up_order", { meterialInMeasureIds: String(arrivalId) })).json.data.changed >= 1, "material arrival submit should accept meterialInMeasureIds");
     assert.ok((await postJson("/meterialInMeasure/update_measure_state", { meterialInMeasureIds: String(arrivalId) })).json.data.changed >= 1, "material arrival should accept meterialInMeasureIds");
+    assert.ok((await postJson("/manualMeasure/up_order", { manualMeasureIds: String(manualId) })).json.data.changed >= 1, "manual measure submit should accept manualMeasureIds");
     assert.ok((await postJson("/manualMeasure/update_measure_state", { manualMeasureIds: String(manualId) })).json.data.changed >= 1, "manual measure should accept manualMeasureIds");
+    assert.ok((await postJson("/vary_measure/up_order", { varyIds: String(varyId) })).json.data.changed >= 1, "variation submit should accept varyIds");
     assert.ok((await postJson("/vary_measure/agree_order", { varyIds: String(varyId) })).json.data.changed >= 1, "variation should accept varyIds on agree");
 
     const billList = await requestJson("/bill_measure/list?page=1&limit=1000");
@@ -4015,6 +4029,77 @@ async function verifyCommercialWorkflowEngineLoop() {
   }
 }
 
+async function verifyLegacyWorkflowBatchSafetyLoop() {
+  const ids = [];
+  let deletedReusableId = 0;
+  try {
+    for (const suffix of ["A", "B", "C"]) {
+      const saved = await postJson("/manualMeasure/save_measure", {
+        measureNo: `WF-BATCH-${suffix}`,
+        sectionId: 101,
+        billNo: `900-WFB-${suffix}`,
+        billName: `批量审批安全验证 ${suffix}`,
+        measureUnit: "项",
+        measureNum: 1,
+        price: 10,
+        states: "草稿"
+      });
+      ids.push(saved.json.data.manualMeasureId);
+    }
+    const [firstId, invalidId, reusableId] = ids;
+    const missingSelection = await postJson("/manualMeasure/up_order", {});
+    assert.strictEqual(missingSelection.response.status, 400, "legacy workflow mutation without a selection must fail");
+    assert.strictEqual(missingSelection.json.errorCode, "WORKFLOW_SELECTION_REQUIRED", "missing selection should be machine readable");
+    let list = await requestJson("/manualMeasure/detail_list?page=1&limit=1000");
+    assert.ok([firstId, reusableId, invalidId].every((id) => list.json.data.find((row) => Number(row.manualId) === Number(id)).states === "草稿"), "missing selection must not mutate any business row");
+
+    const submitted = await postJson("/manualMeasure/up_order", { manualMeasureIds: `${firstId},${reusableId}` });
+    assert.strictEqual(submitted.json.data.changed, 2, "legacy batch submit should process every selected row");
+    assert.strictEqual(submitted.json.data.results.length, 2, "legacy batch submit should expose structured transition results");
+    const firstWorkflow = await requestJson(`/api/workflows/manualmeasure/${firstId}`);
+    const reusableWorkflow = await requestJson(`/api/workflows/manualmeasure/${reusableId}`);
+    assert.match(firstWorkflow.json.data.instance.businessId, /^[0-9a-f-]{36}$/i, "workflow instance should use a non-reusable UUID");
+    assert.notStrictEqual(firstWorkflow.json.data.instance.businessId, reusableWorkflow.json.data.instance.businessId, "each business row should own a distinct workflow UUID");
+
+    const partialFailure = await postJson("/manualMeasure/update_measure_state", { manualMeasureIds: `${firstId},${invalidId}` });
+    assert.strictEqual(partialFailure.response.status, 409, "one invalid item should reject the entire legacy batch");
+    assert.strictEqual(partialFailure.json.errorCode, "WORKFLOW_TRANSITION_NOT_ALLOWED", "invalid batch state should be machine readable");
+    const firstAfterFailure = await requestJson(`/api/workflows/manualmeasure/${firstId}`);
+    const invalidAfterFailure = await requestJson(`/api/workflows/manualmeasure/${invalidId}`);
+    assert.strictEqual(firstAfterFailure.json.data.instance.revision, 1, "failed batch must roll back earlier workflow revisions");
+    assert.strictEqual(invalidAfterFailure.json.data.instance, null, "failed batch must not leave a partial workflow instance");
+
+    const updated = await postJson("/manualMeasure/update_measure_state", { manualMeasureIds: `${firstId},${reusableId}` });
+    assert.strictEqual(updated.json.data.changed, 2, "valid legacy batch update should commit atomically");
+    list = await requestJson("/manualMeasure/detail_list?page=1&limit=1000");
+    assert.ok([firstId, reusableId].every((id) => list.json.data.find((row) => Number(row.manualId) === Number(id)).states === "已更新"), "valid batch should persist both display states");
+
+    await postJson("/manualMeasure/delete", { manualMeasureIds: String(reusableId) });
+    deletedReusableId = reusableId;
+    const replacement = await postJson("/manualMeasure/save_measure", {
+      measureNo: "WF-BATCH-REPLACEMENT",
+      sectionId: 101,
+      billNo: "900-WFB-R",
+      billName: "复用显示 ID 的新单据",
+      measureUnit: "项",
+      measureNum: 1,
+      price: 10,
+      states: "草稿"
+    });
+    const replacementId = replacement.json.data.manualMeasureId;
+    ids.push(replacementId);
+    assert.strictEqual(Number(replacementId), Number(reusableId), "fixture should reproduce numeric id reuse");
+    const replacementWorkflow = await requestJson(`/api/workflows/manualmeasure/${replacementId}`);
+    assert.strictEqual(replacementWorkflow.json.data.instance, null, "replacement row must not inherit the deleted row workflow instance");
+    assert.strictEqual(replacementWorkflow.json.data.currentState, "draft", "replacement row should begin at its own draft state");
+  } finally {
+    for (const id of [...new Set(ids)]) {
+      if (id && Number(id) !== Number(deletedReusableId)) await postJson("/manualMeasure/delete", { manualMeasureIds: String(id) });
+    }
+    if (deletedReusableId) await postJson("/manualMeasure/delete", { manualMeasureIds: String(deletedReusableId) });
+  }
+}
+
 async function main() {
   const started = Date.now();
   await verifyHealth();
@@ -4065,6 +4150,7 @@ async function main() {
   await verifyWorkflowAdjustReturnAcrossModulesLoop();
   await verifyWorkflowDashboardLoop();
   await verifyCommercialWorkflowEngineLoop();
+  await verifyLegacyWorkflowBatchSafetyLoop();
   await verifyVariationArchiveLoop();
   await verifyVariationDetailCrudLoop();
   await verifyOriginalWorkflowBatchSemanticsLoop();

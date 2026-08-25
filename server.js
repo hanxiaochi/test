@@ -532,17 +532,6 @@ function ensureWorkflowLogs() {
   return engine.db.workflowLogs;
 }
 
-function workflowModuleFromIdField(idField) {
-  return {
-    measureId: "billmeasure",
-    diasId: "meterialdiasmeasure",
-    arrivalId: "meterialinmeasure",
-    manualId: "manualmeasure",
-    varyId: "varyapplication",
-    contactId: "engineeringcontactbill"
-  }[idField] || idField || "workflow";
-}
-
 function workflowLabel(row, idField) {
   return row.measureNo || row.varyNo || row.contactNo || row.meetingNo || row[idField] || row.id || "";
 }
@@ -644,32 +633,6 @@ function cleanBusinessText(value, fallback = "") {
   if (!text) return fallback;
   if (/[\uFFFD\uE000-\uF8FF]/u.test(text)) return fallback;
   return text;
-}
-
-function setState(rows, idField, ids, state, context = {}) {
-  let changed = 0;
-  const allRows = ids.includes("*");
-  rows.forEach((row) => {
-    if (allRows || !ids.length || ids.includes(Number(row[idField] || row.id))) {
-      row.states = state;
-      row.updateDate = today();
-      row.processInstanceId = row.processInstanceId || `${workflowModuleFromIdField(idField)}-${row[idField] || row.id}`;
-      addWorkflowLog({
-        module: context.module || workflowModuleFromIdField(idField),
-        businessId: Number(row[idField] || row.id || 0),
-        businessNo: workflowLabel(row, idField),
-        action: context.action || state,
-        result: state,
-        remark: context.remark || ""
-      });
-      row.states = row.gatherStateCode === 0 ? "锁定" : "启用";
-      row.states = state;
-      row.states = row.gatherStateCode === 0 ? "\u9501\u5b9a" : "\u542f\u7528";
-      row.states = state;
-      changed += 1;
-    }
-  });
-  return changed;
 }
 
 function removeRows(rows, idField, ids) {
@@ -7730,42 +7693,14 @@ function moveDocumentNode(req) {
 
 function withdrawWorkflow(req) {
   const requestedType = workflowRequestType(req);
-  const requestedConfig = workflowConfig(requestedType);
-  const requestedIds = workflowRequestIds(req, requestedConfig);
-  const ids = requestedIds.length ? requestedIds : idsFrom(req, "ids");
-  if (!ids.length) return { changed: 0, state: "已撤回" };
-  const measureType = requestedType;
-  const allCollections = [
-    { type: "billmeasure", rows: engine.db.measures, key: "measureId" },
-    { type: "meterialdiasmeasure", rows: engine.db.materialAdjustments, key: "diasId" },
-    { type: "meterialinmeasure", rows: engine.db.materialArrivals, key: "arrivalId" },
-    { type: "manualmeasure", rows: engine.db.manualMeasures, key: "manualId" },
-    { type: "varyapplication", rows: engine.db.variations, key: "varyId" },
-    { type: "engineeringcontactbill", rows: engine.db.contactBills, key: "contactId" }
-  ];
-  const collections = measureType
-    ? allCollections.filter((item) => item.type === measureType)
-    : allCollections;
-  let changed = 0;
-  collections.forEach(({ rows, key }) => {
-    rows.forEach((row) => {
-      if (ids.includes(Number(row[key] || row.id))) {
-        row.states = "已撤回";
-        row.measureState = 0;
-        row.states = "已退回";
-        addWorkflowLog({
-          module: workflowModuleFromIdField(key),
-          businessId: Number(row[key] || row.id || 0),
-          businessNo: workflowLabel(row, key),
-          action: "退回",
-          result: "已退回",
-          remark: req.body.returnReason || req.query.returnReason || ""
-        });
-        changed += 1;
-      }
-    });
+  if (!requestedType) throw new WorkflowError("请选择需要处理的业务单据", "WORKFLOW_SELECTION_REQUIRED", 400);
+  const type = requireWorkflowModule(requestedType);
+  const config = workflowConfig(type);
+  const ids = workflowRequestIds(req, config);
+  return executeWorkflowBatchTransition(req, type, ids, "return", {
+    remark: req.body.returnReason || req.query.returnReason || req.body.remark || req.query.remark || "",
+    logAction: "退回"
   });
-  return { changed, state: "已退回" };
 }
 
 function documentDetailHtml() {
@@ -7840,7 +7775,7 @@ function workflowActionButtons(req, row) {
   const tenantId = req.authUser.tenantId;
   const projectId = req.businessContext.projectId;
   const active = ensureWorkflowDefinition(tenantId, row.workflowModule);
-  const instance = workflowStore.getInstance(tenantId, projectId, row.workflowModule, row.workflowId);
+  const instance = row.workflowInstanceKey ? workflowStore.getInstance(tenantId, projectId, row.workflowModule, row.workflowInstanceKey) : null;
   const version = instance ? workflowStore.getDefinition(instance.definitionId) : active;
   const currentState = instance ? instance.currentState : workflowStore.resolveInitialState(version.definition, row.states);
   const revision = instance ? instance.revision : 0;
@@ -12458,12 +12393,6 @@ function bigVaryDashboardHtml(req) {
     </div>`;
 }
 
-function mutateStateByIds(rows, idField, req, fallbackState) {
-  const ids = idsFrom(req, "ids").concat(idsFrom(req, `${idField}s`), idsFrom(req, idField));
-  const state = req.body.state || req.body.states || req.query.state || fallbackState;
-  return { changed: setState(rows, idField, ids, state, { module: workflowModuleFromIdField(idField), action: state, remark: req.body.remark || req.query.remark || "" }) };
-}
-
 function workflowConfig(type) {
   const configs = {
     billmeasure: { rows: engine.db.measures, key: "measureId", no: "measureNo", title: "清单计量" },
@@ -12506,41 +12435,77 @@ function workflowBusinessTarget(module, businessId) {
 }
 
 function executeWorkflowTransition(req, moduleValue, businessId) {
-  const target = workflowBusinessTarget(moduleValue, businessId);
+  const batch = executeWorkflowBatchTransition(req, moduleValue, [businessId], req.body.action, {
+    expectedRevision: req.body.expectedRevision,
+    remark: req.body.remark
+  });
+  return batch.results[0];
+}
+
+function workflowTargetsForIds(moduleValue, businessIds) {
+  const module = requireWorkflowModule(moduleValue);
+  const config = workflowConfig(module);
+  const requested = [...new Set((Array.isArray(businessIds) ? businessIds : [businessIds]).map((value) => String(value)).filter(Boolean))];
+  if (!requested.length) throw new WorkflowError("请选择需要处理的业务单据", "WORKFLOW_SELECTION_REQUIRED", 400);
+  const targets = requested.includes("*")
+    ? config.rows.map((row) => ({ module, config, row }))
+    : requested.map((businessId) => workflowBusinessTarget(module, businessId));
+  if (!targets.length) throw new WorkflowError("没有可处理的业务单据", "WORKFLOW_SELECTION_REQUIRED", 400);
+  return targets;
+}
+
+function executeWorkflowBatchTransition(req, moduleValue, businessIds, action, options = {}) {
+  const targets = workflowTargetsForIds(moduleValue, businessIds);
   const tenantId = req.authUser.tenantId;
   const projectId = req.businessContext.projectId;
-  ensureWorkflowDefinition(tenantId, target.module);
-  const previousState = target.row.states;
+  const module = targets[0].module;
+  ensureWorkflowDefinition(tenantId, module);
+  targets.forEach((target) => {
+    target.instanceKey = target.row.workflowInstanceKey || crypto.randomUUID();
+  });
+  const snapshots = targets.map((target) => ({ row: target.row, value: JSON.parse(JSON.stringify(target.row)) }));
   const logs = ensureWorkflowLogs();
   const previousLogLength = logs.length;
-  const result = workflowStore.transition({
+  const remark = options.remark !== undefined ? options.remark : req.body.remark || req.body.returnReason || req.query.remark || req.query.returnReason || "";
+  const result = workflowStore.transitionBatch({
     tenantId,
     projectId,
-    module: target.module,
-    businessId: String(target.row[target.config.key] || target.row.id),
-    businessNo: workflowLabel(target.row, target.config.key),
-    currentStateLabel: target.row.states,
-    action: req.body.action,
-    expectedRevision: req.body.expectedRevision,
-    remark: req.body.remark,
+    module,
+    action,
+    remark,
+    items: targets.map((target) => ({
+      businessId: target.instanceKey,
+      businessNo: workflowLabel(target.row, target.config.key),
+      currentStateLabel: target.row.states,
+      expectedRevision: options.expectedRevision
+    })),
     actorUserId: req.authUser.id,
     actorAccount: req.authUser.account,
     permissions: req.currentSession.user.permissions,
-    applyState: (transition) => {
-      target.row.states = transition.toStateLabel;
-      addWorkflowLog({
-        module: target.module,
-        businessId: Number(target.row[target.config.key] || target.row.id || 0),
-        businessNo: workflowLabel(target.row, target.config.key),
-        action: transition.action,
-        result: transition.toStateLabel,
-        userName: req.authUser.account,
-        remark: req.body.remark || ""
-      });
+    applyState: (transitions) => {
       try {
-        appStore.save(engine.db, { actor: req.authUser.account, action: `workflow:${target.module}:${transition.action}` });
+        transitions.forEach((transition, index) => {
+          const target = targets[index];
+          target.row.workflowInstanceKey = target.instanceKey;
+          target.row.states = transition.toStateLabel;
+          if (transition.action === "return") target.row.measureState = 0;
+          addWorkflowLog({
+            module,
+            businessId: Number(target.row[target.config.key] || target.row.id || 0),
+            businessNo: workflowLabel(target.row, target.config.key),
+            action: options.logAction || transition.action,
+            result: transition.toStateLabel,
+            userName: req.authUser.account,
+            remark
+          });
+        });
+        if (typeof options.mutateRows === "function") options.mutateRows(targets, transitions);
+        appStore.save(engine.db, { actor: req.authUser.account, action: `workflow-batch:${module}:${action}:${targets.length}` });
       } catch (error) {
-        target.row.states = previousState;
+        snapshots.forEach((snapshot) => {
+          Reflect.ownKeys(snapshot.row).forEach((key) => Reflect.deleteProperty(snapshot.row, key));
+          Object.assign(snapshot.row, JSON.parse(JSON.stringify(snapshot.value)));
+        });
         logs.splice(previousLogLength);
         throw error;
       }
@@ -12549,15 +12514,41 @@ function executeWorkflowTransition(req, moduleValue, businessId) {
   authService.store.audit({
     tenantId,
     userId: req.authUser.id,
-    action: "workflow.transition",
+    action: targets.length > 1 ? "workflow.transition.batch" : "workflow.transition",
     result: "success",
-    targetType: target.module,
-    targetId: String(businessId),
+    targetType: module,
+    targetId: targets.map((target) => String(target.row[target.config.key] || target.row.id)).join(","),
     ipAddress: req.ip,
     userAgent: req.headers["user-agent"],
-    details: { projectId, workflowAction: result.action, fromState: result.fromState, toState: result.toState, revision: result.instance.revision }
+    details: {
+      projectId,
+      workflowAction: action,
+      count: targets.length,
+      transitions: result.results.map((transition, index) => ({ businessId: String(targets[index].row[targets[index].config.key] || targets[index].row.id), instanceKey: transition.instance.businessId, fromState: transition.fromState, toState: transition.toState, revision: transition.instance.revision }))
+    }
   });
-  return result;
+  return { changed: targets.length, state: result.results[0].toStateLabel, results: result.results };
+}
+
+function legacyWorkflowHandler(module, idKeys, action) {
+  return (req, res, next) => {
+    try {
+      const ids = idsFromAny(req, idKeys);
+      operationOk(res, executeWorkflowBatchTransition(req, module, ids, action));
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
+function workflowRequestHandler(handler) {
+  return (req, res, next) => {
+    try {
+      operationOk(res, handler(req));
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 function normalizeWorkflowType(value) {
@@ -12726,12 +12717,15 @@ function returnOrderFormHtml(req, type, title) {
 
 function adjustWorkflow(req) {
   const body = { ...req.query, ...req.body };
-  const type = workflowRequestType(req);
+  const requestedType = workflowRequestType(req);
+  if (!requestedType) throw new WorkflowError("请选择需要处理的业务单据", "WORKFLOW_SELECTION_REQUIRED", 400);
+  const type = requireWorkflowModule(requestedType);
   const config = workflowConfig(type);
   const ids = workflowRequestIds(req, config);
-  let changed = 0;
-  config.rows.forEach((row) => {
-    if (ids.includes(Number(row[config.key] || row.id))) {
+  const result = executeWorkflowBatchTransition(req, type, ids, "adjust", {
+    remark: body.remark || "",
+    logAction: "调整",
+    mutateRows: (targets) => targets.forEach(({ row }) => {
       const quantity = numeric(body.quantity, workflowValueFor(row, type, "quantity"));
       const price = numeric(body.price, workflowValueFor(row, type, "price"));
       if (type === "billmeasure") {
@@ -12748,20 +12742,9 @@ function adjustWorkflow(req) {
         row.quantity = quantity;
       }
       row.adjustRemark = body.remark || row.adjustRemark || "";
-      row.states = body.states || body.state || "已调整";
-      row.states = cleanWorkflowText(row.states, "已调整");
-      addWorkflowLog({
-        module: type,
-        businessId: Number(row[config.key] || row.id || 0),
-        businessNo: workflowLabel(row, config.key),
-        action: "调整",
-        result: row.states,
-        remark: row.adjustRemark
-      });
-      changed += 1;
-    }
+    })
   });
-  return { changed, measureType: type };
+  return { ...result, measureType: type };
 }
 
 function smsFormHtml() {
@@ -12934,48 +12917,18 @@ function archiveUploadFormHtmlClean(req) {
 
 function saveArchivePicClean(req) {
   const ids = idsFrom(req, "ids").concat(idsFrom(req, "varyId"));
-  let changed = 0;
-  engine.db.variations.forEach((row) => {
-    if (!ids.length || ids.includes(Number(row.varyId || row.id))) {
+  const fileName = cleanBusinessText(req.body.fileName || req.query.fileName, "archive-photo.jpg");
+  const archiveRemark = cleanBusinessText(req.body.remark || req.query.remark, "");
+  return executeWorkflowBatchTransition(req, "varyapplication", ids, "archive", {
+    remark: `${fileName} ${archiveRemark}`.trim(),
+    logAction: "归档附件",
+    mutateRows: (targets) => targets.forEach(({ row }) => {
       row.archivePicName = cleanBusinessText(req.body.fileName || req.query.fileName || row.archivePicName, "archive-photo.jpg");
       row.archiveRemark = cleanBusinessText(req.body.remark || req.query.remark || row.archiveRemark, "");
-      row.states = "已归档";
       row.isArchive = 1;
       row.archiveDate = today();
-      addWorkflowLog({
-        module: "varyapplication",
-        businessId: Number(row.varyId || row.id || 0),
-        businessNo: workflowLabel(row, "varyId"),
-        action: "归档附件",
-        result: "已归档",
-        remark: `${row.archivePicName} ${row.archiveRemark || ""}`.trim()
-      });
-      changed += 1;
-    }
+    })
   });
-  return { changed, state: "已归档" };
-}
-
-function saveArchivePic(req) {
-  const ids = idsFrom(req, "ids").concat(idsFrom(req, "varyId"));
-  let changed = 0;
-  engine.db.variations.forEach((row) => {
-    if (ids.includes(Number(row.varyId || row.id))) {
-      row.archivePicName = req.body.fileName || req.query.fileName || row.archivePicName || "archive-photo.jpg";
-      row.archiveRemark = req.body.remark || req.query.remark || row.archiveRemark || "";
-      row.states = "已归档";
-      addWorkflowLog({
-        module: "varyapplication",
-        businessId: Number(row.varyId || row.id || 0),
-        businessNo: workflowLabel(row, "varyId"),
-        action: "归档附件",
-        result: "已归档",
-        remark: `${row.archivePicName} ${row.archiveRemark || ""}`.trim()
-      });
-      changed += 1;
-    }
-  });
-  return { changed };
 }
 
 function importSecBillHtml() {
@@ -14095,7 +14048,8 @@ app.get("/api/workflows/:module/:businessId", (req, res, next) => {
     const tenantId = req.authUser.tenantId;
     const projectId = req.businessContext.projectId;
     const active = ensureWorkflowDefinition(tenantId, target.module);
-    const instance = workflowStore.getInstance(tenantId, projectId, target.module, req.params.businessId);
+    const instanceKey = target.row.workflowInstanceKey || "";
+    const instance = instanceKey ? workflowStore.getInstance(tenantId, projectId, target.module, instanceKey) : null;
     const version = instance ? workflowStore.getDefinition(instance.definitionId) : active;
     const currentState = instance ? instance.currentState : workflowStore.resolveInitialState(version.definition, target.row.states);
     const availableActions = version.definition.transitions
@@ -14107,7 +14061,7 @@ app.get("/api/workflows/:module/:businessId", (req, res, next) => {
       definition: { id: version.id, version: version.version, projectId: version.projectId },
       currentState,
       availableActions,
-      events: instance ? workflowStore.events({ tenantId, projectId, module: target.module, businessId: req.params.businessId, limit: 100 }) : []
+      events: instance ? workflowStore.events({ tenantId, projectId, module: target.module, businessId: instanceKey, limit: 100 }) : []
     });
   } catch (error) {
     next(error);
@@ -14913,10 +14867,10 @@ app.all("/bill_measure/render_order_page", (req, res) => html(res, billMeasureOr
 app.all("/bill_measure/return_order_page", (req, res) => html(res, modalFormHtml("退回计量", "bill_measure/return_order_page")));
 app.all("/bill_measure/return_all_order_page", (req, res) => html(res, modalFormHtml("批量退回计量", "bill_measure/return_all_order_page")));
 app.all("/bill_measure/track_bill_measure_page", (req, res) => html(res, workflowTrackHtml("清单计量流程追踪", req)));
-app.all("/bill_measure/up_order", (req, res) => mutate(res, () => ({ changed: setState(engine.db.measures, "measureId", idsFromAny(req, ["measureIds", "measureId", "billMeasureIds", "billMeasureId"]), "审核中") })));
-app.all("/bill_measure/agree_order", (req, res) => mutate(res, () => ({ changed: setState(engine.db.measures, "measureId", idsFromAny(req, ["measureIds", "measureId", "billMeasureIds", "billMeasureId"]), "已审核") })));
-app.all("/bill_measure/agree_all_order", (req, res) => mutate(res, () => ({ changed: setState(engine.db.measures, "measureId", idsFromAny(req, ["measureIds", "measureId", "billMeasureIds", "billMeasureId"]), "已审核") })));
-app.all("/bill_measure/archive_measure", (req, res) => mutate(res, () => ({ changed: setState(engine.db.measures, "measureId", idsFromAny(req, ["measureIds", "measureId", "billMeasureIds", "billMeasureId"]), "已归档") })));
+app.all("/bill_measure/up_order", legacyWorkflowHandler("billmeasure", ["measureIds", "measureId", "billMeasureIds", "billMeasureId"], "submit"));
+app.all("/bill_measure/agree_order", legacyWorkflowHandler("billmeasure", ["measureIds", "measureId", "billMeasureIds", "billMeasureId"], "approve"));
+app.all("/bill_measure/agree_all_order", legacyWorkflowHandler("billmeasure", ["measureIds", "measureId", "billMeasureIds", "billMeasureId"], "approve"));
+app.all("/bill_measure/archive_measure", legacyWorkflowHandler("billmeasure", ["measureIds", "measureId", "billMeasureIds", "billMeasureId"], "archive"));
 app.all("/bill_measure/delete/:id?", (req, res) => mutate(res, () => ({ changed: removeRows(engine.db.measures, "measureId", idsFromAny(req, ["measureIds", "measureId", "billMeasureIds", "billMeasureId"])) })));
 app.all("/bill_measure/next_task_list", (req, res) => operationOk(res, 3));
 app.all("/bill_measure/next_task_rows", (req, res) => operationOk(res, [
@@ -14946,9 +14900,9 @@ app.all("/meterialdiasmeasure/edit_meterial_dias_measure_page", (req, res) => ht
 app.all("/meterialdiasmeasure/adjust_page", (req, res) => html(res, modalFormHtml("调整材料补差", "meterialdiasmeasure/adjust_page")));
 app.all("/meterialdiasmeasure/return_order_page", (req, res) => html(res, modalFormHtml("退回材料补差", "meterialdiasmeasure/return_order_page")));
 app.all("/meterialdiasmeasure/track_meterial_dias_reasoure_page", (req, res) => html(res, workflowTrackHtml("材料补差流程追踪", req)));
-app.all("/meterialdiasmeasure/up_order", (req, res) => mutate(res, () => ({ changed: setState(engine.db.materialAdjustments, "diasId", idsFromAny(req, ["diasId", "mdmIds", "meterialMeasureId", "meterialDiasMeasureId", "meterialDiasMeasureIds"]), req.body.state || req.body.states || req.query.state || "审核中", { module: "meterialdiasmeasure", action: req.body.state || req.body.states || req.query.state || "审核中", remark: req.body.remark || req.query.remark || "" }) })));
-app.all("/meterialdiasmeasure/agree_order", (req, res) => mutate(res, () => ({ changed: setState(engine.db.materialAdjustments, "diasId", idsFromAny(req, ["diasId", "mdmIds", "meterialMeasureId", "meterialDiasMeasureId", "meterialDiasMeasureIds"]), req.body.state || req.body.states || req.query.state || "已审核", { module: "meterialdiasmeasure", action: req.body.state || req.body.states || req.query.state || "已审核", remark: req.body.remark || req.query.remark || "" }) })));
-app.all("/meterialdiasmeasure/archive", (req, res) => mutate(res, () => ({ changed: setState(engine.db.materialAdjustments, "diasId", idsFromAny(req, ["diasId", "mdmIds", "meterialMeasureId", "meterialDiasMeasureId", "meterialDiasMeasureIds"]), "已归档") })));
+app.all("/meterialdiasmeasure/up_order", legacyWorkflowHandler("meterialdiasmeasure", ["diasId", "mdmIds", "meterialMeasureId", "meterialDiasMeasureId", "meterialDiasMeasureIds"], "submit"));
+app.all("/meterialdiasmeasure/agree_order", legacyWorkflowHandler("meterialdiasmeasure", ["diasId", "mdmIds", "meterialMeasureId", "meterialDiasMeasureId", "meterialDiasMeasureIds"], "approve"));
+app.all("/meterialdiasmeasure/archive", legacyWorkflowHandler("meterialdiasmeasure", ["diasId", "mdmIds", "meterialMeasureId", "meterialDiasMeasureId", "meterialDiasMeasureIds"], "archive"));
 app.all("/meterialdiasmeasure/del_meterial_dias_measure", (req, res) => mutate(res, () => ({ changed: removeRows(engine.db.materialAdjustments, "diasId", idsFromAny(req, ["diasId", "mdmIds", "meterialMeasureId", "meterialDiasMeasureId", "meterialDiasMeasureIds"])) })));
 app.all("/meterialdiasmeasure/delete/:id?", (req, res) => mutate(res, () => ({ changed: removeRows(engine.db.materialAdjustments, "diasId", idsFromAny(req, ["diasId", "mdmIds", "meterialMeasureId", "meterialDiasMeasureId", "meterialDiasMeasureIds"])) })));
 app.all("/meterialdiasmeasure/delete_meterial_dias_measure/:id?", (req, res) => mutate(res, () => ({ changed: removeRows(engine.db.materialAdjustments, "diasId", idsFromAny(req, ["diasId", "mdmIds", "meterialMeasureId", "meterialDiasMeasureId", "meterialDiasMeasureIds"])) })));
@@ -14968,9 +14922,9 @@ app.all("/meterialInMeasure/form_page", (req, res) => html(res, modalFormHtml("�
 app.all("/meterialInMeasure/adjust_page", (req, res) => html(res, modalFormHtml("调整材料到场", "meterialInMeasure/adjust_page")));
 app.all("/meterialInMeasure/return_order_page", (req, res) => html(res, modalFormHtml("退回材料到场", "meterialInMeasure/return_order_page")));
 app.all("/meterialInMeasure/record_page", (req, res) => html(res, workflowTrackHtml("材料到场处理记录", req)));
-app.all("/meterialInMeasure/up_order", (req, res) => mutate(res, () => ({ changed: setState(engine.db.materialArrivals, "arrivalId", idsFromAny(req, ["arrivalId", "meterialInMeasureId", "meterialInMeasureIds"]), req.body.state || req.body.states || req.query.state || "审核中", { module: "meterialinmeasure", action: req.body.state || req.body.states || req.query.state || "审核中", remark: req.body.remark || req.query.remark || "" }) })));
-app.all("/meterialInMeasure/update_measure_state", (req, res) => mutate(res, () => ({ changed: setState(engine.db.materialArrivals, "arrivalId", idsFromAny(req, ["arrivalId", "meterialInMeasureId", "meterialInMeasureIds"]), req.body.state || req.body.states || req.query.state || "已更新", { module: "meterialinmeasure", action: req.body.state || req.body.states || req.query.state || "已更新", remark: req.body.remark || req.query.remark || "" }) })));
-app.all("/meterialInMeasure/archive", (req, res) => mutate(res, () => ({ changed: setState(engine.db.materialArrivals, "arrivalId", idsFromAny(req, ["arrivalId", "meterialInMeasureId", "meterialInMeasureIds"]), "已归档") })));
+app.all("/meterialInMeasure/up_order", legacyWorkflowHandler("meterialinmeasure", ["arrivalId", "meterialInMeasureId", "meterialInMeasureIds"], "submit"));
+app.all("/meterialInMeasure/update_measure_state", legacyWorkflowHandler("meterialinmeasure", ["arrivalId", "meterialInMeasureId", "meterialInMeasureIds"], "update"));
+app.all("/meterialInMeasure/archive", legacyWorkflowHandler("meterialinmeasure", ["arrivalId", "meterialInMeasureId", "meterialInMeasureIds"], "archive"));
 app.all("/meterialInMeasure/delete/:id?", (req, res) => mutate(res, () => ({ changed: removeRows(engine.db.materialArrivals, "arrivalId", idsFromAny(req, ["arrivalId", "meterialInMeasureId", "meterialInMeasureIds"])) })));
 app.all("/manualMeasure/detail_list", (req, res) => table(res, req, engine.manualMeasureRows()));
 app.all("/manualMeasure/dashboard_page", (req, res) => html(res, manualMeasureDashboardHtml(req)));
@@ -14998,9 +14952,9 @@ app.all("/manualMeasure/return_order_page", (req, res) => html(res, returnOrderF
 app.all("/manualMeasure/adjust_page", (req, res) => html(res, modalFormHtml("调整手动计量", "manualMeasure/adjust_page")));
 app.all("/manualMeasure/return_order_page", (req, res) => html(res, modalFormHtml("退回手动计量", "manualMeasure/return_order_page")));
 app.all("/manualMeasure/record_page", (req, res) => html(res, workflowTrackHtml("手动计量处理记录", req)));
-app.all("/manualMeasure/up_order", (req, res) => mutate(res, () => ({ changed: setState(engine.db.manualMeasures, "manualId", idsFromAny(req, ["manualId", "manualIds", "manualMeasureId", "manualMeasureIds"]), req.body.state || req.body.states || req.query.state || "审核中", { module: "manualmeasure", action: req.body.state || req.body.states || req.query.state || "审核中", remark: req.body.remark || req.query.remark || "" }) })));
-app.all("/manualMeasure/update_measure_state", (req, res) => mutate(res, () => ({ changed: setState(engine.db.manualMeasures, "manualId", idsFromAny(req, ["manualId", "manualIds", "manualMeasureId", "manualMeasureIds"]), req.body.state || req.body.states || req.query.state || "已更新", { module: "manualmeasure", action: req.body.state || req.body.states || req.query.state || "已更新", remark: req.body.remark || req.query.remark || "" }) })));
-app.all("/manualMeasure/archive", (req, res) => mutate(res, () => ({ changed: setState(engine.db.manualMeasures, "manualId", idsFromAny(req, ["manualId", "manualIds", "manualMeasureId", "manualMeasureIds"]), "已归档") })));
+app.all("/manualMeasure/up_order", legacyWorkflowHandler("manualmeasure", ["manualId", "manualIds", "manualMeasureId", "manualMeasureIds"], "submit"));
+app.all("/manualMeasure/update_measure_state", legacyWorkflowHandler("manualmeasure", ["manualId", "manualIds", "manualMeasureId", "manualMeasureIds"], "update"));
+app.all("/manualMeasure/archive", legacyWorkflowHandler("manualmeasure", ["manualId", "manualIds", "manualMeasureId", "manualMeasureIds"], "archive"));
 app.all("/manualMeasure/delete/:id?", (req, res) => mutate(res, () => ({ changed: removeRows(engine.db.manualMeasures, "manualId", idsFromAny(req, ["manualId", "manualIds", "manualMeasureId", "manualMeasureIds"])) })));
 app.all("/vary_measure/dashboard_page", (req, res) => html(res, variationManagementDashboardHtml(req)));
 app.all("/vary_measure/page", (req, res) => html(res, variationManagementDashboardHtml(req)));
@@ -15015,17 +14969,17 @@ app.all("/vary_detail/save", (req, res) => mutate(res, () => saveVariationDetail
 app.all("/vary_measure/adjust_page", (req, res) => html(res, adjustmentFormHtml(req, "varyapplication", "调整变更")));
 app.all("/vary_measure/return_order_page", (req, res) => html(res, returnOrderFormHtml(req, "varyapplication", "退回变更")));
 app.all("/vary_measure/archive_upload_pic_page", (req, res) => html(res, archiveUploadFormHtmlClean(req)));
-app.all("/vary_measure/save_archive_pic", (req, res) => mutate(res, () => saveArchivePicClean(req)));
+app.all("/vary_measure/save_archive_pic", workflowRequestHandler(saveArchivePicClean));
 app.all("/vary_measure/adjust_page", (req, res) => html(res, modalFormHtml("调整变更", "vary_measure/adjust_page")));
 app.all("/vary_measure/return_order_page", (req, res) => html(res, modalFormHtml("退回变更", "vary_measure/return_order_page")));
 app.all("/vary_measure/render_order_page", (req, res) => html(res, variationOrderReportHtml(req)));
 app.all("/vary_measure/track_page", (req, res) => html(res, workflowTrackHtml("变更流程追踪", req)));
 app.all("/vary_measure/archive_upload_pic_page", (req, res) => html(res, modalFormHtml("归档附件", "vary_measure/archive_upload_pic_page")));
 app.all("/vary_detail/delete/:id?", (req, res) => mutate(res, () => deleteVariationDetail(req)));
-app.all("/vary_measure/up_order", (req, res) => mutate(res, () => ({ changed: setState(engine.db.variations, "varyId", idsFromAny(req, ["varyId", "varyIds"]), "审核中") })));
-app.all("/vary_measure/agree_order", (req, res) => mutate(res, () => ({ changed: setState(engine.db.variations, "varyId", idsFromAny(req, ["varyId", "varyIds"]), "已审核") })));
-app.all("/vary_measure/agree_all_order", (req, res) => mutate(res, () => ({ changed: setState(engine.db.variations, "varyId", idsFromAny(req, ["varyId", "varyIds"]), "已审核") })));
-app.all("/vary_measure/archive_measure", (req, res) => mutate(res, () => ({ changed: setState(engine.db.variations, "varyId", idsFromAny(req, ["varyId", "varyIds"]), "已归档") })));
+app.all("/vary_measure/up_order", legacyWorkflowHandler("varyapplication", ["varyId", "varyIds"], "submit"));
+app.all("/vary_measure/agree_order", legacyWorkflowHandler("varyapplication", ["varyId", "varyIds"], "approve"));
+app.all("/vary_measure/agree_all_order", legacyWorkflowHandler("varyapplication", ["varyId", "varyIds"], "approve"));
+app.all("/vary_measure/archive_measure", legacyWorkflowHandler("varyapplication", ["varyId", "varyIds"], "archive"));
 app.all("/vary_measure/delete/:id?", (req, res) => mutate(res, () => ({ changed: removeRows(engine.db.variations, "varyId", idsFromAny(req, ["varyId", "varyIds"])) })));
 app.all("/vary_measure/next_task_list", (req, res) => operationOk(res, 3));
 app.all("/vary_measure/next_task_rows", (req, res) => operationOk(res, [
@@ -15183,8 +15137,8 @@ app.all("/engineering_contact_bill/page", (req, res) => html(res, engineeringCon
 app.all("/engineering_contact_bill/edit_page", (req, res) => html(res, contactFormHtml(req)));
 app.all("/engineering_contact_bill/save_bill", (req, res) => mutate(res, () => saveContactBill(req)));
 app.all("/engineering_contact_bill/return_order_page", (req, res) => html(res, returnOrderFormHtml(req, "engineeringcontactbill", "退回工程联系单")));
-app.all("/engineering_contact_bill/up_order", (req, res) => mutate(res, () => mutateStateByIds(engine.db.contactBills, "contactId", req, "审核中")));
-app.all("/engineering_contact_bill/agree_order", (req, res) => mutate(res, () => mutateStateByIds(engine.db.contactBills, "contactId", req, "已审核")));
+app.all("/engineering_contact_bill/up_order", legacyWorkflowHandler("engineeringcontactbill", ["contactId", "contactIds"], "submit"));
+app.all("/engineering_contact_bill/agree_order", legacyWorkflowHandler("engineeringcontactbill", ["contactId", "contactIds"], "approve"));
 app.all("/engineering_contact_bill/return_order_page", (req, res) => html(res, modalFormHtml("退回联系单", "engineering_contact_bill/return_order_page")));
 app.all("/engineering_contact_bill/track_engineering_contact_bill_page", (req, res) => html(res, workflowTrackHtml("工程联系单流程追踪", req)));
 app.all("/engineering_contact_bill/del", (req, res) => mutate(res, () => ({ changed: removeRows(engine.db.contactBills, "contactId", idsFrom(req, "ids")) })));
@@ -15262,8 +15216,8 @@ app.all("/workflow/isSendSMSpage", (req, res) => html(res, modalFormHtml("短信
 app.all("/workflow/see_process_img", (req, res) => {
   res.type("image/svg+xml").send(workflowSvg());
 });
-app.all("/workflow/adjust_order", (req, res) => mutate(res, () => adjustWorkflow(req)));
-app.all("/workflow/withdraw_order", (req, res) => mutate(res, () => ({ withdrawn: true, ...withdrawWorkflow(req) })));
+app.all("/workflow/adjust_order", workflowRequestHandler(adjustWorkflow));
+app.all("/workflow/withdraw_order", workflowRequestHandler((req) => ({ withdrawn: true, ...withdrawWorkflow(req) })));
 app.all("/page_office/project_information_open_word", (req, res) => html(res, projectInformationWordHtml(req)));
 app.all("/editindex_information", (req, res) => html(res, projectInformationWordHtml(req)));
 app.all("/edit_page", (req, res) => html(res, localEditPageHtml()));

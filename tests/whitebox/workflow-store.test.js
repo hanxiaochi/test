@@ -127,6 +127,44 @@ test("module, project and tenant form independent instance keys", () => withStor
   assert.equal(store.getInstance("tenant-a", "project-a", "billmeasure", 101).revision, 1);
 }));
 
+test("batch transitions validate every item and commit atomically", () => withStore((store) => {
+  createDefault(store);
+  let applied = [];
+  const batch = store.transitionBatch({
+    tenantId: "tenant-a", projectId: "project-a", module: "manualmeasure",
+    action: "submit", actorUserId: 7, actorAccount: "admin", permissions: ["data:write"],
+    items: [
+      { businessId: 301, businessNo: "SD-301", currentStateLabel: "草稿" },
+      { businessId: 302, businessNo: "SD-302", currentStateLabel: "待上报" }
+    ],
+    applyState: (results) => { applied = results.map((item) => item.instance.businessId); }
+  });
+  assert.equal(batch.count, 2);
+  assert.deepEqual(applied, ["301", "302"]);
+  assert.equal(store.getInstance("tenant-a", "project-a", "manualmeasure", 301).currentState, "pending");
+  assert.equal(store.getInstance("tenant-a", "project-a", "manualmeasure", 302).revision, 1);
+
+  assert.throws(() => store.transitionBatch({
+    tenantId: "tenant-a", projectId: "project-a", module: "manualmeasure",
+    action: "submit", actorAccount: "admin", permissions: ["data:write"],
+    items: [
+      { businessId: 303, currentStateLabel: "草稿" },
+      { businessId: 302, currentStateLabel: "审核中" }
+    ]
+  }), (error) => error.code === "WORKFLOW_TRANSITION_NOT_ALLOWED" && error.businessId === "302");
+  assert.equal(store.getInstance("tenant-a", "project-a", "manualmeasure", 303), null);
+  assert.equal(store.getInstance("tenant-a", "project-a", "manualmeasure", 302).revision, 1);
+
+  assert.throws(() => store.transitionBatch({
+    tenantId: "tenant-a", projectId: "project-a", module: "manualmeasure",
+    action: "submit", actorAccount: "admin", permissions: ["data:write"],
+    items: [{ businessId: 304 }, { businessId: 305 }],
+    applyState: () => { throw new Error("business batch save failed"); }
+  }), /business batch save failed/);
+  assert.equal(store.getInstance("tenant-a", "project-a", "manualmeasure", 304), null);
+  assert.equal(store.getInstance("tenant-a", "project-a", "manualmeasure", 305), null);
+}));
+
 test("tampered workflow definitions fail closed before reads or activation", () => withStore((store) => {
   const version = createDefault(store);
   store.db.prepare("UPDATE workflow_definitions SET definition_json=? WHERE id=?").run(JSON.stringify({ initialState: "draft", states: [], transitions: [] }), version.id);
@@ -172,6 +210,9 @@ test("invalid definitions and transition inputs fail closed", () => withStore((s
   assert.throws(() => transition(store, { businessId: "" }), /Business id is required/);
   assert.throws(() => transition(store, { expectedRevision: -1 }), /Expected revision is invalid/);
   assert.throws(() => transition(store, { actorAccount: "" }), /Actor account is required/);
+  assert.throws(() => store.transitionBatch({ tenantId: "tenant-a", projectId: "project-a", module: "manualmeasure", actorAccount: "admin", items: [] }), /1 to 500/);
+  assert.throws(() => store.transitionBatch({ tenantId: "tenant-a", projectId: "project-a", module: "manualmeasure", actorAccount: "admin", items: Array.from({ length: 501 }, (_, index) => ({ businessId: index + 1, action: "submit" })) }), /1 to 500/);
+  assert.throws(() => store.transitionBatch({ tenantId: "tenant-a", projectId: "project-a", module: "manualmeasure", actorAccount: "admin", items: [{ businessId: 1, action: "submit" }, { businessId: 1, action: "submit" }] }), /duplicate business ids/);
   transition(store, { businessId: 999, businessNo: "", actorUserId: null, permissions: ["*"] });
   store.db.prepare("UPDATE workflow_instances SET current_state='legacy-unknown' WHERE business_id='999'").run();
   assert.equal(store.getInstance("tenant-a", "project-a", "manualmeasure", 999).currentStateLabel, "legacy-unknown");
