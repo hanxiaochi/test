@@ -19,6 +19,7 @@ const commands = [
   ["run", "test:rules"],
   ["run", "test:storage"],
   ["run", "test:backup"],
+  ["run", "test:system-backup"],
   ["run", "test:business-context"],
   ["run", "test:tenant-store"],
   ["run", "test:tabular"],

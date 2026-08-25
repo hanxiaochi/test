@@ -64,6 +64,16 @@ data/runtime-db.json
 
 SQLite 正在运行时不能只复制主 `.db` 文件。最稳妥的全量文件备份方式是短暂停服后复制整个 `data/` 目录。应用后台中的“备份恢复管理”可在线导出项目业务状态，但它不能替代账号/权限数据库和全租户文件备份。
 
+应用还提供可验证的在线全系统备份命令。它使用 Node SQLite 官方备份 API 合并已提交 WAL 数据，忽略 `.db-wal`、`.db-shm`、临时文件和可再生的 `exports/`，并把其余 `data/` 内容写入 ZIP。每个文件和清单都有 SHA-256，验包还会执行 ZIP CRC、路径安全、数量/总量和 SQLite `quick_check`：
+
+```bash
+cd /opt/zwkjy-clone
+npm run backup:system
+npm run backup:verify -- data/system-backups/system-时间.zip
+```
+
+默认输出到 `data/system-backups/`。必须把该目录同步到独立服务器或对象存储；只留在应用服务器本机不构成灾备。当前工具打包 `APP_DATA_DIR`（默认项目 `data/`）；如将数据库或附件通过环境变量放在该目录之外，仍必须按照“必须持久化的数据”清单额外备份这些外部路径。
+
 ## Windows 本地运行
 
 ```powershell
@@ -267,6 +277,16 @@ curl -fsS http://127.0.0.1:3100/api/health
 ```
 
 恢复后必须重新执行计算回归和关键页面验收。若只需要恢复单个项目业务状态，优先使用管理后台的校验备份恢复功能。
+
+也可以先把系统 ZIP 恢复到一个不存在的新目录进行离线检查。工具拒绝已有目标，绝不会覆盖当前 `data/`；成功后再由运维停服并人工切换目录：
+
+```bash
+npm run backup:verify -- /var/backups/zwkjy-clone/system-时间.zip
+npm run backup:restore-new -- /var/backups/zwkjy-clone/system-时间.zip /var/tmp/zwkjy-restore-check
+node -e "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('/var/tmp/zwkjy-restore-check/data/runtime.db',{readOnly:true});console.log(db.prepare('PRAGMA quick_check').all());db.close()"
+```
+
+恢复命令失败时会保留唯一的 `.restoring-UUID` 暂存目录用于调查，不会把半恢复目录改名成目标。确认新目录完整前，不要移动、覆盖或删除原生产 `data/`。
 
 ## 常用环境变量
 

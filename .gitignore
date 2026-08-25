@@ -1,5 +1,6 @@
 node_modules/
 data/exports/
+data/system-backups/
 data/attachments/
 data/*.db
 data/*.db-shm

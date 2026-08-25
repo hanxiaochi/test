@@ -85,3 +85,16 @@ POST /api/cost/calculate
 首次启动且 SQLite 为空时，程序会把旧 `data/runtime-db.json` 非破坏迁移到 `data/runtime.db`；已有 SQLite 状态始终优先，不会被 JSON 重复覆盖。旧 JSON 应继续保留。仅在应急排障时可设置 `APP_STORAGE=json` 回到旧存储模式。
 
 部署和更新前应完整备份 `data/runtime.db*`、`data/security.db*`、`data/attachments.db*`、`data/attachments/`、`data/tenants/`、`data/backups/` 和旧 JSON 文件。不要通过删除数据库来“恢复初始数据”。
+
+在线创建带逐文件校验和及 SQLite 一致快照的全系统备份：
+
+```bash
+npm run backup:system
+npm run backup:verify -- data/system-backups/备份文件.zip
+```
+
+恢复命令只允许写入不存在的新目录，不会覆盖当前 `data/`：
+
+```bash
+npm run backup:restore-new -- data/system-backups/备份文件.zip /tmp/zwkjy-restore-check
+```
