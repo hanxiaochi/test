@@ -13,7 +13,7 @@ const fidicCore = require("./lib/international/fidic-core");
 const internationalSettingsService = require("./lib/international/project-settings");
 const { mapClientConfig } = require("./lib/client-config");
 const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
-const { LoginRateLimiter, browserMutationGuard, securityHeaders } = require("./lib/security/http-security");
+const { browserMutationGuard, securityHeaders } = require("./lib/security/http-security");
 const engine = require("./costEngine");
 
 (engine.db.projects || []).forEach((project) => {
@@ -30,11 +30,11 @@ const dataDir = path.join(root, "data");
 const exportDir = process.env.APP_EXPORT_DIR || path.join(dataDir, "exports");
 const backupDir = path.resolve(process.env.APP_BACKUP_DIR || path.join(dataDir, "backups"));
 const port = process.env.PORT || 3100;
-const loginRateLimiter = new LoginRateLimiter({
+const loginRateLimitOptions = {
   maxAttempts: process.env.APP_LOGIN_MAX_ATTEMPTS,
   windowMs: process.env.APP_LOGIN_WINDOW_MS,
   maxEntries: process.env.APP_LOGIN_MAX_ENTRIES
-});
+};
 fs.mkdirSync(backupDir, { recursive: true });
 const ruleStore = new RuleStore(process.env.APP_RULE_DB_PATH || authService.securityFile);
 const initializedRuleTenants = new Set();
@@ -13547,7 +13547,7 @@ app.post("/dologin", (req, res) => {
     tenantId: req.body.tenant_id || "default",
     account: req.body.user_account
   };
-  const rateLimit = loginRateLimiter.status(identity);
+  const rateLimit = authService.store.loginRateStatus(identity, loginRateLimitOptions);
   if (!rateLimit.allowed) {
     res.setHeader("Retry-After", String(rateLimit.retryAfterSeconds));
     res.status(429).json({ code: 0, msg: "登录尝试过于频繁，请稍后重试", data: null });
@@ -13562,7 +13562,7 @@ app.post("/dologin", (req, res) => {
     userAgent: req.headers["user-agent"]
   });
   if (login) {
-    loginRateLimiter.recordSuccess(identity);
+    authService.store.recordLoginSuccess(identity);
     return businessContext.runForTenant(login.user.tenantId, () => {
     const maxAge = Math.max(0, Math.floor((Date.parse(login.expiresAt) - Date.now()) / 1000));
     const secure = String(process.env.APP_COOKIE_SECURE || "").toLowerCase() === "true" ? "; Secure" : "";
@@ -13582,7 +13582,7 @@ app.post("/dologin", (req, res) => {
     });
     });
   }
-  loginRateLimiter.recordFailure(identity);
+  authService.store.recordLoginFailure(identity, loginRateLimitOptions);
   json(res, { code: 0, msg: "用户不存在或密码错误" });
 });
 

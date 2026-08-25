@@ -12,6 +12,7 @@
     "test:whitebox": "node --test --experimental-test-coverage --test-coverage-include=lib/payment-core.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=90 tests/whitebox/payment-core.test.js",
     "test:security": "node --test --experimental-test-coverage --test-coverage-include=lib/security/auth-core.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=90 tests/whitebox/auth-core.test.js",
     "test:security-store": "node --test --experimental-test-coverage --test-coverage-include=lib/security/security-store.js --test-coverage-lines=90 --test-coverage-functions=90 --test-coverage-branches=80 tests/whitebox/security-store.test.js",
+    "test:login-rate-persistence": "node --test tests/integration/login-rate-persistence.test.js",
     "test:auth-config": "node --test tests/whitebox/auth-service-config.test.js",
     "test:client-config": "node --test --experimental-test-coverage --test-coverage-include=lib/client-config.js --test-coverage-lines=100 --test-coverage-functions=100 --test-coverage-branches=100 tests/whitebox/client-config.test.js",
     "test:http-security": "node --test --experimental-test-coverage --test-coverage-include=lib/security/http-security.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=90 tests/whitebox/http-security.test.js",

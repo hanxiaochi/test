@@ -258,7 +258,7 @@ APP_BACKUP_DIR          应用内项目备份目录
 APP_SHUTDOWN_TIMEOUT_MS 优雅停机等待毫秒数，默认 5000
 APP_LOGIN_MAX_ATTEMPTS  同一IP、租户和账号在窗口内的失败上限，默认 10
 APP_LOGIN_WINDOW_MS     登录失败计数窗口毫秒数，默认 900000
-APP_LOGIN_MAX_ENTRIES   内存中登录限流身份上限，默认 10000
+APP_LOGIN_MAX_ENTRIES   安全库中登录限流身份摘要上限，默认 10000
 APP_TRUST_PROXY         仅在可信反向代理后配置；单层 Nginx 可设 true
 APP_COOKIE_SECURE       HTTPS 生产环境必须设 true，为会话 Cookie 添加 Secure
 APP_BOOTSTRAP_ACCOUNT   首次初始化管理员账号，默认 ys1
@@ -276,5 +276,7 @@ APP_AMAP_SECURITY_CODE   可选；与高德地图 Key 配套的安全密钥
 用户可从右上角账号菜单主动修改密码。管理员可在账号权限管理中设置临时强密码；重置会撤销目标用户全部会话，并强制其下次登录再次修改密码，临时密码不会出现在审计详情中。
 
 当 `NODE_ENV=production` 且目标管理员尚不存在时，弱初始密码会导致服务拒绝启动；这可防止全新公网实例意外使用默认 `000000`。已有数据库中的账号和密码不会被启动配置覆盖。
+
+登录失败计数保存在安全 SQLite 数据库中，服务重启后不会清零。限流表只保存 IP、租户和账号组合的 SHA-256 摘要，并按 `APP_LOGIN_WINDOW_MS` 自动过期、按 `APP_LOGIN_MAX_ENTRIES` 限制容量。
 
 地图能力默认关闭。只有同时设置 `APP_AMAP_KEY` 与 `APP_AMAP_SECURITY_CODE` 时，已登录页面才会动态加载高德 SDK；凭据不得提交到 Git，并应在高德控制台限制允许访问的生产域名。

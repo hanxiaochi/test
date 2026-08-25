@@ -10,6 +10,7 @@ const commands = [
   ["run", "test:whitebox"],
   ["run", "test:security"],
   ["run", "test:security-store"],
+  ["run", "test:login-rate-persistence"],
   ["run", "test:auth-config"],
   ["run", "test:client-config"],
   ["run", "test:http-security"],

@@ -67,6 +67,40 @@ test("login stores a hashed session, returns RBAC grants, and logout revokes it"
   assert.ok(actions.includes("logout:success"));
 }));
 
+test("login rate limits persist across connections, expire, and retain only bounded identity hashes", () => withStore((store, clock) => {
+  const policy = { maxAttempts: 2, windowMs: 5000, maxEntries: 2 };
+  const identity = { ip: "127.0.0.1", tenantId: "Default", account: " Admin " };
+  assert.deepEqual(store.loginRateStatus(identity, policy), { allowed: true, remaining: 2, retryAfterSeconds: 0 });
+  assert.deepEqual(store.recordLoginFailure(identity, policy), { allowed: true, remaining: 1, retryAfterSeconds: 0 });
+  assert.deepEqual(store.recordLoginFailure({ ip: "127.0.0.1", tenantId: "default", account: "admin" }, policy), { allowed: false, remaining: 0, retryAfterSeconds: 5 });
+
+  const peer = new SecurityStore(store.file, { now: store.now });
+  try {
+    assert.deepEqual(peer.loginRateStatus(identity, policy), { allowed: false, remaining: 0, retryAfterSeconds: 5 });
+    const persisted = peer.db.prepare("SELECT identity_hash, attempts FROM login_failures").get();
+    assert.equal(persisted.identity_hash.length, 64);
+    assert.equal(persisted.identity_hash.includes("admin"), false);
+    assert.equal(persisted.attempts, 2);
+  } finally {
+    peer.close();
+  }
+
+  clock.advance(1250);
+  assert.equal(store.loginRateStatus(identity, policy).retryAfterSeconds, 4);
+  clock.advance(3750);
+  assert.deepEqual(store.loginRateStatus(identity, policy), { allowed: true, remaining: 2, retryAfterSeconds: 0 });
+
+  store.recordLoginFailure({ account: "first" }, policy);
+  clock.advance(1);
+  store.recordLoginFailure({ account: "second" }, policy);
+  clock.advance(1);
+  store.recordLoginFailure({ account: "third" }, policy);
+  assert.equal(store.db.prepare("SELECT COUNT(*) AS count FROM login_failures").get().count, 2);
+  assert.equal(store.recordLoginSuccess({ account: "second" }), true);
+  assert.equal(store.recordLoginSuccess({ account: "second" }), false);
+  assert.deepEqual(store.loginRateStatus({}, { maxAttempts: 0, windowMs: "bad", maxEntries: -1 }), { allowed: true, remaining: 10, retryAfterSeconds: 0 });
+}));
+
 test("sessions expire and disabled users or tenants fail closed", () => withStore((store, clock) => {
   const boot = store.bootstrap({ account: "ys1", password: "000000" });
   const short = store.authenticate({ account: "ys1", password: "000000" });
