@@ -45,7 +45,7 @@ async function waitForReady(baseUrl, child, diagnostics) {
       throw new Error(`isolated test server exited early (${child.exitCode})\n${diagnostics()}`);
     }
     try {
-      const response = await fetch(`${baseUrl}/api/debug/runtime`);
+      const response = await fetch(`${baseUrl}/api/health`);
       if (response.ok) return;
     } catch {
       // The server may still be binding the port.

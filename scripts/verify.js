@@ -60,15 +60,21 @@ function uniqueInternalContractUrls() {
 }
 
 async function verifyHealth() {
-  const { json } = await requestJson("/api/debug/runtime");
-  assert.strictEqual(json.code, 1, "runtime endpoint should report success");
-  assert.ok(json.data && json.data.runtimeExists, "runtime DB should exist");
+  const { response, json } = await requestJson("/api/health");
+  assert.strictEqual(response.status, 200, "public health endpoint should be reachable without a session");
+  assert.strictEqual(json.code, 1, "health endpoint should report success");
+  assert.strictEqual(json.data.status, "ok", "health endpoint should expose a minimal status");
+  assert.ok(["json", "sqlite"].includes(json.data.storageMode), "health endpoint should identify the active storage mode");
+  assert.strictEqual(json.data.runtimeFile, undefined, "public health endpoint must not expose database paths");
+  assert.strictEqual(json.data.serverFile, undefined, "public health endpoint must not expose server paths");
 }
 
 async function verifyUnauthenticatedAccess() {
   const protectedApi = await requestJson("/user/curr_user_info");
   assert.strictEqual(protectedApi.response.status, 401, "protected APIs should reject unauthenticated requests");
   assert.strictEqual(protectedApi.json.code, 0, "unauthenticated API response should use a failure envelope");
+  const runtimeDebug = await requestJson("/api/debug/runtime");
+  assert.strictEqual(runtimeDebug.response.status, 401, "runtime diagnostics should reject unauthenticated requests");
 }
 
 async function verifyLoginFlow() {
@@ -145,8 +151,13 @@ async function verifyAuthorizationFlow() {
   assert.strictEqual(writeDenied.json.requiredPermission, "data:write", "write denial should name the required grant");
   const adminDenied = await requestJson("/api/admin/users");
   assert.strictEqual(adminDenied.response.status, 403, "viewer should not access user administration");
+  const runtimeDenied = await requestJson("/api/debug/runtime");
+  assert.strictEqual(runtimeDenied.response.status, 403, "viewer should not access runtime diagnostics");
 
   authCookieHeader = adminCookie;
+  const runtimeDebug = await requestJson("/api/debug/runtime");
+  assert.strictEqual(runtimeDebug.response.status, 200, "administrator should access runtime diagnostics");
+  assert.ok(runtimeDebug.json.data.runtimeExists, "administrator diagnostics should verify runtime storage");
   const users = await requestJson("/api/admin/users");
   assert.ok(users.json.data.some((user) => user.account === "regression_viewer"), "admin user list should include the created viewer");
   const roles = await requestJson("/api/admin/roles");

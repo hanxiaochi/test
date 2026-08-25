@@ -52,13 +52,14 @@ const publicPathRules = [
   /^\/$/,
   /^\/login\.html$/,
   /^\/dologin$/,
-  /^\/api\/debug\/runtime$/,
+  /^\/api\/health$/,
   /^\/(?:assets|js|css|img|common)\//,
   /^\/favicon\.ico$/
 ];
 
 function requiredPermission(req) {
   if (req.path === "/api/international/certificate/calculate") return "data:read";
+  if (/^\/api\/debug(?:\/|$)/.test(req.path)) return "admin:access";
   if (/^\/(?:admin|api\/admin)(?:\/|$)/.test(req.path)) return "admin:access";
   const legacyMutation = /\/(?:save|delete|del|update|create|add|edit|upload|import|move|init|agree|return|withdraw|archive|adjust|up_order)(?:_|\/|$)/i.test(req.path);
   if (!["GET", "HEAD", "OPTIONS"].includes(req.method) || legacyMutation) return "data:write";
@@ -13918,6 +13919,7 @@ app.get("/api/cost/reconciliation", (req, res) => operationOk(res, costReconcili
 app.get("/api/cost/5d_model", (req, res) => operationOk(res, fiveDCostModelData()));
 app.get("/api/cost/boq_validation", (req, res) => operationOk(res, boqValidationData()));
 app.get("/api/cost/unit_price_analysis", (req, res) => operationOk(res, unitPriceAnalysisData()));
+app.get("/api/health", (_req, res) => operationOk(res, { status: "ok", storageMode: appStore.mode }));
 app.get("/api/debug/runtime", (req, res) => {
   const storage = appStore.status();
   operationOk(res, {

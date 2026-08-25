@@ -373,7 +373,7 @@ async function waitForServer(port, child) {
   while (Date.now() - start < 15000) {
     if (child.exitCode !== null) throw new Error(`server exited with code ${child.exitCode}`);
     try {
-      await requestJson(port, "/api/debug/runtime");
+      await requestJson(port, "/api/health");
       return;
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 250));
