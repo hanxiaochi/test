@@ -234,6 +234,7 @@ APP_SQLITE_DB_PATH      默认业务 SQLite 路径
 APP_SECURITY_DB_PATH    账号、权限和审计 SQLite 路径
 APP_RULE_DB_PATH        规则版本库路径，默认复用 security.db
 APP_BACKUP_DIR          应用内项目备份目录
+APP_SHUTDOWN_TIMEOUT_MS 优雅停机等待毫秒数，默认 5000
 ```
 
 修改路径后必须同步调整 systemd 权限、全量备份范围和监控规则。

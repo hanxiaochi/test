@@ -77,6 +77,7 @@ async function main() {
     APP_RULE_DB_PATH: ruleFile,
     APP_SQLITE_DB_PATH: sqliteFile,
     APP_STORAGE: process.argv.includes("--storage=sqlite") ? "sqlite" : "json",
+    APP_ENABLE_IPC_SHUTDOWN: "true",
     PORT: String(port)
   };
   const output = [];
@@ -86,7 +87,7 @@ async function main() {
   const server = spawn(process.execPath, [path.join(ROOT, "server.js")], {
     cwd: ROOT,
     env,
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["ignore", "pipe", "pipe", "ipc"]
   });
   server.stdout.on("data", (chunk) => output.push(chunk.toString()));
   server.stderr.on("data", (chunk) => output.push(chunk.toString()));
@@ -117,8 +118,9 @@ async function main() {
   } finally {
     clearInterval(storageMonitor);
     if (server.exitCode === null) {
-      server.kill("SIGTERM");
-      await waitForExit(server);
+      server.send({ type: "shutdown" });
+      const stopped = await waitForExit(server);
+      if (stopped.code !== 0) throw new Error(`isolated test server did not shut down cleanly (${JSON.stringify(stopped)})\n${output.join("").slice(-4000)}`);
     }
     const resolvedTemp = path.resolve(tempRoot);
     if (path.dirname(resolvedTemp) === path.resolve(os.tmpdir()) && path.basename(resolvedTemp).startsWith("zwkjy-verify-")) {

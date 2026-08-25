@@ -11,6 +11,7 @@ const backupService = require("./lib/backup/backup-service");
 const tabularService = require("./lib/import-export/tabular-service");
 const fidicCore = require("./lib/international/fidic-core");
 const internationalSettingsService = require("./lib/international/project-settings");
+const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
 const engine = require("./costEngine");
 
 (engine.db.projects || []).forEach((project) => {
@@ -14774,7 +14775,8 @@ app.use((error, req, res, _next) => {
   }
   const reportedStatus = Number(error && (error.status || error.statusCode));
   const status = reportedStatus >= 400 && reportedStatus <= 599 ? reportedStatus : 500;
-  console.error("request failed", req.method, req.path, error && error.stack ? error.stack : error);
+  if (status >= 500) console.error("request failed", req.method, req.path, error && error.stack ? error.stack : error);
+  else console.warn("request rejected", req.method, req.path, status);
   res.status(status).json({
     code: 0,
     msg: status === 413 ? "请求数据超过限制" : status < 500 ? "请求数据无效" : "服务器处理失败",
@@ -14786,18 +14788,16 @@ const server = app.listen(port, () => {
   console.log(`APP local clone running at http://localhost:${port}`);
 });
 
-function shutdown() {
-  server.close(() => {
-    try {
-      authService.store.close();
-      ruleStore.close();
-      appStore.close();
-    } finally {
-      process.exit(0);
-    }
-  });
-  setTimeout(() => process.exit(1), 5000).unref();
-}
+const shutdown = createGracefulShutdown({
+  server,
+  resources: [authService.store, ruleStore, appStore],
+  timeoutMs: Number(process.env.APP_SHUTDOWN_TIMEOUT_MS) || 5000
+});
 
-process.once("SIGTERM", shutdown);
-process.once("SIGINT", shutdown);
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => shutdown("SIGINT"));
+if (String(process.env.APP_ENABLE_IPC_SHUTDOWN || "").toLowerCase() === "true") {
+  process.on("message", (message) => {
+    if (message && message.type === "shutdown") shutdown("IPC");
+  });
+}

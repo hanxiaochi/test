@@ -336,3 +336,84 @@ body {
 .feachBtn{
 	cursor: pointer;
 }
+
+@media (max-width: 767px) {
+	html,
+	body {
+		min-height: 100%;
+		overflow-x: hidden;
+	}
+
+	.container-fluid {
+		padding-right: 0;
+		padding-left: 0;
+	}
+
+	.container-fluid > .row,
+	.logoFontDiv {
+		margin-right: 0;
+		margin-left: 0;
+	}
+
+	.logoFontDiv {
+		width: 100%;
+		margin-top: 64px;
+		margin-bottom: 40px;
+		padding: 0 20px;
+		text-align: center;
+	}
+
+	.logoFontDiv img {
+		width: auto;
+		max-width: 100%;
+		height: auto;
+	}
+
+	#middleDiv {
+		float: none;
+		width: 100% !important;
+	}
+
+	.loginBox {
+		position: relative !important;
+		top: auto;
+		width: calc(100% - 32px);
+		max-width: 360px;
+		height: auto;
+		min-height: 280px;
+		margin: 0 auto 32px;
+		padding: 1px 0 8px;
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28) !important;
+	}
+
+	.loginBox-title {
+		padding-top: 20px;
+		margin: 0 20px 12px;
+		font-size: 20px;
+	}
+
+	.loginBox .form-horizontal .form-group {
+		width: auto;
+		margin: 16px 20px;
+		font-size: 12px;
+	}
+
+	.loginBox .form-horizontal > .form-group:last-child {
+		display: flex;
+		gap: 12px;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.loginBox .form-horizontal > .form-group:last-child > div {
+		float: none !important;
+		margin: 0 !important;
+		line-height: 34px !important;
+		white-space: nowrap;
+	}
+
+	#submitBtn {
+		width: 88px;
+		font-size: 13px;
+	}
+}
