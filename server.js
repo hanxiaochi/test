@@ -11,6 +11,7 @@ const backupService = require("./lib/backup/backup-service");
 const tabularService = require("./lib/import-export/tabular-service");
 const fidicCore = require("./lib/international/fidic-core");
 const internationalSettingsService = require("./lib/international/project-settings");
+const { mapClientConfig } = require("./lib/client-config");
 const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
 const { LoginRateLimiter, browserMutationGuard, securityHeaders } = require("./lib/security/http-security");
 const engine = require("./costEngine");
@@ -13839,6 +13840,9 @@ app.post("/api/admin/users/:id/roles", requirePermission("admin:users"), (req, r
 });
 app.get("/api/admin/security_audit", requirePermission("admin:users"), (req, res) => {
   operationOk(res, authService.store.auditRows(req.query.limit, req.authUser.tenantId));
+});
+app.get("/api/client-config/maps", (req, res) => {
+  operationOk(res, mapClientConfig());
 });
 app.get("/api/admin/data_exchange", requirePermission("admin:access"), (req, res) => {
   operationOk(res, Object.keys(dataExchangeModules).map(dataExchangeSchema));

@@ -126,6 +126,8 @@ APP_STORAGE=sqlite
 APP_BOOTSTRAP_PASSWORD=请替换为至少10位且含字母数字特殊字符的初始密码
 APP_COOKIE_SECURE=true
 APP_TRUST_PROXY=true
+# APP_AMAP_KEY=请在需要地图功能时填写并限制生产域名
+# APP_AMAP_SECURITY_CODE=请填写与 Key 配套的安全密钥
 EOF
 chmod 0600 /etc/zwkjy-clone/app.env
 
@@ -261,6 +263,8 @@ APP_TRUST_PROXY         仅在可信反向代理后配置；单层 Nginx 可设 
 APP_COOKIE_SECURE       HTTPS 生产环境必须设 true，为会话 Cookie 添加 Secure
 APP_BOOTSTRAP_ACCOUNT   首次初始化管理员账号，默认 ys1
 APP_BOOTSTRAP_PASSWORD  首次初始化管理员密码；生产环境必须满足强密码策略
+APP_AMAP_KEY             可选；高德地图浏览器 Key，必须配置域名白名单
+APP_AMAP_SECURITY_CODE   可选；与高德地图 Key 配套的安全密钥
 ```
 
 修改路径后必须同步调整 systemd 权限、全量备份范围和监控规则。不要在应用直接暴露公网时启用 `APP_TRUST_PROXY`，否则攻击者可能伪造来源地址绕过登录限流。
@@ -272,3 +276,5 @@ APP_BOOTSTRAP_PASSWORD  首次初始化管理员密码；生产环境必须满�
 用户可从右上角账号菜单主动修改密码。管理员可在账号权限管理中设置临时强密码；重置会撤销目标用户全部会话，并强制其下次登录再次修改密码，临时密码不会出现在审计详情中。
 
 当 `NODE_ENV=production` 且目标管理员尚不存在时，弱初始密码会导致服务拒绝启动；这可防止全新公网实例意外使用默认 `000000`。已有数据库中的账号和密码不会被启动配置覆盖。
+
+地图能力默认关闭。只有同时设置 `APP_AMAP_KEY` 与 `APP_AMAP_SECURITY_CODE` 时，已登录页面才会动态加载高德 SDK；凭据不得提交到 Git，并应在高德控制台限制允许访问的生产域名。

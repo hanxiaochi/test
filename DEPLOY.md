@@ -188,11 +188,15 @@ APP_STORAGE=sqlite
 APP_BOOTSTRAP_PASSWORD=请替换为至少10位且含字母数字特殊字符的初始密码
 APP_COOKIE_SECURE=true
 APP_TRUST_PROXY=true
+# APP_AMAP_KEY=请在需要地图功能时填写并限制生产域名
+# APP_AMAP_SECURITY_CODE=请填写与 Key 配套的安全密钥
 EOF
 chmod 0600 /etc/zwkjy-clone/app.env
 ```
 
 初始密码只在管理员账号尚不存在时使用；已有账号不会因重启被重置。不要把真实密码写入服务文件或提交到 Git。
+
+地图能力默认关闭。只有取消上面两行注释并同时填写有效值时，已登录页面才会加载高德 SDK。
 
 创建服务文件：
 

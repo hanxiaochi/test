@@ -205,14 +205,27 @@ html[dir="rtl"] .layui-nav-tree .layui-nav-item a{text-align:right;}
 	<script type="text/javascript" src="js/reconnecting-websocket.min.js"></script>
 	<script src="assets/bower_components/select2/dist/js/select2.js"></script>
 <!-- 	<script type="text/javascript" src="common/map/js/map.js"></script> -->
-	<script src = 'https://webapi.amap.com/maps?v=2.0&key=ac1aaf508b920f880ca32958fb09bae7' type="text/javascript" > </script>
+	<script>
+	window.appMapReady = fetch('/api/client-config/maps', { credentials: 'same-origin' })
+		.then(function(response){ if(!response.ok) throw new Error('map config request failed'); return response.json(); })
+		.then(function(payload){
+			var config = payload && payload.data;
+			if(!config || !config.enabled) return false;
+			window._AMapSecurityConfig = { securityJsCode: config.securityCode };
+			return new Promise(function(resolve, reject){
+				var script = document.createElement('script');
+				script.src = 'https://webapi.amap.com/maps?v=' + encodeURIComponent(config.version) + '&key=' + encodeURIComponent(config.apiKey);
+				script.onload = function(){ resolve(true); };
+				script.onerror = function(){ reject(new Error('map sdk load failed')); };
+				document.head.appendChild(script);
+			});
+		})
+		.catch(function(error){ console.warn('Map SDK disabled:', error.message); return false; });
+	</script>
 	<script type="text/javascript" src="assets/fullcalendar/js/moment.min.js" ></script><!-- 日期处理时间工具 -->
 	<script type="text/javascript" src="assets/fullcalendar/js/fullcalendar.min.js" ></script>
 	<script>
 	const { createApp } = Vue
-	window._AMapSecurityConfig = {
-		    securityJsCode:"e6cc11ad7ff88abb2ed5619f31bc799c",
-	}
 	//JavaScript代码区域
 	layui.use(['layer','element','appInit','jquery','zwOnline'], function(){
 		  var element = layui.element,$ = layui.$,zwOnline = layui.zwOnline,appInit = layui.appInit,layer = layui.layer;;

@@ -79,6 +79,8 @@ async function verifyUnauthenticatedAccess() {
   assert.strictEqual(protectedApi.json.code, 0, "unauthenticated API response should use a failure envelope");
   const runtimeDebug = await requestJson("/api/debug/runtime");
   assert.strictEqual(runtimeDebug.response.status, 401, "runtime diagnostics should reject unauthenticated requests");
+  const mapConfig = await requestJson("/api/client-config/maps");
+  assert.strictEqual(mapConfig.response.status, 401, "map client configuration should reject unauthenticated requests");
   const malformed = await requestJson("/dologin", { method: "POST", body: "{" });
   assert.strictEqual(malformed.response.status, 400, "malformed JSON should retain its client-error status");
   assert.strictEqual(malformed.json.code, 0, "malformed JSON should use a failure envelope");
@@ -250,6 +252,11 @@ async function verifyAuthorizationFlow() {
   assert.ok(shell.text.includes("app-project-switch") && shell.text.includes("/api/session/project"), "main shell should expose a persistent project switcher");
   assert.ok(shell.text.includes("/account/password_page") && shell.text.includes("修改密码"), "authenticated shell should expose self-service password change");
   assert.ok(shell.text.includes("data-i18n=\"shell.productName\"") && shell.text.includes("applyProjectLocale") && shell.text.includes("html[dir=\"rtl\"]"), "main shell should apply project translations and RTL layout at runtime");
+  assert.ok(shell.text.includes("/api/client-config/maps") && shell.text.includes("window.appMapReady"), "main shell should load optional map credentials through the protected runtime configuration endpoint");
+  assert.ok(!/webapi\.amap\.com\/maps[^"']*key=[a-f0-9]{32}/i.test(shell.text) && !/securityJsCode\s*:\s*["'][a-f0-9]{32}/i.test(shell.text), "main shell must not expose embedded map credentials");
+  const mapConfig = await requestJson("/api/client-config/maps");
+  assert.strictEqual(mapConfig.response.status, 200, "authenticated users should read optional map client configuration");
+  assert.deepStrictEqual(mapConfig.json.data, { enabled: false }, "map integration should fail closed when deployment credentials are absent");
   const audit = await requestJson("/api/admin/security_audit?limit=50");
   assert.ok(audit.json.data.some((row) => row.action === "login" && row.result === "denied"), "security audit should retain failed login attempts");
   const mutationAudit = audit.json.data.find((row) => row.action === "http.mutation" && row.target_id === "POST /api/admin/projects");
