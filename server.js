@@ -2098,10 +2098,29 @@ function userManagementHtml(req = {}) {
       </div>
       <div class="core-panel" style="margin-top:12px;">
         <h3>安全审计</h3>
+        <form id="audit-filter-form" class="core-tools" style="display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-bottom:8px;">
+          <label>动作<input name="action" placeholder="例如 login" style="width:150px;"></label>
+          <label>结果<select name="result"><option value="">全部</option><option value="success">成功</option><option value="failure">失败</option><option value="denied">拒绝</option></select></label>
+          <label>对象类型<input name="targetType" style="width:120px;"></label>
+          <label>用户ID<input type="number" min="1" name="userId" style="width:90px;"></label>
+          <label>开始时间<input type="datetime-local" name="from"></label>
+          <label>结束时间<input type="datetime-local" name="to"></label>
+          <label>关键词<input name="keyword" style="width:140px;"></label>
+          <button type="submit" class="layui-btn layui-btn-sm">查询</button>
+          <button type="reset" class="layui-btn layui-btn-sm layui-btn-primary" id="audit-reset">重置</button>
+          <a class="layui-btn layui-btn-sm layui-btn-primary" id="audit-export" href="/api/admin/security_audit/export">导出CSV</a>
+        </form>
         <table class="layui-table" lay-size="sm">
           <thead><tr><th>时间</th><th>动作</th><th>结果</th><th>用户ID</th><th>对象</th><th>对象ID</th><th>IP</th></tr></thead>
-          <tbody>${auditRows || `<tr><td colspan="7" class="core-empty">暂无安全审计</td></tr>`}</tbody>
+          <tbody id="audit-table-body">${auditRows || `<tr><td colspan="7" class="core-empty">暂无安全审计</td></tr>`}</tbody>
         </table>
+        <div class="core-tools" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="audit-prev">上一页</button>
+          <span id="audit-page-state">第 1 页</span>
+          <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="audit-next">下一页</button>
+          <span style="margin-left:auto;">保留最近 <input id="audit-retention-days" type="number" min="30" max="3650" value="365" style="width:76px;height:28px;"> 天</span>
+          <button type="button" class="layui-btn layui-btn-xs layui-btn-danger" id="audit-retention-apply">清理旧日志</button>
+        </div>
       </div>
     </div>
     <script>(function(){
@@ -2109,6 +2128,22 @@ function userManagementHtml(req = {}) {
       function notify(text){ if(window.layer){layer.msg(text)} }
       function refresh(){ setTimeout(function(){ if(window.appReloadCurrentContent){window.appReloadCurrentContent()}else{location.reload()} },350); }
       function post(url,data){ return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json().then(function(j){if(!r.ok||j.code!==1)throw new Error(j.msg||'操作失败');return j})}); }
+      function escapeText(value){return String(value==null?'':value).replace(/[&<>"']/g,function(char){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]})}
+      var auditPage=1,auditPages=1,auditLimit=30,auditForm=root.querySelector('#audit-filter-form');
+      function auditSearchParams(page){var params=new URLSearchParams(new FormData(auditForm));Array.from(params.keys()).forEach(function(key){if(!params.get(key))params.delete(key)});params.set('page',String(page));params.set('limit',String(auditLimit));return params}
+      function renderAudits(data){
+        auditPage=data.page;auditPages=data.pages;
+        root.querySelector('#audit-table-body').innerHTML=data.rows.length?data.rows.map(function(row){return '<tr><td>'+escapeText(row.created_at)+'</td><td>'+escapeText(row.action)+'</td><td>'+escapeText(row.result)+'</td><td>'+escapeText(row.user_id)+'</td><td>'+escapeText(row.target_type)+'</td><td>'+escapeText(row.target_id)+'</td><td>'+escapeText(row.ip_address)+'</td></tr>'}).join(''):'<tr><td colspan="7" class="core-empty">暂无安全审计</td></tr>';
+        root.querySelector('#audit-page-state').textContent='第 '+data.page+' / '+data.pages+' 页，共 '+data.total+' 条';
+        root.querySelector('#audit-prev').disabled=data.page<=1;root.querySelector('#audit-next').disabled=data.page>=data.pages;
+        var exportParams=auditSearchParams(1);exportParams.delete('page');exportParams.delete('limit');root.querySelector('#audit-export').href='/api/admin/security_audit/export?'+exportParams.toString();
+      }
+      function loadAudits(page){return fetch('/api/admin/security_audit/query?'+auditSearchParams(page).toString(),{headers:{'Accept':'application/json'}}).then(function(r){return r.json().then(function(j){if(!r.ok||j.code!==1)throw new Error(j.msg||'查询失败');renderAudits(j.data)})}).catch(function(e){notify(e.message)})}
+      auditForm.addEventListener('submit',function(event){event.preventDefault();loadAudits(1)});
+      root.querySelector('#audit-reset').addEventListener('click',function(){setTimeout(function(){loadAudits(1)},0)});
+      root.querySelector('#audit-prev').addEventListener('click',function(){if(auditPage>1)loadAudits(auditPage-1)});
+      root.querySelector('#audit-next').addEventListener('click',function(){if(auditPage<auditPages)loadAudits(auditPage+1)});
+      root.querySelector('#audit-retention-apply').addEventListener('click',function(){var days=Number(root.querySelector('#audit-retention-days').value);if(!window.confirm('确认删除当前组织中早于 '+days+' 天的安全审计日志？'))return;post('/api/admin/security_audit/retention',{days:days}).then(function(j){notify('已清理 '+j.data.deleted+' 条旧日志');loadAudits(1)}).catch(function(e){notify(e.message)})});
       root.querySelector('#create-user-button').addEventListener('click',function(){
         var form=root.querySelector('#create-user-form'); var data=Object.fromEntries(new FormData(form).entries());
         data.roleCodes=[data.roleCode]; data.mustChangePassword=form.querySelector('[name="mustChangePassword"]').checked;
@@ -13840,6 +13875,51 @@ app.post("/api/admin/users/:id/roles", requirePermission("admin:users"), (req, r
 });
 app.get("/api/admin/security_audit", requirePermission("admin:users"), (req, res) => {
   operationOk(res, authService.store.auditRows(req.query.limit, req.authUser.tenantId));
+});
+app.get("/api/admin/security_audit/query", requirePermission("admin:users"), (req, res) => {
+  try {
+    operationOk(res, authService.store.queryAudit({ ...req.query, tenantId: req.authUser.tenantId }));
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.get("/api/admin/security_audit/export", requirePermission("admin:users"), (req, res) => {
+  const filters = { action: req.query.action || "", result: req.query.result || "", targetType: req.query.targetType || "", from: req.query.from || "", to: req.query.to || "", keyword: req.query.keyword || "" };
+  try {
+    const rows = authService.store.auditExportRows({ ...req.query, tenantId: req.authUser.tenantId });
+    authService.store.audit({
+      tenantId: req.authUser.tenantId,
+      userId: req.authUser.id,
+      action: "security.audit.export",
+      result: "success",
+      targetType: "tenant",
+      targetId: req.authUser.tenantId,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+      details: { filters, rows: rows.length }
+    });
+    csv(res, `security-audit-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+  } catch (error) {
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "security.audit.export", result: "failure", targetType: "tenant", targetId: req.authUser.tenantId, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { filters, message: error.message } });
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/security_audit/retention", requirePermission("admin:users"), (req, res) => {
+  try {
+    const days = Number(req.body.days);
+    if (!Number.isInteger(days) || days < 30 || days > 3650) throw new Error("保留天数必须是30至3650之间的整数");
+    const before = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    operationOk(res, authService.store.pruneAudit({
+      tenantId: req.authUser.tenantId,
+      before,
+      actorUserId: req.authUser.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"]
+    }));
+  } catch (error) {
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "security.audit.retention", result: "failure", targetType: "tenant", targetId: req.authUser.tenantId, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { days: req.body.days, message: error.message } });
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
 });
 app.get("/api/client-config/maps", (req, res) => {
   operationOk(res, mapClientConfig());

@@ -250,3 +250,36 @@ test("project assignments are tenant scoped and revoke sessions when changed", (
   assert.throws(() => store.ensureProject({ tenantId: "other", projectId: "x", status: "unknown" }), /Invalid project status/);
   assert.equal(store.canAccessProject(user.id, "default", "x"), false);
 }));
+
+test("security audit queries are tenant scoped, filterable, paged, exportable, and safely retained", () => withStore((store, clock) => {
+  const admin = store.bootstrap({ tenantId: "tenant-a", account: "admin-a", password: "Admin-A-42!" });
+  store.bootstrap({ tenantId: "tenant-b", account: "admin-b", password: "Admin-B-42!" });
+  store.audit({ tenantId: "tenant-a", userId: admin.userId, action: "document.update", result: "success", targetType: "document", targetId: "DOC-100%", ipAddress: "10.0.0.1", details: { note: "alpha_beta" } });
+  clock.advance(24 * 60 * 60 * 1000);
+  store.audit({ tenantId: "tenant-a", userId: admin.userId, action: "document.update", result: "failure", targetType: "document", targetId: "DOC-200", ipAddress: "10.0.0.2", details: { note: "second" } });
+  store.audit({ tenantId: "tenant-b", action: "document.update", result: "success", targetType: "document", targetId: "OTHER" });
+
+  const tenantRows = store.queryAudit({ tenantId: "tenant-a", action: "document.update", page: 1, limit: 1 });
+  assert.equal(tenantRows.total, 2);
+  assert.equal(tenantRows.rows.length, 1);
+  assert.equal(tenantRows.pages, 2);
+  assert.equal(tenantRows.rows[0].result, "failure");
+  assert.equal(store.queryAudit({ tenantId: "tenant-a", result: "success", userId: admin.userId, targetType: "document" }).total, 1);
+  assert.equal(store.queryAudit({ tenantId: "tenant-a", keyword: "100%" }).total, 1);
+  assert.equal(store.queryAudit({ tenantId: "tenant-a", keyword: "alpha_beta" }).total, 1);
+  assert.equal(store.queryAudit({ tenantId: "tenant-a", from: "2026-08-26T00:00:00.000Z" }).total, 1);
+  assert.equal(store.queryAudit({ tenantId: "tenant-a", to: "2026-08-25T23:59:59.999Z" }).total >= 1, true);
+  assert.equal(store.auditExportRows({ tenantId: "tenant-a", action: "document.update" }).length, 2);
+  assert.throws(() => store.queryAudit({ userId: "invalid" }), /userId is invalid/);
+  assert.throws(() => store.queryAudit({ from: "invalid" }), /from is invalid/);
+  assert.throws(() => store.queryAudit({ from: "2026-08-27", to: "2026-08-26" }), /from must not be later/);
+  assert.throws(() => store.pruneAudit({ tenantId: "tenant-a" }), /before is required/);
+
+  const retained = store.pruneAudit({ tenantId: "tenant-a", before: "2026-08-26T00:00:00.000Z", actorUserId: admin.userId });
+  assert.equal(retained.deleted, 1);
+  assert.equal(store.queryAudit({ tenantId: "tenant-a", action: "document.update" }).total, 1);
+  assert.equal(store.queryAudit({ tenantId: "tenant-b", action: "document.update" }).total, 1);
+  const marker = store.queryAudit({ tenantId: "tenant-a", action: "security.audit.retention" }).rows[0];
+  assert.equal(marker.user_id, admin.userId);
+  assert.equal(JSON.parse(marker.details_json).deleted, retained.deleted);
+}));
