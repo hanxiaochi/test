@@ -38,6 +38,24 @@ function directorySize(root) {
   }, 0);
 }
 
+function largestFiles(root, limit = 8) {
+  const rows = [];
+  function walk(directory) {
+    if (!fs.existsSync(directory)) return;
+    fs.readdirSync(directory, { withFileTypes: true }).forEach((entry) => {
+      const target = path.join(directory, entry.name);
+      try {
+        if (entry.isDirectory()) walk(target);
+        else rows.push({ file: path.relative(root, target), bytes: fs.statSync(target).size });
+      } catch (error) {
+        if (!error || error.code !== "ENOENT") throw error;
+      }
+    });
+  }
+  walk(root);
+  return rows.sort((a, b) => b.bytes - a.bytes).slice(0, limit);
+}
+
 async function waitForReady(baseUrl, child, diagnostics) {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
@@ -102,7 +120,7 @@ async function main() {
     try {
       storagePeakBytes = Math.max(storagePeakBytes, directorySize(tempRoot));
       if (storagePeakBytes > storageLimitBytes) {
-        storageFailure = new Error(`isolated test storage exceeded 128 MB (${(storagePeakBytes / 1024 / 1024).toFixed(2)} MB)`);
+        storageFailure = new Error(`isolated test storage exceeded 128 MB (${(storagePeakBytes / 1024 / 1024).toFixed(2)} MB); largest files: ${JSON.stringify(largestFiles(tempRoot))}`);
       }
     } catch (error) {
       storageFailure = error;

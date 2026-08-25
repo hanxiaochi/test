@@ -1,6 +1,7 @@
 ﻿const fs = require("fs");
 const path = require("path");
 const assert = require("assert");
+const ExcelJS = require("exceljs");
 
 const engine = require("../costEngine");
 
@@ -233,6 +234,13 @@ async function verifyAuthorizationFlow() {
   });
   assert.strictEqual(viewerFixture.response.status, 200, "administrator should create a real attachment permission fixture");
   const viewerFixtureId = viewerFixture.json.data.attachmentId;
+  const measureBill = engine.billRows()[0];
+  const measureFixtureBytes = Buffer.from(`\uFEFF清单编号,计量数量,合同段ID\n${measureBill.billNo},1,${measureBill.sectionId}\n`, "utf8");
+  const measureFixture = await postMultipart("/import_measure/upload_excel", {}, {
+    name: "viewer-measure-fixture.csv", mimeType: "text/csv", buffer: measureFixtureBytes
+  });
+  assert.strictEqual(measureFixture.response.status, 200, "administrator should create a real measure import permission fixture");
+  const measureFixtureId = measureFixture.json.data.attId;
 
   authCookieHeader = "";
   const viewerBody = new URLSearchParams({
@@ -281,10 +289,26 @@ async function verifyAuthorizationFlow() {
   assert.strictEqual(viewerUploadDenied.response.status, 403, "viewer should not upload attachments");
   const viewerDeleteDenied = await postJson("/projectInformationNode/delete_attachment", { hangId: attachmentDocumentId, attachmentId: viewerFixtureId });
   assert.strictEqual(viewerDeleteDenied.response.status, 403, "viewer should not delete attachments");
+  const viewerImportList = await requestJson("/import_measure/get_attachment_list?page=1&limit=200");
+  assert.ok(viewerImportList.json.data.some((row) => Number(row.attId) === Number(measureFixtureId)), "viewer should list validated imports in an assigned project");
+  const viewerImportPreview = await requestJson(`/import_measure/get_measure_by_att?attId=${measureFixtureId}`);
+  assert.ok(viewerImportPreview.json.data.some((row) => row.billNo === measureBill.billNo), "viewer should inspect row-level import preview data");
+  const viewerImportDownload = await requestBuffer(`/import_measure/source/${measureFixtureId}/download`);
+  assert.deepEqual(viewerImportDownload.buffer, measureFixtureBytes, "viewer should download a source import in an assigned project");
+  const viewerImportCrossProject = await requestBuffer(`/import_measure/source/${measureFixtureId}/download?projectId=regression-project-2`);
+  assert.strictEqual(viewerImportCrossProject.response.status, 403, "viewer should not cross a project boundary when downloading import sources");
+  const viewerImportUploadDenied = await postMultipart("/import_measure/upload_excel", {}, { name: "viewer-denied.csv", mimeType: "text/csv", buffer: measureFixtureBytes });
+  assert.strictEqual(viewerImportUploadDenied.response.status, 403, "viewer should not upload measure imports");
+  const viewerImportCommitDenied = await postJson("/import_measure/import_excel", { attIds: String(measureFixtureId) });
+  assert.strictEqual(viewerImportCommitDenied.response.status, 403, "viewer should not commit measure imports");
+  const viewerImportDeleteDenied = await postJson("/import_measure/delete", { attIds: String(measureFixtureId) });
+  assert.strictEqual(viewerImportDeleteDenied.response.status, 403, "viewer should not delete measure import sources");
 
   authCookieHeader = adminCookie;
   const viewerFixtureDeleted = await postJson("/projectInformationNode/delete_attachment", { hangId: attachmentDocumentId, attachmentId: viewerFixtureId });
   assert.strictEqual(viewerFixtureDeleted.json.data.changed, 1, "administrator should clean up the attachment permission fixture");
+  const measureFixtureDeleted = await postJson("/import_measure/delete", { attIds: String(measureFixtureId) });
+  assert.strictEqual(measureFixtureDeleted.json.data.changed, 1, "administrator should clean up the measure import permission fixture");
   const invalidAttachment = await postMultipart("/projectInformationNode/upload_attachment", { hangId: attachmentDocumentId }, {
     name: "invalid.exe", mimeType: "application/octet-stream", buffer: Buffer.from("MZ")
   });
@@ -3620,9 +3644,15 @@ async function verifyImportExportDownloadLoop() {
   assert.ok((zip.response.headers.get("content-type") || "").includes("zip"), "document download should be a ZIP");
   assert.strictEqual(zip.buffer.slice(0, 2).toString("ascii"), "PK", "document download should have ZIP header");
 
-  const upload = await postJson("/import_measure/upload_excel", {
-    fileName: "验证导入文件.xlsx",
-    size: 4096
+  const template = await requestBuffer("/import_measure/template.csv");
+  assert.strictEqual(template.response.status, 200, "measure import template should download");
+  assert.ok(template.buffer.includes(Buffer.from("清单编号")), "measure import template should expose the strict headers");
+  const importBill = engine.billRows()[0];
+  const sourceBytes = Buffer.from(`\uFEFF清单编号,计量数量,合同段ID\n${importBill.billNo},1,${importBill.sectionId}\n`, "utf8");
+  const upload = await postMultipart("/import_measure/upload_excel", {}, {
+    name: "验证导入文件.csv",
+    mimeType: "text/csv",
+    buffer: sourceBytes
   });
   assert.strictEqual(upload.json.code, 1, "import upload should succeed");
   const attId = upload.json.data.attId;
@@ -3630,14 +3660,23 @@ async function verifyImportExportDownloadLoop() {
   const afterUpload = await requestJson("/import_measure/get_attachment_list?page=1&limit=200");
   const uploaded = afterUpload.json.data.find((item) => Number(item.attId || item.attachmentId || item.id) === Number(attId));
   assert.ok(uploaded, "uploaded import attachment should appear in list");
-  assert.strictEqual(uploaded.fileName, "验证导入文件.xlsx", "uploaded attachment should keep Chinese file name");
-  assert.strictEqual(uploaded.state, "已解析", "uploaded attachment should be parsed");
+  assert.strictEqual(uploaded.fileName, "验证导入文件.csv", "uploaded attachment should keep Chinese file name");
+  assert.strictEqual(uploaded.state, "校验通过", "uploaded attachment should pass validation");
+  assert.strictEqual(uploaded.validRows, 1, "uploaded attachment should expose valid row count");
+
+  const sourceDownload = await requestBuffer(`/import_measure/source/${attId}/download`);
+  assert.deepStrictEqual(sourceDownload.buffer, sourceBytes, "measure import source download should preserve exact bytes");
+  assert.strictEqual(sourceDownload.response.headers.get("x-content-sha256"), upload.json.data.sha256, "source download should expose its checksum");
+
+  const duplicate = await postMultipart("/import_measure/upload_excel", {}, { name: "验证导入文件.csv", mimeType: "text/csv", buffer: sourceBytes });
+  assert.strictEqual(duplicate.json.data.duplicate, true, "same source bytes should be upload-idempotent");
+  assert.strictEqual(duplicate.json.data.attId, attId, "duplicate upload should return the existing import record");
 
   await postJson("/import_measure/reload_import", { attId });
   const afterReload = await requestJson("/import_measure/get_attachment_list?page=1&limit=200");
   const reloaded = afterReload.json.data.find((item) => Number(item.attId || item.attachmentId || item.id) === Number(attId));
   assert.ok(reloaded, "reloaded import attachment should remain in list");
-  assert.strictEqual(reloaded.state, "已重新解析", "reload should update attachment state");
+  assert.strictEqual(reloaded.state, "重新校验通过", "reload should update attachment state");
 
   await postJson("/import_measure/delete", { attIds: String(attId) });
   const afterDelete = await requestJson("/import_measure/get_attachment_list?page=1&limit=200");
@@ -3648,10 +3687,15 @@ async function verifyImportMeasureDashboardLoop() {
   const importBill = engine.billRows()[0];
   const importNum = 3;
   const expectedImportMoney = round(importNum * Number(importBill.price || 0));
-  const upload = await postJson("/import_measure/upload_excel", {
-    fileName: "IMPORT-DASH-VERIFY.xlsx",
-    size: 8192,
-    rows: [{ billNo: importBill.billNo, measureNum: importNum }]
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("计量导入");
+  sheet.addRow(["清单编号", "计量数量", "合同段ID", "工期ID", "计量日期", "计量部位"]);
+  sheet.addRow([importBill.billNo, importNum, importBill.sectionId, 2, "2026-02-28", "回归测试部位"]);
+  const workbookBytes = Buffer.from(await workbook.xlsx.writeBuffer());
+  const upload = await postMultipart("/import_measure/upload_excel", {}, {
+    name: "IMPORT-DASH-VERIFY.xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: workbookBytes
   });
   assert.strictEqual(upload.json.data.parsedRows, 1, "upload should parse provided measure detail rows");
   const attId = upload.json.data.attId;
@@ -3678,6 +3722,15 @@ async function verifyImportMeasureDashboardLoop() {
     assert.ok(importedRow, "imported measure should keep source attachment id");
     assert.ok(importedRow.measureNo && importedRow.measureNo.includes("JL-IMPORT"), "imported measure should use import measure number");
     assert.strictEqual(round(importedRow.measureMoney), expectedImportMoney, "imported measure should use parsed upload detail quantity and bill price");
+    assert.strictEqual(importedRow.sourceSha256, upload.json.data.sha256, "imported measure should retain source checksum traceability");
+
+    const duplicateImport = await postJson("/import_measure/import_excel", { attIds: String(attId) });
+    assert.strictEqual(duplicateImport.json.data.imported, 0, "same attachment should not create duplicate measures");
+    assert.ok(duplicateImport.json.data.skipped >= 1, "duplicate import should report skipped groups");
+
+    const protectedDelete = await postJson("/import_measure/delete", { attIds: String(attId) });
+    assert.strictEqual(protectedDelete.response.status, 409, "source attachment deletion should be blocked while generated data exists");
+    assert.strictEqual(protectedDelete.json.errorCode, "MEASURE_IMPORT_DATA_EXISTS", "protected deletion should be machine readable");
 
     page = await requestText(`/import_measure/dashboard_page?attId=${attId}`);
     assert.ok(page.text.includes(importedRow.measureNo) && page.text.includes("计量看板"), "import measure dashboard should show generated measure and link dashboard");
@@ -3693,7 +3746,26 @@ async function verifyImportMeasureDashboardLoop() {
     const afterClear = await requestJson("/bill_measure/list?page=1&limit=1000");
     assert.ok(!afterClear.json.data.some((row) => Number(row.sourceAttId || 0) === Number(attId)), "clearing import data should remove generated measures");
   } finally {
-    await postJson("/import_measure/delete", { attIds: String(attId) });
+    const remaining = await requestJson("/import_measure/get_attachment_list?page=1&limit=200");
+    if (remaining.json.data.some((row) => Number(row.attId) === Number(attId))) await postJson("/import_measure/delete", { attIds: String(attId) });
+  }
+
+  const invalid = await postMultipart("/import_measure/upload_excel", {}, {
+    name: "IMPORT-INVALID.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("\uFEFF清单编号,计量数量\nUNKNOWN-BILL,-1\n", "utf8")
+  });
+  assert.strictEqual(invalid.json.code, 1, "invalid business rows should remain inspectable as an import record");
+  assert.strictEqual(invalid.json.data.ok, false, "invalid business rows should not pass validation");
+  const invalidAttId = invalid.json.data.attId;
+  try {
+    const report = await requestText(`/import_measure/error_report?attId=${invalidAttId}`);
+    assert.ok(report.text.includes("unknown_bill") && report.text.includes("positive_number"), "error report should contain row-level validation codes");
+    const deniedImport = await postJson("/import_measure/import_excel", { attIds: String(invalidAttId) });
+    assert.strictEqual(deniedImport.response.status, 422, "invalid import rows should never create measures");
+    assert.strictEqual(deniedImport.json.errorCode, "MEASURE_IMPORT_VALIDATION_FAILED", "invalid import denial should be machine readable");
+  } finally {
+    await postJson("/import_measure/delete", { attIds: String(invalidAttId) });
   }
 }
 

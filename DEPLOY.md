@@ -191,6 +191,9 @@ APP_BOOTSTRAP_PASSWORD=请替换为至少10位且含字母数字特殊字符的�
 APP_COOKIE_SECURE=true
 APP_TRUST_PROXY=true
 APP_ATTACHMENT_MAX_BYTES=20971520
+APP_MEASURE_IMPORT_MAX_BYTES=10485760
+APP_MEASURE_IMPORT_MAX_ROWS=5000
+APP_MEASURE_IMPORT_MAX_SHEETS=5
 # APP_AMAP_KEY=请在需要地图功能时填写并限制生产域名
 # APP_AMAP_SECURITY_CODE=请填写与 Key 配套的安全密钥
 EOF
@@ -400,6 +403,10 @@ data/runtime.db*、data/security.db*、data/attachments.db*、data/attachments/�
 ```
 
 其中 SQLite 文件是当前运行状态，旧 JSON 是首次迁移和回滚来源。`data/attachments.db*` 与 `data/attachments/` 必须成套恢复，否则完整性校验会拒绝下载。生成的导出文件在 `data/exports/`，该目录不需要提交到 Git。
+
+清单计量导入的 CSV/XLSX 源文件同样保存在附件库中。导入只接受 UTF-8 CSV 和无公式、无宏、无外部链接的 `.xlsx`，并严格校验清单编号、正数工程量、合同段、工期、行数和工作表数量；错误报告可在导入页面下载，系统不会自动替换未知清单或补造数量。默认限制为 10 MiB、5000 行和 5 个工作表，可通过 `APP_MEASURE_IMPORT_MAX_BYTES`、`APP_MEASURE_IMPORT_MAX_ROWS`、`APP_MEASURE_IMPORT_MAX_SHEETS` 调整。
+
+完整验收必须使用 `npm ci` 后执行 `npm run test:all`。验收完成的纯运行环境可以执行 `npm prune --omit=dev` 减少开发依赖；需要再次运行全套回归前必须重新执行 `npm ci`。
 
 如果更新后数据异常，先停止服务并把当前 `data/` 再留一份现场副本，然后整体恢复最近的完整备份：
 

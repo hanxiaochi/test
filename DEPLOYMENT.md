@@ -21,6 +21,7 @@ GitHub：https://github.com/hanxiaochi/test/tree/codex/zwkjy-clone
 - `data/security.db` 保存账号、密码摘要、角色、权限、会话、安全审计和计算规则版本。
 - `data/attachments.db` 保存附件租户、项目、资料节点、校验和、上传人和删除状态等元数据。
 - `data/attachments/` 保存随机对象名的真实附件字节；下载和 ZIP 打包前会重新校验 SHA-256。
+- 清单计量导入的 CSV/XLSX 原文件也存入上述附件库，业务库只保存逐行校验结果、来源 SHA-256 和生成计量单的关联信息。
 - `data/tenants/` 保存其他租户和项目的隔离业务数据库。
 - `data/backups/` 保存应用内创建或导入的项目级业务备份。
 - `data/runtime-db.json` 是旧版数据源，仅用于首次非破坏迁移和应急 JSON 回滚。
@@ -135,6 +136,9 @@ APP_BOOTSTRAP_PASSWORD=请替换为至少10位且含字母数字特殊字符的�
 APP_COOKIE_SECURE=true
 APP_TRUST_PROXY=true
 APP_ATTACHMENT_MAX_BYTES=20971520
+APP_MEASURE_IMPORT_MAX_BYTES=10485760
+APP_MEASURE_IMPORT_MAX_ROWS=5000
+APP_MEASURE_IMPORT_MAX_SHEETS=5
 # APP_AMAP_KEY=请在需要地图功能时填写并限制生产域名
 # APP_AMAP_SECURITY_CODE=请填写与 Key 配套的安全密钥
 EOF
@@ -237,8 +241,9 @@ curl -fsS http://127.0.0.1:3100/api/health
 4. 计算规则必须填写变更原因，历史版本可查看和重新启用。
 5. 用户/RBAC、审计、备份恢复、数据交换和国际设置页面正常。
 6. 工程资料可上传允许类型的真实文件；列表、单文件下载和资料 ZIP 字节一致，只读用户不能上传或删除。
-7. 重启服务后业务数据、账号、规则版本、审计和附件仍存在。
-8. 执行第 12/13/14 期 fixture 回归，结果与基准一致。
+7. 清单计量导入可下载模板并真实上传 CSV/XLSX；错误行可下载报告，重复上传/导入不重复生成计量单，源文件下载字节和 SHA-256 一致。
+8. 重启服务后业务数据、账号、规则版本、审计和附件仍存在。
+9. 执行第 12/13/14 期 fixture 回归，结果与基准一致。
 
 ## 完整恢复
 
@@ -268,6 +273,9 @@ APP_BACKUP_DIR          应用内项目备份目录
 APP_ATTACHMENT_DB_PATH  附件元数据 SQLite 路径，默认 data/attachments.db
 APP_ATTACHMENT_DIR      附件对象目录，默认 data/attachments
 APP_ATTACHMENT_MAX_BYTES 单文件上限字节数，默认 20971520（20 MiB）
+APP_MEASURE_IMPORT_MAX_BYTES 计量导入文件上限，默认 10485760（10 MiB），且不能超过附件上限
+APP_MEASURE_IMPORT_MAX_ROWS  每个计量导入文件最大有效数据行数，默认 5000
+APP_MEASURE_IMPORT_MAX_SHEETS XLSX 最大工作表数量，默认 5
 APP_SHUTDOWN_TIMEOUT_MS 优雅停机等待毫秒数，默认 5000
 APP_LOGIN_MAX_ATTEMPTS  同一IP、租户和账号在窗口内的失败上限，默认 10
 APP_LOGIN_WINDOW_MS     登录失败计数窗口毫秒数，默认 900000
@@ -283,6 +291,8 @@ APP_AMAP_SECURITY_CODE   可选；与高德地图 Key 配套的安全密钥
 修改路径后必须同步调整 systemd 权限、全量备份范围和监控规则。不要在应用直接暴露公网时启用 `APP_TRUST_PROXY`，否则攻击者可能伪造来源地址绕过登录限流。
 
 Nginx 的 `client_max_body_size` 必须略大于 `APP_ATTACHMENT_MAX_BYTES` 以容纳 multipart 边界开销。应用只接受 PDF、Word、Excel、CSV、TXT、JPEG、PNG 和 ZIP，并同时检查扩展名、MIME、文件签名、大小和 SHA-256。后台“备份恢复管理”只覆盖项目业务状态，不包含附件对象；完整灾备必须停服复制整个 `data/` 目录。
+
+计量导入仅接受 UTF-8 CSV 和无宏 `.xlsx`。公式、宏、外部链接、未知清单、重复清单、非正数工程量、异常合同段/工期以及超限文件都会被拒绝或标为逐行错误，系统不会替换清单或补造默认工程量。完整验收使用 `npm ci && npm run test:all`；验收完成后的纯运行镜像可执行 `npm prune --omit=dev`，但此后要重新运行全套测试必须先恢复开发依赖。
 
 首次初始化的管理员会被强制进入密码修改页。新密码至少 10 位，并同时包含字母、数字和特殊字符；修改成功后全部已有会话会立即失效，必须使用新密码重新登录。
 

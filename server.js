@@ -10,6 +10,7 @@ const authService = require("./lib/security/auth-service");
 const { RuleStore } = require("./lib/rules/rule-store");
 const backupService = require("./lib/backup/backup-service");
 const tabularService = require("./lib/import-export/tabular-service");
+const measureImportService = require("./lib/import-export/measure-import-service");
 const fidicCore = require("./lib/international/fidic-core");
 const internationalSettingsService = require("./lib/international/project-settings");
 const { mapClientConfig } = require("./lib/client-config");
@@ -34,6 +35,9 @@ const backupDir = path.resolve(process.env.APP_BACKUP_DIR || path.join(dataDir, 
 const attachmentDir = path.resolve(process.env.APP_ATTACHMENT_DIR || path.join(dataDir, "attachments"));
 const attachmentDbFile = path.resolve(process.env.APP_ATTACHMENT_DB_PATH || path.join(dataDir, "attachments.db"));
 const attachmentMaxBytes = Math.max(1024, Number(process.env.APP_ATTACHMENT_MAX_BYTES) || 20 * 1024 * 1024);
+const measureImportMaxBytes = Math.max(1024, Number(process.env.APP_MEASURE_IMPORT_MAX_BYTES) || 10 * 1024 * 1024);
+const measureImportMaxRows = Math.max(1, Number(process.env.APP_MEASURE_IMPORT_MAX_ROWS) || 5000);
+const measureImportMaxSheets = Math.max(1, Number(process.env.APP_MEASURE_IMPORT_MAX_SHEETS) || 5);
 const port = process.env.PORT || 3100;
 const loginRateLimitOptions = {
   maxAttempts: process.env.APP_LOGIN_MAX_ATTEMPTS,
@@ -45,6 +49,10 @@ const attachmentStore = new AttachmentStore({ dbFile: attachmentDbFile, objectDi
 const attachmentUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: attachmentMaxBytes, files: 1, fields: 6, parts: 7, fieldNameSize: 80, fieldSize: 2048, headerPairs: 50 }
+}).single("file");
+const measureImportUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: measureImportMaxBytes, files: 1, fields: 4, parts: 5, fieldNameSize: 80, fieldSize: 2048, headerPairs: 50 }
 }).single("file");
 const ruleStore = new RuleStore(process.env.APP_RULE_DB_PATH || authService.securityFile);
 const initializedRuleTenants = new Set();
@@ -82,6 +90,7 @@ const publicPathRules = [
 function requiredPermission(req) {
   if (req.path === "/api/account/password") return null;
   if (req.path === "/api/international/certificate/calculate") return "data:read";
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method) && req.path.startsWith("/import_measure/")) return "data:read";
   if (/^\/api\/debug(?:\/|$)/.test(req.path)) return "admin:access";
   if (/^\/(?:admin|api\/admin)(?:\/|$)/.test(req.path)) return "admin:access";
   const legacyMutation = /\/(?:save|delete|del|update|create|add|edit|upload|import|move|init|agree|return|withdraw|archive|adjust|up_order)(?:_|\/|$)/i.test(req.path);
@@ -7323,9 +7332,7 @@ function documentManagementDashboardHtml(req) {
 
 function ensureImportAttachments() {
   if (!Array.isArray(engine.db.importMeasureAttachments)) {
-    engine.db.importMeasureAttachments = [
-      { id: 1, attachmentId: 1, attId: 1, fileName: "清单计量导入模板.xlsx", size: 28672, uploadDate: "2026-02-20", status: 0, state: "已解析" }
-    ];
+    engine.db.importMeasureAttachments = [];
   }
   return engine.db.importMeasureAttachments;
 }
@@ -7337,117 +7344,256 @@ function importAttachmentRows() {
     id: item.attachmentId || item.attId || item.id,
     attachmentId: item.attachmentId || item.attId || item.id,
     attId: item.attId || item.attachmentId || item.id,
-    state: item.state || (item.status === 1 ? "已导入" : item.status === 2 ? "已清空数据" : "已解析"),
-    state: cleanBusinessText(item.state, item.status === 1 ? "已导入" : item.status === 2 ? "已清空数据" : "已解析"),
+    state: cleanBusinessText(item.sourceAttachmentId ? item.state : "历史模拟记录（不可导入）", item.status === 1 ? "已导入" : item.status === 2 ? "已清空数据" : "已解析"),
     uploadDate: item.uploadDate || today(),
     fileDate: item.fileDate || item.uploadDate || today(),
-    sort: item.sort || engine.allMeasureDetails().length
+    sort: Number(item.sort ?? (Array.isArray(item.parsedRows) ? item.parsedRows.length : 0)),
+    validRows: Number(item.validRows || 0),
+    invalidRows: Number(item.invalidRows || 0),
+    isLegacy: !item.sourceAttachmentId
   }));
 }
 
-function parsedImportDetails(attachment, fallbackIndex = 0) {
-  const sourceRows = Array.isArray(attachment.parsedRows) ? attachment.parsedRows : [];
-  const details = sourceRows.map((row) => {
-    const bill = engine.db.bills.find((item) => {
-      if (Number(row.billId || 0) && Number(item.billId || 0) === Number(row.billId)) return true;
-      if (row.billNo && String(item.billNo || "") === String(row.billNo)) return true;
-      return false;
+function measureImportAttachmentScope(req) {
+  return {
+    tenantId: req.authUser.tenantId,
+    projectId: String(req.businessContext.projectId),
+    module: "measure_import",
+    entityType: "import_source",
+    entityId: String(req.businessContext.projectId)
+  };
+}
+
+function measureImportAudit(req, action, result, details = {}) {
+  authService.store.audit({
+    tenantId: req.authUser.tenantId,
+    userId: req.authUser.id,
+    action,
+    result,
+    targetType: "measure_import",
+    targetId: String(details.attId || details.sourceAttachmentId || req.businessContext.projectId),
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+    details: { projectId: req.businessContext.projectId, ...details }
+  });
+}
+
+function measureImportById(attId) {
+  return ensureImportAttachments().find((row) => Number(row.attId || row.id) === Number(attId)) || null;
+}
+
+function measureImportLimits() {
+  return { maxBytes: measureImportMaxBytes, maxRows: measureImportMaxRows, maxSheets: measureImportMaxSheets };
+}
+
+function persistMeasureImport(req, action) {
+  return appStore.save(engine.db, { actor: req.authUser.account, action });
+}
+
+async function saveMeasureImportUpload(req) {
+  if (!req.file) throw Object.assign(new Error("请选择 CSV 或 XLSX 文件"), { status: 400, code: "MEASURE_IMPORT_FILE_REQUIRED" });
+  const digest = crypto.createHash("sha256").update(req.file.buffer).digest("hex");
+  const duplicate = ensureImportAttachments().find((row) => row.sourceSha256 === digest && row.sourceAttachmentId);
+  if (duplicate) {
+    measureImportAudit(req, "measure_import.upload", "success", { attId: duplicate.attId, sourceAttachmentId: duplicate.sourceAttachmentId, duplicate: true, sha256: digest });
+    return { duplicate: true, attId: duplicate.attId, parsedRows: duplicate.sort, validRows: duplicate.validRows, invalidRows: duplicate.invalidRows };
+  }
+  const parsed = await measureImportService.parseMeasureImport({ fileName: req.file.originalname, buffer: req.file.buffer, bills: engine.db.bills, ...measureImportLimits() });
+  let stored;
+  try {
+    stored = attachmentStore.create({
+      ...measureImportAttachmentScope(req),
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      buffer: req.file.buffer,
+      uploaderUserId: req.authUser.id,
+      remark: "清单计量导入源文件"
     });
-    if (!bill) return null;
-    const measureNum = Number(row.measureNum ?? row.quantity ?? row.currentNum ?? row.num ?? 0);
-    return {
-      billId: bill.billId,
-      measureNum: measureNum > 0 ? measureNum : Math.max(1, Math.round(Number(bill.contractNum || 1) * 0.01))
+    const rows = ensureImportAttachments();
+    const id = nextId(rows, "attId");
+    const metadata = {
+      id,
+      attachmentId: id,
+      attId: id,
+      sourceAttachmentId: stored.id,
+      sourceSha256: stored.sha256,
+      fileName: stored.fileName,
+      size: stored.byteSize,
+      uploadDate: stored.uploadDate,
+      status: parsed.ok ? 0 : 3,
+      state: parsed.ok ? "校验通过" : "校验不通过",
+      parsedRows: parsed.rows,
+      validationErrors: parsed.errors,
+      sort: parsed.total,
+      validRows: parsed.valid,
+      invalidRows: parsed.invalid,
+      createdBy: req.authUser.id,
+      createdAt: stored.createdAt
     };
-  }).filter(Boolean);
-  if (details.length) return details;
-  const firstBill = engine.db.bills[fallbackIndex % engine.db.bills.length] || engine.db.bills[0];
-  return [{ billId: firstBill.billId, measureNum: Math.max(1, Math.round(Number(firstBill.contractNum || 1) * 0.01)) }];
-}
-
-function uploadImportRows(req) {
-  const raw = req.body.rows || req.body.details || req.body.items || req.query.rows || req.query.details || req.query.items;
-  if (Array.isArray(raw)) return raw;
-  if (typeof raw === "string" && raw.trim()) {
+    rows.push(metadata);
     try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
+      persistMeasureImport(req, `measure-import:upload:${id}`);
+    } catch (error) {
+      rows.pop();
+      attachmentStore.delete({ ...measureImportAttachmentScope(req), id: stored.id, deletedBy: req.authUser.id });
+      throw error;
     }
+    measureImportAudit(req, "measure_import.upload", "success", { attId: id, sourceAttachmentId: stored.id, fileName: stored.fileName, bytes: stored.byteSize, sha256: stored.sha256, validRows: parsed.valid, invalidRows: parsed.invalid });
+    measureImportAudit(req, "measure_import.parse", parsed.ok ? "success" : "failure", { attId: id, sourceAttachmentId: stored.id, errors: parsed.errors.slice(0, 50), total: parsed.total });
+    return { attId: id, sourceAttachmentId: stored.id, sha256: stored.sha256, parsed: true, ok: parsed.ok, parsedRows: parsed.total, validRows: parsed.valid, invalidRows: parsed.invalid, errors: parsed.errors };
+  } catch (error) {
+    measureImportAudit(req, "measure_import.upload", "failure", { sourceAttachmentId: stored && stored.id, fileName: req.file.originalname, bytes: req.file.size, reason: error.code || error.message });
+    throw error;
   }
-  return [];
 }
 
-function importMeasureFromAttachments(ids) {
-  const attachments = importAttachmentRows();
-  const selected = ids.length ? attachments.filter((item) => ids.includes(Number(item.attId || item.attachmentId || item.id))) : attachments;
+function selectedMeasureImports(ids) {
+  const selected = ids.length ? ids.map((id) => measureImportById(id)).filter(Boolean) : [];
+  if (!selected.length) throw Object.assign(new Error("请选择导入附件"), { status: 400, code: "MEASURE_IMPORT_SELECTION_REQUIRED" });
+  return selected;
+}
+
+function latestPeriodId() {
+  const rows = engine.periodRows().filter((row) => String(row.states || "启用") !== "停用");
+  return Number((rows[rows.length - 1] || {}).periodId || 0);
+}
+
+function importMeasureFromAttachments(req, ids) {
+  const selected = selectedMeasureImports(ids);
+  const previousMeasures = structuredClone(engine.db.measures);
+  const previousMetadata = structuredClone(ensureImportAttachments());
   let imported = 0;
-  selected.forEach((attachment) => {
-    const exists = engine.db.measures.some((row) => row.sourceAttId === attachment.attId);
-    if (!exists) {
-      const id = nextId(engine.db.measures, "measureId");
-      const firstBill = engine.db.bills[imported % engine.db.bills.length] || engine.db.bills[0];
-      const details = parsedImportDetails(attachment, imported);
-      const sectionBill = engine.db.bills.find((bill) => Number(bill.billId || 0) === Number(details[0] && details[0].billId)) || firstBill;
-      engine.db.measures.push({
-        id,
-        measureId: id,
-        sourceAttId: attachment.attId,
-        measureNo: `JL-IMPORT-${String(id).padStart(3, "0")}`,
-        sectionId: sectionBill.sectionId || 101,
-        periodId: 2,
-        measureDate: today(),
-        states: "待上报",
-        drawNo: "IMPORT",
-        pegNo: "导入计量",
-        certifyNo: `DR-${String(id).padStart(3, "0")}`,
-        position: attachment.fileName || "导入计量",
-        details
+  let skipped = 0;
+  try {
+    selected.forEach((attachment) => {
+      if (!attachment.sourceAttachmentId) throw Object.assign(new Error("历史模拟记录不能导入，请上传真实文件"), { status: 409, code: "MEASURE_IMPORT_LEGACY_RECORD" });
+      if (attachment.invalidRows || !Array.isArray(attachment.parsedRows) || !attachment.parsedRows.length) {
+        throw Object.assign(new Error("附件存在校验错误，修正文件后重新上传"), { status: 422, code: "MEASURE_IMPORT_VALIDATION_FAILED" });
+      }
+      const groups = new Map();
+      attachment.parsedRows.forEach((row) => {
+        const periodId = Number(row.periodId || req.body.periodId || latestPeriodId());
+        if (!engine.periodRows().some((period) => Number(period.periodId) === periodId)) throw Object.assign(new Error(`第 ${row.sourceRow} 行工期不存在`), { status: 422, code: "MEASURE_IMPORT_PERIOD_UNKNOWN" });
+        const key = `${Number(row.sectionId)}::${periodId}::${row.measureNo || "AUTO"}`;
+        if (!groups.has(key)) groups.set(key, { sectionId: Number(row.sectionId), periodId, measureNo: row.measureNo, rows: [] });
+        groups.get(key).rows.push(row);
       });
-      imported += 1;
-    }
-    const source = ensureImportAttachments().find((row) => Number(row.attId || row.attachmentId || row.id) === Number(attachment.attId));
-    if (source) {
-      source.status = 1;
-      source.state = "已导入";
-    }
-  });
-  return { imported, rows: engine.db.measures.length };
+      groups.forEach((group, groupKey) => {
+        const signature = `${attachment.sourceSha256}:${groupKey}`;
+        if (engine.db.measures.some((row) => row.sourceImportSignature === signature)) {
+          skipped += 1;
+          return;
+        }
+        const id = nextId(engine.db.measures, "measureId");
+        const positions = [...new Set(group.rows.map((row) => row.position).filter(Boolean))];
+        const dates = group.rows.map((row) => row.measureDate).filter(Boolean).sort();
+        engine.db.measures.push({
+          id,
+          measureId: id,
+          sourceAttId: attachment.attId,
+          sourceAttachmentId: attachment.sourceAttachmentId,
+          sourceImportSignature: signature,
+          sourceSha256: attachment.sourceSha256,
+          measureNo: group.measureNo || `JL-IMPORT-${String(id).padStart(3, "0")}`,
+          sectionId: group.sectionId,
+          periodId: group.periodId,
+          measureDate: dates[0] || today(),
+          states: "待上报",
+          drawNo: "IMPORT",
+          pegNo: "导入计量",
+          certifyNo: `DR-${String(id).padStart(3, "0")}`,
+          position: positions.join("；") || attachment.fileName,
+          details: group.rows.map((row) => ({ billId: row.billId, measureNum: row.measureNum }))
+        });
+        imported += 1;
+      });
+      attachment.status = 1;
+      attachment.state = "已导入";
+      attachment.importedAt = new Date().toISOString();
+    });
+    persistMeasureImport(req, `measure-import:commit:${selected.map((item) => item.attId).join(",")}`);
+    measureImportAudit(req, "measure_import.commit", "success", { attIds: selected.map((item) => item.attId), imported, skipped });
+    return { imported, skipped, rows: engine.db.measures.length };
+  } catch (error) {
+    engine.db.measures = previousMeasures;
+    engine.db.importMeasureAttachments = previousMetadata;
+    measureImportAudit(req, "measure_import.commit", "failure", { attIds: selected.map((item) => item.attId), reason: error.code || error.message });
+    throw error;
+  }
 }
 
-function clearImportedMeasureData(ids) {
-  const attachments = importAttachmentRows();
-  const selected = ids.length ? attachments.filter((item) => ids.includes(Number(item.attId || item.attachmentId || item.id))) : attachments;
-  const selectedIds = selected.map((item) => Number(item.attId || item.attachmentId || item.id));
-  let changed = 0;
-  for (let index = engine.db.measures.length - 1; index >= 0; index -= 1) {
-    if (selectedIds.includes(Number(engine.db.measures[index].sourceAttId))) {
-      engine.db.measures.splice(index, 1);
-      changed += 1;
-    }
+function clearImportedMeasureData(req, ids) {
+  const selected = selectedMeasureImports(ids);
+  const selectedIds = selected.map((item) => Number(item.attId));
+  const previousMeasures = structuredClone(engine.db.measures);
+  const previousMetadata = structuredClone(ensureImportAttachments());
+  try {
+    engine.db.measures = engine.db.measures.filter((row) => !selectedIds.includes(Number(row.sourceAttId)));
+    const changed = previousMeasures.length - engine.db.measures.length;
+    selected.forEach((item) => { item.status = 2; item.state = "已清空数据"; item.clearedAt = new Date().toISOString(); });
+    persistMeasureImport(req, `measure-import:clear:${selectedIds.join(",")}`);
+    measureImportAudit(req, "measure_import.clear", "success", { attIds: selectedIds, changed });
+    return { changed, rows: engine.db.measures.length };
+  } catch (error) {
+    engine.db.measures = previousMeasures;
+    engine.db.importMeasureAttachments = previousMetadata;
+    measureImportAudit(req, "measure_import.clear", "failure", { attIds: selectedIds, reason: error.code || error.message });
+    throw error;
   }
-  ensureImportAttachments().forEach((item) => {
-    if (!selectedIds.length || selectedIds.includes(Number(item.attId || item.attachmentId || item.id))) {
-      item.status = 2;
-      item.state = "已清空数据";
-    }
-  });
-  return { changed, rows: engine.db.measures.length };
 }
 
-function deleteImportAttachments(ids) {
-  const attachments = ensureImportAttachments();
-  const targetIds = ids.length ? ids : attachments.map((item) => Number(item.attId || item.attachmentId || item.id));
-  let dataChanged = 0;
-  for (let index = engine.db.measures.length - 1; index >= 0; index -= 1) {
-    if (targetIds.includes(Number(engine.db.measures[index].sourceAttId))) {
-      engine.db.measures.splice(index, 1);
-      dataChanged += 1;
-    }
+function deleteImportAttachments(req, ids) {
+  const selected = selectedMeasureImports(ids);
+  const selectedIds = selected.map((item) => Number(item.attId));
+  if (engine.db.measures.some((row) => selectedIds.includes(Number(row.sourceAttId)))) {
+    throw Object.assign(new Error("附件已生成计量数据，请先清空导入数据"), { status: 409, code: "MEASURE_IMPORT_DATA_EXISTS" });
   }
-  const changed = removeRows(attachments, "attId", targetIds) || removeRows(attachments, "attachmentId", targetIds);
-  return { changed, dataChanged, rows: attachments.length };
+  const previousMetadata = structuredClone(ensureImportAttachments());
+  try {
+    engine.db.importMeasureAttachments = ensureImportAttachments().filter((item) => !selectedIds.includes(Number(item.attId)));
+    persistMeasureImport(req, `measure-import:delete:${selectedIds.join(",")}`);
+    let changed = 0;
+    selected.forEach((item) => {
+      if (item.sourceAttachmentId) changed += attachmentStore.delete({ ...measureImportAttachmentScope(req), id: item.sourceAttachmentId, deletedBy: req.authUser.id });
+    });
+    measureImportAudit(req, "measure_import.delete", "success", { attIds: selectedIds, changed });
+    return { changed: selected.length, sourceFilesDeleted: changed, rows: engine.db.importMeasureAttachments.length };
+  } catch (error) {
+    engine.db.importMeasureAttachments = previousMetadata;
+    try { persistMeasureImport(req, `measure-import:delete-rollback:${selectedIds.join(",")}`); } catch {}
+    measureImportAudit(req, "measure_import.delete", "failure", { attIds: selectedIds, reason: error.code || error.message });
+    throw error;
+  }
+}
+
+async function reloadMeasureImport(req, ids) {
+  const selected = selectedMeasureImports(ids);
+  if (engine.db.measures.some((row) => selected.some((item) => Number(item.attId) === Number(row.sourceAttId)))) {
+    throw Object.assign(new Error("附件已生成计量数据，请先清空后再重解析"), { status: 409, code: "MEASURE_IMPORT_DATA_EXISTS" });
+  }
+  const previousMetadata = structuredClone(ensureImportAttachments());
+  try {
+    for (const item of selected) {
+      if (!item.sourceAttachmentId) throw Object.assign(new Error("历史模拟记录没有真实源文件"), { status: 409, code: "MEASURE_IMPORT_LEGACY_RECORD" });
+      const verified = attachmentStore.read({ ...measureImportAttachmentScope(req), id: item.sourceAttachmentId });
+      const parsed = await measureImportService.parseMeasureImport({ fileName: verified.row.fileName, buffer: verified.buffer, bills: engine.db.bills, ...measureImportLimits() });
+      item.status = parsed.ok ? 0 : 3;
+      item.state = parsed.ok ? "重新校验通过" : "重新校验不通过";
+      item.parsedRows = parsed.rows;
+      item.validationErrors = parsed.errors;
+      item.sort = parsed.total;
+      item.validRows = parsed.valid;
+      item.invalidRows = parsed.invalid;
+      item.reloadedAt = new Date().toISOString();
+    }
+    persistMeasureImport(req, `measure-import:reload:${selected.map((item) => item.attId).join(",")}`);
+    measureImportAudit(req, "measure_import.reload", "success", { attIds: selected.map((item) => item.attId), invalidRows: selected.reduce((sum, item) => sum + Number(item.invalidRows || 0), 0) });
+    return { changed: selected.length, rows: selected };
+  } catch (error) {
+    engine.db.importMeasureAttachments = previousMetadata;
+    measureImportAudit(req, "measure_import.reload", "failure", { attIds: selected.map((item) => item.attId), reason: error.code || error.message });
+    throw error;
+  }
 }
 
 function importMeasureDashboardHtml(req) {
@@ -7456,14 +7602,14 @@ function importMeasureDashboardHtml(req) {
   const importedMeasures = engine.measureRows().filter((row) => !selectedAttId || Number(row.sourceAttId || 0) === selectedAttId);
   const previewRows = importMeasurePreviewRows(selectedAttId).slice(0, 80);
   const totalImportedMoney = importedMeasures.reduce((sum, row) => sum + Number(row.measureMoney || 0), 0);
-  const parsedCount = attachments.filter((row) => /解析/.test(row.state || "")).length;
-  const importedCount = attachments.filter((row) => /导入/.test(row.state || "")).length;
-  const clearedCount = attachments.filter((row) => /清空/.test(row.state || "")).length;
+  const parsedCount = attachments.filter((row) => Number(row.status) === 0 && !row.isLegacy).length;
+  const importedCount = attachments.filter((row) => Number(row.status) === 1).length;
+  const invalidCount = attachments.filter((row) => Number(row.status) === 3 || row.isLegacy).length;
   const cards = [
-    ["附件数量", attachments.length, "上传并解析的 Excel"],
-    ["已解析", parsedCount, "可执行导入的附件"],
+    ["附件数量", attachments.length, "真实上传的 CSV / XLSX"],
+    ["校验通过", parsedCount, "可执行导入的附件"],
+    ["校验不通过", invalidCount, "需要修正源文件"],
     ["已导入", importedCount, "已生成计量单"],
-    ["已清空", clearedCount, "已删除导入数据"],
     ["导入计量单", importedMeasures.length, "当前附件关联计量单"],
     ["导入金额", moneyText(totalImportedMoney), "当前附件导入计量金额"]
   ].map(([label, value, hint]) => `
@@ -7482,13 +7628,15 @@ function importMeasureDashboardHtml(req) {
         <td>${Number(row.size || 0)}</td>
         <td>${htmlEscape(row.uploadDate || row.fileDate || "")}</td>
         <td><span class="import-state">${htmlEscape(row.state || "")}</span></td>
-        <td>${Number(row.sort || 0)}</td>
+        <td>${Number(row.validRows || 0)} / ${Number(row.invalidRows || 0)}</td>
         <td class="import-actions">
           <a href="/import_measure/dashboard_page?attId=${id}">查看</a>
-          <a href="/import_measure/import_excel?attIds=${id}">导入</a>
-          <a href="/import_measure/reload_import?attId=${id}">重解析</a>
-          <a href="/import_measure/delete_data?attId=${id}">清空数据</a>
-          <a href="/import_measure/delete?attIds=${id}">删除附件</a>
+          ${row.sourceAttachmentId ? `<a href="/import_measure/source/${id}/download">下载源文件</a>` : ""}
+          ${Number(row.invalidRows || 0) ? `<a href="/import_measure/error_report?attId=${id}">错误报告</a>` : ""}
+          <button type="button" class="layui-btn layui-btn-xs" data-import-action="import" data-att-id="${id}"${row.isLegacy || Number(row.invalidRows || 0) ? " disabled" : ""}>导入</button>
+          <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" data-import-action="reload" data-att-id="${id}"${row.isLegacy ? " disabled" : ""}>重解析</button>
+          <button type="button" class="layui-btn layui-btn-xs layui-btn-warm" data-import-action="clear" data-att-id="${id}">清空数据</button>
+          <button type="button" class="layui-btn layui-btn-xs layui-btn-danger" data-import-action="delete" data-att-id="${id}">删除附件</button>
         </td>
       </tr>`;
   }).join("");
@@ -7506,6 +7654,7 @@ function importMeasureDashboardHtml(req) {
     </tr>`).join("");
   const previewBody = previewRows.map((row) => `
     <tr>
+      <td>${Number(row.sourceRow || 0)}</td>
       <td>${htmlEscape(row.billNo || "")}</td>
       <td class="left">${htmlEscape(row.billName || "")}</td>
       <td>${htmlEscape(row.measureUnit || "")}</td>
@@ -7545,20 +7694,22 @@ function importMeasureDashboardHtml(req) {
         <div class="import-head">
           <div>
             <h2>清单计量导入管理</h2>
-            <p>管理计量 Excel 附件、解析预览、生成计量单、重解析、清空导入数据和删除附件。</p>
+            <p>上传真实 CSV / XLSX，逐行校验后生成可追溯的清单计量单。</p>
           </div>
-          <form class="import-tools" onsubmit="event.preventDefault();var f=this;fetch('/import_measure/upload_excel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fileName:f.fileName.value,size:f.size.value})}).then(function(r){return r.json()}).then(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())});">
-            <input name="fileName" value="本地计量导入-${today()}.xlsx">
-            <input name="size" value="4096" style="min-width:90px;width:90px;">
+          <form class="import-tools" id="measure-import-upload-form" enctype="multipart/form-data">
+            <input name="file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+            <input id="measure-import-period" name="periodId" type="number" min="1" value="${latestPeriodId()}" title="缺省工期ID" style="min-width:100px;width:100px;">
             <button class="layui-btn layui-btn-sm" type="submit">上传解析</button>
+            <a class="layui-btn layui-btn-sm layui-btn-primary" href="/import_measure/template.csv">下载模板</a>
             <a class="layui-btn layui-btn-sm layui-btn-primary" href="/bill_measure/dashboard_page">计量看板</a>
+            <span id="measure-import-message" style="color:#64748b;"></span>
           </form>
         </div>
         <div class="import-cards">${cards}</div>
         <div class="import-panel import-wide">
           <h3>导入附件</h3>
           <table class="layui-table" lay-size="sm">
-            <thead><tr><th>ID</th><th>文件名</th><th>大小</th><th>上传日期</th><th>状态</th><th>预览条数</th><th>操作</th></tr></thead>
+            <thead><tr><th>ID</th><th>文件名</th><th>大小</th><th>上传日期</th><th>状态</th><th>通过 / 错误</th><th>操作</th></tr></thead>
             <tbody>${attachmentRows || `<tr><td colspan="7" class="import-empty">暂无导入附件</td></tr>`}</tbody>
           </table>
         </div>
@@ -7566,8 +7717,8 @@ function importMeasureDashboardHtml(req) {
           <div class="import-panel">
             <h3>解析预览</h3>
             <table class="layui-table" lay-size="sm">
-              <thead><tr><th>清单编号</th><th>清单名称</th><th>单位</th><th>计量数量</th><th>单价</th><th>计量金额</th><th>校验</th></tr></thead>
-              <tbody>${previewBody || `<tr><td colspan="7" class="import-empty">暂无解析预览</td></tr>`}</tbody>
+              <thead><tr><th>源行</th><th>清单编号</th><th>清单名称</th><th>单位</th><th>计量数量</th><th>单价</th><th>计量金额</th><th>校验</th></tr></thead>
+              <tbody>${previewBody || `<tr><td colspan="8" class="import-empty">暂无解析预览</td></tr>`}</tbody>
             </table>
           </div>
           <div class="import-panel">
@@ -7578,6 +7729,33 @@ function importMeasureDashboardHtml(req) {
             </table>
           </div>
         </div>
+        <script>
+          (function(){
+            var form=document.getElementById('measure-import-upload-form');
+            var message=document.getElementById('measure-import-message');
+            function reload(){ window.appReloadCurrentContent ? window.appReloadCurrentContent() : location.reload(); }
+            function responseJson(response){ return response.json().then(function(body){ if(!response.ok||body.code!==1) throw new Error(body.msg||'操作失败'); return body; }); }
+            form.addEventListener('submit',function(event){
+              event.preventDefault();
+              var button=form.querySelector('[type="submit"]');
+              button.disabled=true; message.textContent='正在校验文件...';
+              fetch('/import_measure/upload_excel',{method:'POST',body:new FormData(form)}).then(responseJson)
+                .then(function(body){message.textContent=body.data.invalidRows?'文件存在校验错误':'校验通过';reload();})
+                .catch(function(error){message.textContent=error.message;button.disabled=false;});
+            });
+            Array.prototype.forEach.call(document.querySelectorAll('[data-import-action]'),function(button){
+              button.addEventListener('click',function(){
+                var action=button.getAttribute('data-import-action');
+                var attId=button.getAttribute('data-att-id');
+                var routes={import:'/import_measure/import_excel',reload:'/import_measure/reload_import',clear:'/import_measure/delete_data',delete:'/import_measure/delete'};
+                if((action==='clear'||action==='delete')&&!window.confirm(action==='clear'?'确认清空该附件生成的计量数据？':'确认删除该源附件？')) return;
+                button.disabled=true; message.textContent='正在处理...';
+                fetch(routes[action],{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({attIds:attId,attId:attId,periodId:document.getElementById('measure-import-period').value})})
+                  .then(responseJson).then(reload).catch(function(error){message.textContent=error.message;button.disabled=false;});
+              });
+            });
+          })();
+        </script>
       </div>
     </div>`;
 }
@@ -11062,57 +11240,38 @@ function printableReportHtml(req) {
     </html>`;
 }
 
-function importMeasureRows() {
-  return engine.allMeasureDetails().map((row, index) => ({
-    id: index + 1,
-    fileName: row.fileName || "measure-import-template.xlsx",
-    size: row.size || 28672,
-    fileDate: row.measureDate || today(),
-    sort: index + 1,
-    status: row.status ?? 0,
-    attId: 1,
-    importStatus: "已解析",
-    checkStatus: "通过",
-    billNo: row.billNo,
-    billName: row.billName,
-    measureUnit: row.measureUnit,
-    measureNum: row.measureNum,
-    price: row.price,
-    money: row.money,
-    remark: "来自本地计量明细"
-  }));
-}
-
 function importMeasurePreviewRows(attId = 0) {
   const attachment = importAttachmentRows().find((row) => Number(row.attId || row.attachmentId || row.id) === Number(attId));
   const parsedRows = attachment && Array.isArray(attachment.parsedRows) ? attachment.parsedRows : [];
-  if (!parsedRows.length) return importMeasureRows();
+  if (!parsedRows.length) return [];
   return parsedRows.map((row, index) => {
-    const bill = engine.db.bills.find((item) => {
-      if (Number(row.billId || 0) && Number(item.billId || 0) === Number(row.billId)) return true;
-      if (row.billNo && String(item.billNo || "") === String(row.billNo)) return true;
-      return false;
-    }) || {};
-    const measureNum = Number(row.measureNum ?? row.quantity ?? row.currentNum ?? row.num ?? 0);
-    const price = Number(row.price ?? bill.price ?? bill.contractPrice ?? 0);
+    const errors = Array.isArray(row.errors) ? row.errors : [];
     return {
       id: index + 1,
+      sourceRow: row.sourceRow,
+      sheetName: row.sheetName,
       fileName: attachment.fileName,
       size: attachment.size,
       fileDate: attachment.fileDate || attachment.uploadDate || today(),
       sort: index + 1,
-      status: 0,
+      status: errors.length ? 3 : 0,
       attId: attachment.attId,
       importStatus: attachment.state || "已解析",
-      checkStatus: bill.billId ? "通过" : "未匹配清单",
-      billId: bill.billId || row.billId || "",
-      billNo: row.billNo || bill.billNo || "",
-      billName: row.billName || bill.billName || row.name || "",
-      measureUnit: row.measureUnit || row.unit || bill.measureUnit || bill.unit || "",
-      measureNum,
-      price,
-      money: Number((measureNum * price).toFixed(2)),
-      remark: row.remark || "来自上传解析明细"
+      checkStatus: errors.length ? errors.map((error) => error.message).join("；") : "通过",
+      billId: row.billId || "",
+      billNo: row.billNo || "",
+      billName: row.billName || "",
+      measureUnit: row.measureUnit || "",
+      measureNum: Number(row.measureNum || 0),
+      price: Number(row.price || 0),
+      money: Number(row.money || 0),
+      measureNo: row.measureNo || "",
+      sectionId: row.sectionId || "",
+      periodId: row.periodId || "",
+      measureDate: row.measureDate || "",
+      position: row.position || "",
+      errors,
+      remark: errors.length ? "请修正源文件后重新上传" : "真实文件解析结果"
     };
   });
 }
@@ -14776,72 +14935,62 @@ app.all("/varyMeasurePay/export_vary_measure_pay", (req, res) => exportCsvOrTick
 app.all("/reportManager/exportReport", (req, res) => exportReport(req, res));
 app.all("/reportManager/exportReports", (req, res) => downloadExport(req, res, "payment-report.csv", reportPaymentRows()));
 app.all("/file_upload/down_load", (req, res) => downloadExport(req, res, "export.csv", engine.billLedgerRows()));
-app.all("/import_measure/upload_excel", (req, res) => mutate(res, () => {
-  const rows = ensureImportAttachments();
-  const id = nextId(rows, "attId");
-  const fileName = req.body.fileName || req.query.fileName || req.body.name || "\u672c\u5730\u5bfc\u5165\u6587\u4ef6.xlsx";
-  const parsedRows = uploadImportRows(req);
-  rows.push({
-    id,
-    attachmentId: id,
-    attId: id,
-    fileName: cleanBusinessText(fileName, "\u672c\u5730\u5bfc\u5165\u6587\u4ef6.xlsx"),
-    size: Number(req.body.size || req.query.size || 28672),
-    uploadDate: today(),
-    status: 0,
-    state: "\u5df2\u89e3\u6790",
-    parsedRows,
-    sort: parsedRows.length || undefined
-  });
-  return { fileName: cleanBusinessText(fileName, "\u672c\u5730\u5bfc\u5165\u6587\u4ef6.xlsx"), parsed: true, parsedRows: parsedRows.length, attId: id };
-}));
-app.all("/import_measure/upload_excel", (req, res) => mutate(res, () => {
-  const rows = ensureImportAttachments();
-  const id = nextId(rows, "attId");
-  const fileName = req.body.fileName || req.query.fileName || req.body.name || "本地导入文件.xlsx";
-  rows.push({
-    id,
-    attachmentId: id,
-    attId: id,
-    fileName: cleanBusinessText(fileName, "本地导入文件.xlsx"),
-    size: Number(req.body.size || req.query.size || 28672),
-    uploadDate: today(),
-    status: 0,
-    state: "已解析"
-  });
-  return { fileName, parsed: true, attId: id };
-}));
-app.all("/import_measure/import_excel", (req, res) => mutate(res, () => importMeasureFromAttachments(idsFrom(req, "attIds"))));
-app.all("/import_measure/reload_import", (req, res) => mutate(res, () => {
-  const ids = idsFrom(req, "attId");
-  const attachments = ensureImportAttachments();
-  let changed = 0;
-  attachments.forEach((item) => {
-    if (!ids.length || ids.includes(Number(item.attId || item.attachmentId || item.id))) {
-      item.status = 0;
-      item.state = "\u5df2\u91cd\u65b0\u89e3\u6790";
-      item.uploadDate = today();
-      changed += 1;
+app.get("/import_measure/template.csv", (_req, res) => {
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", "attachment; filename=measure-import-template.csv");
+  res.send(measureImportService.templateCsv());
+});
+app.get(["/import_measure/upload_excel", "/import_measure/import_excel", "/import_measure/reload_import", "/import_measure/delete", "/import_measure/delete_data"], (req, res) => {
+  operationOk(res, { path: req.path, method: "POST", mutation: false, message: "该操作必须使用 POST 请求" });
+});
+app.post("/import_measure/upload_excel", (req, res, next) => {
+  measureImportUpload(req, res, (uploadError) => {
+    if (uploadError) {
+      uploadError.status = uploadError.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+      measureImportAudit(req, "measure_import.upload", "failure", { reason: uploadError.code || uploadError.message });
+      next(uploadError);
+      return;
     }
+    Promise.resolve(saveMeasureImportUpload(req)).then((result) => operationOk(res, result)).catch(next);
   });
-  return { reloaded: true, changed };
-}));
-app.all("/import_measure/reload_import", (req, res) => mutate(res, () => {
-  const ids = idsFrom(req, "attId");
-  const attachments = ensureImportAttachments();
-  let changed = 0;
-  attachments.forEach((item) => {
-    if (!ids.length || ids.includes(Number(item.attId || item.attachmentId || item.id))) {
-      item.status = 0;
-      item.state = "已重新解析";
-      item.uploadDate = today();
-      changed += 1;
-    }
-  });
-  return { reloaded: true, changed };
-}));
-app.all("/import_measure/delete", (req, res) => mutate(res, () => deleteImportAttachments(idsFrom(req, "attIds"))));
-app.all("/import_measure/delete_data", (req, res) => mutate(res, () => clearImportedMeasureData(idsFrom(req, "attId"))));
+});
+app.post("/import_measure/import_excel", (req, res, next) => {
+  try { operationOk(res, importMeasureFromAttachments(req, idsFrom(req, "attIds"))); } catch (error) { next(error); }
+});
+app.post("/import_measure/reload_import", (req, res, next) => {
+  Promise.resolve(reloadMeasureImport(req, idsFromAny(req, ["attId", "attIds"]))).then((result) => operationOk(res, result)).catch(next);
+});
+app.post("/import_measure/delete", (req, res, next) => {
+  try { operationOk(res, deleteImportAttachments(req, idsFrom(req, "attIds"))); } catch (error) { next(error); }
+});
+app.post("/import_measure/delete_data", (req, res, next) => {
+  try { operationOk(res, clearImportedMeasureData(req, idsFromAny(req, ["attId", "attIds"]))); } catch (error) { next(error); }
+});
+app.get("/import_measure/source/:attId/download", (req, res, next) => {
+  const item = measureImportById(req.params.attId);
+  if (!item || !item.sourceAttachmentId) { next(Object.assign(new Error("导入源文件不存在"), { status: 404, code: "MEASURE_IMPORT_SOURCE_NOT_FOUND" })); return; }
+  try {
+    const verified = attachmentStore.read({ ...measureImportAttachmentScope(req), id: item.sourceAttachmentId });
+    const extension = path.extname(verified.row.fileName).replace(/[^.a-z0-9]/gi, "").slice(0, 12);
+    const encodedName = encodeURIComponent(verified.row.fileName).replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+    res.setHeader("Content-Type", verified.row.mimeType);
+    res.setHeader("Content-Length", String(verified.buffer.length));
+    res.setHeader("Content-Disposition", `attachment; filename="measure-import-${item.attId}${extension}"; filename*=UTF-8''${encodedName}`);
+    res.setHeader("X-Content-SHA256", verified.row.sha256);
+    measureImportAudit(req, "measure_import.download", "success", { attId: item.attId, sourceAttachmentId: item.sourceAttachmentId, sha256: verified.row.sha256, bytes: verified.buffer.length });
+    res.send(verified.buffer);
+  } catch (error) {
+    measureImportAudit(req, "measure_import.download", "failure", { attId: item.attId, sourceAttachmentId: item.sourceAttachmentId, reason: error.code || error.message });
+    next(error);
+  }
+});
+app.get("/import_measure/error_report", (req, res, next) => {
+  const item = measureImportById(req.query.attId);
+  if (!item) { next(Object.assign(new Error("导入记录不存在"), { status: 404, code: "MEASURE_IMPORT_NOT_FOUND" })); return; }
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename=measure-import-errors-${item.attId}.csv`);
+  res.send(measureImportService.errorReportCsv({ errors: item.validationErrors || [] }));
+});
 app.all("/secBill/export_sec_bill", (req, res) => csv(res, "section-bills.csv", engine.billRows()));
 app.all("/billModel/import_model", (req, res) => csv(res, "bill-model-template.csv", [
   { billNo: "101-1", billName: "清单名称", measureUnit: "m3", contractNum: 100, price: 10 }
@@ -15052,14 +15201,15 @@ app.use((error, req, res, _next) => {
   if (status >= 500) console.error("request failed", req.method, req.path, error && error.stack ? error.stack : error);
   else console.warn("request rejected", req.method, req.path, status);
   const attachmentRequest = req.path.startsWith("/projectInformationNode/") && /attachment/i.test(req.path);
-  const clientMessage = attachmentRequest && status < 500
+  const measureImportRequest = req.path.startsWith("/import_measure/");
+  const clientMessage = (attachmentRequest || measureImportRequest) && status < 500
     ? (error.code === "LIMIT_FILE_SIZE" ? "附件超过允许的大小限制" : String(error.message || "附件请求无效"))
     : status === 413 ? "请求数据超过限制" : status < 500 ? "请求数据无效" : "服务器处理失败";
   res.status(status).json({
     code: 0,
     msg: clientMessage,
     data: null,
-    errorCode: attachmentRequest ? (error.code || "ATTACHMENT_REQUEST_INVALID") : undefined
+    errorCode: attachmentRequest ? (error.code || "ATTACHMENT_REQUEST_INVALID") : measureImportRequest ? (error.code || "MEASURE_IMPORT_REQUEST_INVALID") : undefined
   });
 });
 
