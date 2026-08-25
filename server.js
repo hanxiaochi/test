@@ -11,6 +11,7 @@ const { RuleStore } = require("./lib/rules/rule-store");
 const backupService = require("./lib/backup/backup-service");
 const tabularService = require("./lib/import-export/tabular-service");
 const measureImportService = require("./lib/import-export/measure-import-service");
+const paymentReportExport = require("./lib/reports/payment-report-export");
 const fidicCore = require("./lib/international/fidic-core");
 const internationalSettingsService = require("./lib/international/project-settings");
 const { mapClientConfig } = require("./lib/client-config");
@@ -90,6 +91,7 @@ const publicPathRules = [
 function requiredPermission(req) {
   if (req.path === "/api/account/password") return null;
   if (req.path === "/api/international/certificate/calculate") return "data:read";
+  if (req.path === "/reportManager/exportReport") return "data:read";
   if (["GET", "HEAD", "OPTIONS"].includes(req.method) && req.path.startsWith("/import_measure/")) return "data:read";
   if (/^\/api\/debug(?:\/|$)/.test(req.path)) return "admin:access";
   if (/^\/(?:admin|api\/admin)(?:\/|$)/.test(req.path)) return "admin:access";
@@ -711,18 +713,14 @@ function pdfHexText(value) {
   return `<${Buffer.from(bytes).toString("hex").toUpperCase()}>`;
 }
 
-function pdfTextUnits(value) {
-  return Array.from(String(value ?? "")).reduce((sum, char) => sum + (char.charCodeAt(0) <= 0x7f ? 0.55 : 1), 0);
-}
-
-function wrapPdfLine(value, maxUnits = 62) {
+function wrapPdfLine(value, maxUnits = 58) {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
   if (!text) return [""];
   const lines = [];
   let current = "";
   let units = 0;
   Array.from(text).forEach((char) => {
-    const nextUnits = char.charCodeAt(0) <= 0x7f ? 0.55 : 1;
+    const nextUnits = 1;
     if (current && units + nextUnits > maxUnits) {
       lines.push(current);
       current = char;
@@ -745,7 +743,7 @@ function buildSimplePdf(title, sourceLines) {
     { text: title, size: 15 },
     { text: `生成时间：${new Date().toLocaleString("zh-CN", { hour12: false })}`, size: 9 },
     { text: "", size: 9 },
-    ...sourceLines.flatMap((line) => wrapPdfLine(line, line.startsWith("【") ? 58 : 62).map((text) => ({
+    ...sourceLines.flatMap((line) => wrapPdfLine(line, line.startsWith("【") ? 54 : 58).map((text) => ({
       text,
       size: line.startsWith("【") ? 11 : 8.5
     })))
@@ -861,6 +859,20 @@ function reportExportRows(req) {
   const rawIds = req.body.rpIds || req.query.rpIds || req.body.ids || req.query.ids || req.body.rpId || req.query.rpId;
   const ids = idsFromQueryValue(rawIds);
   return reportPaymentRows(ids);
+}
+
+function reportExportAudit(req, action, result, details = {}) {
+  authService.store.audit({
+    tenantId: req.authUser.tenantId,
+    userId: req.authUser.id,
+    action,
+    result,
+    targetType: "payment_report",
+    targetId: String(req.businessContext.projectId),
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+    details: { projectId: req.businessContext.projectId, ...details }
+  });
 }
 
 function reportPaymentRows(ids = []) {
@@ -985,86 +997,43 @@ function filteredManualMeasureRows(req) {
   });
 }
 
-function reportExportHtml(rows, title = "计量支付报表") {
-  const safeRows = Array.isArray(rows) ? rows : [];
-  const body = safeRows.map((row) => `
-      <tr>
-        <td>${htmlEscape(row.sectionName || "")}</td>
-        <td>${htmlEscape(row.contractNo || "")}</td>
-        <td>${row.contractMoney || 0}</td>
-        <td>${row.finalMoney || 0}</td>
-        <td>${row.billMeasureMoney || row.measureMoney || 0}</td>
-        <td>${row.materialDiasMoney || 0}</td>
-        <td>${row.materialArrivalMoney || 0}</td>
-        <td>${row.manualMoney || 0}</td>
-        <td>${row.totalPayMoney || 0}</td>
-        <td>${row.payRate || 0}%</td>
-      </tr>`).join("");
-  const summary = safeRows.reduce((acc, row) => {
-    acc.contractMoney += Number(row.contractMoney || 0);
-    acc.finalMoney += Number(row.finalMoney || 0);
-    acc.billMeasureMoney += Number(row.billMeasureMoney || row.measureMoney || 0);
-    acc.materialDiasMoney += Number(row.materialDiasMoney || 0);
-    acc.materialArrivalMoney += Number(row.materialArrivalMoney || 0);
-    acc.manualMoney += Number(row.manualMoney || 0);
-    acc.totalPayMoney += Number(row.totalPayMoney || 0);
-    return acc;
-  }, { contractMoney: 0, finalMoney: 0, billMeasureMoney: 0, materialDiasMoney: 0, materialArrivalMoney: 0, manualMoney: 0, totalPayMoney: 0 });
-  return `<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <title>${htmlEscape(title)}</title>
-  <style>
-    body{font-family:Arial,"Microsoft YaHei",sans-serif;margin:28px;color:#222;}
-    h1{font-size:22px;margin:0 0 16px;text-align:center;}
-    table{border-collapse:collapse;width:100%;font-size:13px;}
-    th,td{border:1px solid #888;padding:7px 8px;text-align:center;}
-    th{background:#f2f2f2;}
-    .summary{margin:12px 0 18px;display:flex;gap:18px;font-weight:600;}
-  </style>
-</head>
-<body>
-  <h1>${htmlEscape(title)}</h1>
-  <div class="summary">
-    <span>合同金额：${Number(summary.contractMoney.toFixed(2))}</span>
-    <span>最终金额：${Number(summary.finalMoney.toFixed(2))}</span>
-    <span>清单计量：${Number(summary.billMeasureMoney.toFixed(2))}</span>
-    <span>材料补差：${Number(summary.materialDiasMoney.toFixed(2))}</span>
-    <span>材料到场：${Number(summary.materialArrivalMoney.toFixed(2))}</span>
-    <span>手动计量：${Number(summary.manualMoney.toFixed(2))}</span>
-    <span>累计支付：${Number(summary.totalPayMoney.toFixed(2))}</span>
-  </div>
-  <table>
-    <thead><tr><th>合同段</th><th>合同编号</th><th>合同金额</th><th>最终金额</th><th>清单计量</th><th>材料补差</th><th>材料到场</th><th>手动计量</th><th>累计支付</th><th>支付比例</th></tr></thead>
-    <tbody>${body || '<tr><td colspan="10">暂无报表数据</td></tr>'}</tbody>
-  </table>
-</body>
-</html>`;
-}
-
-function reportExportContent(req) {
+async function reportExportContent(req) {
   const rows = reportExportRows(req);
   const type = String(req.body.exportType || req.query.exportType || "excel").toLowerCase();
+  const generatedAt = new Date();
+  const title = "计量支付汇总报表";
   if (type === "pdf") {
     return {
-      filename: "payment-report-print.html",
-      contentType: "text/html; charset=utf-8",
-      data: Buffer.from(reportExportHtml(rows, "计量支付报表 PDF预览"), "utf8")
+      filename: "payment-report.pdf",
+      contentType: "application/pdf",
+      data: await paymentReportExport.createPdf(rows, { title, generatedAt })
     };
   }
   if (type === "word") {
     return {
-      filename: "payment-report-word.doc",
-      contentType: "application/msword; charset=utf-8",
-      data: Buffer.from(reportExportHtml(rows, "计量支付报表 Word文档"), "utf8")
+      filename: "payment-report.docx",
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      data: await paymentReportExport.createDocx(rows, { title, generatedAt })
     };
   }
   if (type === "all") {
+    const [xlsx, pdf, docx] = await Promise.all([
+      paymentReportExport.createXlsx(rows, { title, generatedAt }),
+      paymentReportExport.createPdf(rows, { title, generatedAt }),
+      paymentReportExport.createDocx(rows, { title, generatedAt })
+    ]);
+    const manifest = {
+      schemaVersion: 1,
+      generatedAt: generatedAt.toISOString(),
+      report: title,
+      rows: rows.length,
+      files: ["payment-report.xlsx", "payment-report.pdf", "payment-report.docx"]
+    };
     const files = [
-      { name: "payment-report.csv", data: csvBody(rows) },
-      { name: "payment-report-print.html", data: reportExportHtml(rows, "计量支付报表打印版") },
-      { name: "payment-report-word.doc", data: reportExportHtml(rows, "计量支付报表 Word文档") }
+      { name: "payment-report.xlsx", data: xlsx },
+      { name: "payment-report.pdf", data: pdf },
+      { name: "payment-report.docx", data: docx },
+      { name: "manifest.json", data: JSON.stringify(manifest, null, 2) }
     ];
     return {
       filename: "payment-report-bundle.zip",
@@ -1073,21 +1042,25 @@ function reportExportContent(req) {
     };
   }
   return {
-    filename: "payment-report.csv",
-    contentType: "text/csv; charset=utf-8",
-    data: Buffer.from(csvBody(rows), "utf8")
+    filename: "payment-report.xlsx",
+    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    data: await paymentReportExport.createXlsx(rows, { title, generatedAt })
   };
 }
 
-function exportReport(req, res) {
-  const payload = reportExportContent(req);
+async function exportReport(req, res) {
+  const payload = await reportExportContent(req);
+  const exportType = String(req.body.exportType || req.query.exportType || "excel").toLowerCase();
+  const auditDetails = { exportType, fileName: payload.filename, bytes: payload.data.length, rows: reportExportRows(req).length, mode: isAjaxExport(req) ? "ticket" : "direct" };
   if (!isAjaxExport(req)) {
     res.setHeader("Content-Type", payload.contentType);
     res.setHeader("Content-Disposition", `attachment; filename="${payload.filename}"`);
+    reportExportAudit(req, "report.export", "success", auditDetails);
     res.send(payload.data);
     return;
   }
   const saved = saveExportBuffer(payload.filename, payload.data);
+  reportExportAudit(req, "report.export", "success", { ...auditDetails, savedFileName: saved.fileName });
   operationOk(res, [saved.fileDir, saved.fileName]);
 }
 
@@ -1104,7 +1077,14 @@ function resolveExportFile(req) {
 function downloadExport(req, res, fallbackName, fallbackRows) {
   const file = resolveExportFile(req);
   if (file && fs.existsSync(file)) {
+    const stat = fs.statSync(file);
+    reportExportAudit(req, "report.export.download", "success", { fileName: path.basename(file), bytes: stat.size });
     res.download(file, path.basename(file));
+    return;
+  }
+  if (file) {
+    reportExportAudit(req, "report.export.download", "failure", { fileName: path.basename(file), reason: "not_found" });
+    res.status(404).json({ code: 0, msg: "导出文件不存在或已过期", data: null, errorCode: "EXPORT_FILE_NOT_FOUND" });
     return;
   }
   csv(res, fallbackName, fallbackRows);
@@ -14932,7 +14912,12 @@ app.all("/measure_data/audit_money_page", (req, res) => html(res, auditMoneyDash
 app.all("/measure_data/audit_money_list", (req, res) => table(res, req, engine.auditMoneyRows()));
 app.all("/reportManager/export_project_measure_pay", (req, res) => exportCsvOrTicket(req, res, "project-measure-pay.csv", engine.billLedgerRows(), "url"));
 app.all("/varyMeasurePay/export_vary_measure_pay", (req, res) => exportCsvOrTicket(req, res, "vary-measure-pay.csv", variationPayRowsWithProgress(), "url"));
-app.all("/reportManager/exportReport", (req, res) => exportReport(req, res));
+app.all("/reportManager/exportReport", (req, res, next) => {
+  Promise.resolve(exportReport(req, res)).catch((error) => {
+    reportExportAudit(req, "report.export", "failure", { exportType: String(req.body.exportType || req.query.exportType || "excel"), reason: error.code || error.message });
+    next(error);
+  });
+});
 app.all("/reportManager/exportReports", (req, res) => downloadExport(req, res, "payment-report.csv", reportPaymentRows()));
 app.all("/file_upload/down_load", (req, res) => downloadExport(req, res, "export.csv", engine.billLedgerRows()));
 app.get("/import_measure/template.csv", (_req, res) => {

@@ -25,6 +25,7 @@ const commands = [
   ["run", "test:international-settings"],
   ["run", "test:attachments"],
   ["run", "test:measure-import"],
+  ["run", "test:report-export"],
   ["run", "test:payment-fixtures"],
   ["run", "sample:regression"],
   ["run", "verify"],

@@ -2,6 +2,7 @@
 const path = require("path");
 const assert = require("assert");
 const ExcelJS = require("exceljs");
+const JSZip = require("jszip");
 
 const engine = require("../costEngine");
 
@@ -303,6 +304,11 @@ async function verifyAuthorizationFlow() {
   assert.strictEqual(viewerImportCommitDenied.response.status, 403, "viewer should not commit measure imports");
   const viewerImportDeleteDenied = await postJson("/import_measure/delete", { attIds: String(measureFixtureId) });
   assert.strictEqual(viewerImportDeleteDenied.response.status, 403, "viewer should not delete measure import sources");
+  const viewerReportExport = await requestBuffer("/reportManager/exportReport?rpIds=101&exportType=excel");
+  assert.strictEqual(viewerReportExport.response.status, 200, "viewer should export reports from an assigned project");
+  assert.strictEqual(viewerReportExport.buffer.slice(0, 2).toString("ascii"), "PK", "viewer report export should remain a genuine XLSX");
+  const viewerReportCrossProject = await requestBuffer("/reportManager/exportReport?rpIds=101&exportType=excel&projectId=regression-project-2");
+  assert.strictEqual(viewerReportCrossProject.response.status, 403, "viewer should not export reports across a project boundary");
 
   authCookieHeader = adminCookie;
   const viewerFixtureDeleted = await postJson("/projectInformationNode/delete_attachment", { hangId: attachmentDocumentId, attachmentId: viewerFixtureId });
@@ -2061,9 +2067,13 @@ async function verifyReportManagerDashboardLoop() {
   assert.ok(detailPage.text.includes("材料到场") && detailPage.text.includes("到场规则"), "report detail page should use expanded payment component columns");
   assert.ok(detailPage.text.includes("export_project_measure_pay") && detailPage.text.includes("导出Excel"), "report detail page should expose original project payment ledger export action");
 
-  const directExcel = await requestText("/reportManager/exportReport?rpIds=101&exportType=excel");
-  assert.ok(directExcel.text.includes("TJ-01") && directExcel.text.includes("totalPayMoney"), "direct report export should include selected section and payment columns");
-  assert.ok(directExcel.text.includes("materialArrivalMoney") && directExcel.text.includes("payableFormula"), "direct report export should include expanded payment component columns");
+  const directExcel = await requestBuffer("/reportManager/exportReport?rpIds=101&exportType=excel");
+  assert.ok((directExcel.response.headers.get("content-type") || "").includes("spreadsheetml"), "direct report export should return a genuine XLSX content type");
+  assert.strictEqual(directExcel.buffer.slice(0, 2).toString("ascii"), "PK", "direct report export should return an OOXML package");
+  const directWorkbook = new ExcelJS.Workbook();
+  await directWorkbook.xlsx.load(directExcel.buffer);
+  const directSheetText = JSON.stringify(directWorkbook.getWorksheet("计量支付汇总").getSheetValues());
+  assert.ok(directSheetText.includes("TJ-01") && directSheetText.includes("累计支付") && directSheetText.includes("材料到场规则"), "direct XLSX should include selected section and expanded payment columns");
   const directBundle = await requestText("/reportManager/exportReports");
   assert.ok(directBundle.text.includes("materialArrivalMoney") && directBundle.text.includes("arrivalRule"), "bulk report export should use expanded payment component columns");
   const menu = await requestJson("/menu/left_menu?parentId=2");
@@ -3602,31 +3612,40 @@ async function verifyImportExportDownloadLoop() {
     body: JSON.stringify({ rpIds: "101,102", exportType: "excel" })
   });
   assert.strictEqual(excelTicket.json.code, 1, "payment report excel export ticket should succeed");
-  assert.ok(Array.isArray(excelTicket.json.data) && excelTicket.json.data[1].endsWith(".csv"), "excel export should return a CSV file ticket");
-  const excelDownload = await requestText(`/reportManager/exportReports?file_name=${encodeURIComponent(excelTicket.json.data[1])}`);
-  assert.ok(excelDownload.text.includes("sectionName") && excelDownload.text.includes("totalPayMoney"), "excel report download should contain report columns");
-  assert.ok(excelDownload.text.includes("billMeasureMoney") && excelDownload.text.includes("materialDiasMoney") && excelDownload.text.includes("materialArrivalMoney") && excelDownload.text.includes("manualMoney"), "excel report download should include full payable component columns");
-  assert.ok(excelDownload.text.includes("材料到场仅跟踪，不计入应付") || excelDownload.text.includes("JL109材料到场按预付率形成材料设备垫付款"), "excel report download should state material arrival payment rule");
+  assert.ok(Array.isArray(excelTicket.json.data) && excelTicket.json.data[1].endsWith(".xlsx"), "excel export should return a genuine XLSX ticket");
+  const excelDownload = await requestBuffer(`/reportManager/exportReports?file_name=${encodeURIComponent(excelTicket.json.data[1])}`);
+  assert.ok((excelDownload.response.headers.get("content-type") || "").includes("spreadsheetml"), "saved XLSX should download with the correct content type");
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(excelDownload.buffer);
+  const workbookText = JSON.stringify(workbook.worksheets.map((sheet) => sheet.getSheetValues()));
+  assert.ok(workbookText.includes("合同段") && workbookText.includes("累计支付") && workbookText.includes("材料到场规则"), "XLSX report should contain business columns and rule notes");
+  assert.ok(workbookText.includes("JL109材料到场按预付率形成材料设备垫付款"), "XLSX report should state the material arrival payment rule");
 
   const pdfTicket = await requestJson("/reportManager/exportReport", {
     method: "POST",
     body: JSON.stringify({ rpIds: "101", exportType: "pdf" })
   });
   assert.strictEqual(pdfTicket.json.code, 1, "payment report pdf export ticket should succeed");
-  assert.ok(pdfTicket.json.data[1].endsWith(".html"), "pdf export should return a printable HTML ticket");
-  const pdfDownload = await requestText(`/reportManager/exportReports?file_name=${encodeURIComponent(pdfTicket.json.data[1])}`);
-  assert.ok(pdfDownload.text.includes("计量支付报表") && pdfDownload.text.includes("累计支付"), "pdf-style report download should be printable HTML");
-  assert.ok(pdfDownload.text.includes("清单计量") && pdfDownload.text.includes("材料补差") && pdfDownload.text.includes("材料到场") && pdfDownload.text.includes("手动计量"), "pdf-style report should show payable components");
+  assert.ok(pdfTicket.json.data[1].endsWith(".pdf"), "pdf export should return a genuine PDF ticket");
+  const pdfDownload = await requestBuffer(`/reportManager/exportReports?file_name=${encodeURIComponent(pdfTicket.json.data[1])}`);
+  assert.ok((pdfDownload.response.headers.get("content-type") || "").includes("application/pdf"), "PDF report should use application/pdf");
+  assert.strictEqual(pdfDownload.buffer.slice(0, 5).toString("latin1"), "%PDF-", "PDF report should have a genuine PDF signature");
+  assert.ok(pdfDownload.buffer.length > 20000, "PDF report should contain rendered report content and an embedded CJK font subset");
+  assert.match(pdfDownload.buffer.toString("latin1"), /\/FontFile(?:2|3)/, "PDF report should embed its CJK font for portable deployment");
+  assert.ok(!pdfDownload.buffer.includes(Buffer.from("/STSong-Light")), "PDF report should not rely on a non-embedded system CJK font");
 
   const wordTicket = await requestJson("/reportManager/exportReport", {
     method: "POST",
     body: JSON.stringify({ rpIds: "101", exportType: "word" })
   });
   assert.strictEqual(wordTicket.json.code, 1, "payment report word export ticket should succeed");
-  assert.ok(wordTicket.json.data[1].endsWith(".doc"), "word export should return a Word-compatible document ticket");
-  const wordDownload = await requestText(`/reportManager/exportReports?file_name=${encodeURIComponent(wordTicket.json.data[1])}`);
-  assert.ok(wordDownload.text.includes("计量支付报表") && wordDownload.text.includes("累计支付"), "word report download should be Word-compatible HTML");
-  assert.ok(wordDownload.text.includes("清单计量") && wordDownload.text.includes("材料补差") && wordDownload.text.includes("材料到场") && wordDownload.text.includes("手动计量"), "word report should show payable components");
+  assert.ok(wordTicket.json.data[1].endsWith(".docx"), "word export should return a genuine DOCX ticket");
+  const wordDownload = await requestBuffer(`/reportManager/exportReports?file_name=${encodeURIComponent(wordTicket.json.data[1])}`);
+  assert.ok((wordDownload.response.headers.get("content-type") || "").includes("wordprocessingml"), "DOCX report should use the OOXML content type");
+  const wordZip = await JSZip.loadAsync(wordDownload.buffer);
+  const wordXml = await wordZip.file("word/document.xml").async("string");
+  assert.ok(wordXml.includes("计量支付汇总报表") && wordXml.includes("累计支付") && wordXml.includes("材料到场"), "DOCX report should contain the payment table and component labels");
+  assert.ok(wordXml.includes("计量与合同金额") && wordXml.includes("支付与扣回") && wordXml.includes("口径说明"), "DOCX report should separate financial values from calculation rules");
 
   const allTicket = await requestJson("/reportManager/exportReport", {
     method: "POST",
@@ -3636,8 +3655,21 @@ async function verifyImportExportDownloadLoop() {
   assert.ok(allTicket.json.data[1].endsWith(".zip"), "all export should return a ZIP ticket");
   const allDownload = await requestBuffer(`/reportManager/exportReports?file_name=${encodeURIComponent(allTicket.json.data[1])}`);
   assert.strictEqual(allDownload.buffer.slice(0, 2).toString("ascii"), "PK", "all export download should be a ZIP archive");
-  assert.ok(allDownload.buffer.toString("utf8").includes("materialArrivalMoney"), "all export bundle should include expanded payment CSV columns");
-  assert.ok(allDownload.buffer.toString("utf8").includes("payment-report-word.doc"), "all export bundle should include Word-compatible report");
+  const reportBundle = await JSZip.loadAsync(allDownload.buffer);
+  for (const name of ["payment-report.xlsx", "payment-report.pdf", "payment-report.docx", "manifest.json"]) assert.ok(reportBundle.file(name), `report bundle should include ${name}`);
+  const bundlePdf = await reportBundle.file("payment-report.pdf").async("nodebuffer");
+  assert.strictEqual(bundlePdf.slice(0, 5).toString("latin1"), "%PDF-", "bundle PDF should remain a genuine PDF");
+  assert.match(bundlePdf.toString("latin1"), /\/FontFile(?:2|3)/, "bundle PDF should preserve its embedded CJK font");
+  const bundleManifest = JSON.parse(await reportBundle.file("manifest.json").async("string"));
+  assert.strictEqual(bundleManifest.rows, 2, "bundle manifest should record the exported section count");
+
+  const missingExport = await requestJson("/reportManager/exportReports?file_name=missing-report.xlsx");
+  assert.strictEqual(missingExport.response.status, 404, "missing saved exports should fail explicitly instead of returning fallback CSV");
+  assert.strictEqual(missingExport.json.errorCode, "EXPORT_FILE_NOT_FOUND", "missing export failures should be machine readable");
+  const reportExportAudits = await requestJson("/api/admin/security_audit/query?action=report.export&limit=50");
+  assert.ok(reportExportAudits.json.data.rows.some((row) => row.result === "success"), "successful report generation should be audited");
+  const reportDownloadAudits = await requestJson("/api/admin/security_audit/query?action=report.export.download&limit=50");
+  assert.ok(reportDownloadAudits.json.data.rows.some((row) => row.result === "success") && reportDownloadAudits.json.data.rows.some((row) => row.result === "failure"), "successful and missing report downloads should both be audited");
 
   const zip = await requestBuffer("/oaDataNode/downLoadZipFile");
   assert.strictEqual(zip.response.status, 200, "document ZIP download should succeed");

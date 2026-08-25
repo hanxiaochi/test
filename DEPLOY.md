@@ -408,6 +408,8 @@ data/runtime.db*、data/security.db*、data/attachments.db*、data/attachments/�
 
 完整验收必须使用 `npm ci` 后执行 `npm run test:all`。验收完成的纯运行环境可以执行 `npm prune --omit=dev` 减少开发依赖；需要再次运行全套回归前必须重新执行 `npm ci`。
 
+主计量支付报表会生成真实 `.xlsx`、`.pdf`、`.docx`，一键导出 ZIP 同时包含三种文件和 `manifest.json`。验收不能只看扩展名：XLSX/DOCX 应检查 ZIP/OOXML 结构，PDF 应检查 `%PDF-` 文件签名；系统的接口回归已经执行这些检查。报表生成、成功下载和缺失文件下载都会进入安全审计。
+
 如果更新后数据异常，先停止服务并把当前 `data/` 再留一份现场副本，然后整体恢复最近的完整备份：
 
 ```bash
