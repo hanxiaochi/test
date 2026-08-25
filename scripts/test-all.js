@@ -28,6 +28,7 @@ const commands = [
   ["run", "test:report-export"],
   ["run", "test:workflow"],
   ["run", "test:workflow-coordinator"],
+  ["run", "test:workflow-consistency"],
   ["run", "test:payment-fixtures"],
   ["run", "sample:regression"],
   ["run", "verify"],

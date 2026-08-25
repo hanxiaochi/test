@@ -3915,7 +3915,8 @@ async function verifyOriginalMenuUrlAliasesLoop() {
     ["/admin/dashboard_page", "后台管理"],
     ["/admin/calculation_rules_page", "计算规则管理后台"],
     ["/admin/users_page", "账号权限管理"],
-    ["/admin/workflows_page", "审批流程配置"]
+    ["/admin/workflows_page", "审批流程配置"],
+    ["/admin/workflow_consistency_page", "审批一致性巡检"]
   ];
   for (const [url, expected] of pages) {
     const page = await requestText(url);
@@ -3939,7 +3940,9 @@ async function verifyOriginalMenuUrlAliasesLoop() {
     ["9001", "后台管理"],
     ["9002", "计算规则管理后台"],
     ["9004", "JL计量支付报表核对"],
-    ["9010", "账号权限管理"]
+    ["9010", "账号权限管理"],
+    ["9050", "审批流程配置"],
+    ["9060", "审批一致性巡检"]
   ];
   for (const [id, expected] of menuIds) {
     const page = await requestText(`/sbr/sbr_com/${id}`);
@@ -3961,6 +3964,7 @@ async function verifyOriginalMenuUrlAliasesLoop() {
   assert.ok(systemMenuText.includes("数据导入导出") && systemMenuText.includes("admin/data_exchange_page"), "backend menu should expose validated business data exchange");
   assert.ok(systemMenuText.includes("国际合同设置") && systemMenuText.includes("admin/international_settings_page"), "backend menu should expose project-scoped language, currency, and FIDIC settings");
   assert.ok(systemMenuText.includes("审批流程配置") && systemMenuText.includes("admin/workflows_page"), "backend menu should expose versioned workflow administration");
+  assert.ok(systemMenuText.includes("审批一致性巡检") && systemMenuText.includes("admin/workflow_consistency_page"), "backend menu should expose workflow consistency inspection");
 }
 
 async function verifyCommercialWorkflowEngineLoop() {
@@ -4027,6 +4031,18 @@ async function verifyCommercialWorkflowEngineLoop() {
   } finally {
     if (manualId) await postJson("/manualMeasure/delete", { manualMeasureIds: String(manualId) });
   }
+}
+
+async function verifyWorkflowConsistencyInspectionLoop() {
+  const page = await requestText("/admin/workflow_consistency_page");
+  assert.strictEqual(page.response.status, 200, "workflow consistency page should load");
+  assert.ok(page.text.includes("只读核对当前租户与项目") && page.text.includes("巡检结果"), "workflow consistency page should explain its read-only scope and render results");
+  const response = await requestJson("/api/admin/workflow_consistency");
+  assert.strictEqual(response.response.status, 200, "workflow consistency API should load");
+  assert.strictEqual(response.json.data.tenantId, "default", "workflow consistency API should remain tenant scoped");
+  assert.strictEqual(response.json.data.projectId, "1", "workflow consistency API should remain project scoped");
+  assert.strictEqual(response.json.data.totals.modules, 6, "workflow consistency API should inspect all workflow modules");
+  assert.strictEqual(response.json.data.counts.error, 0, `verified workflow data should have no consistency errors: ${JSON.stringify(response.json.data.issues)}`);
 }
 
 async function verifyLegacyWorkflowBatchSafetyLoop() {
@@ -4151,6 +4167,7 @@ async function main() {
   await verifyWorkflowDashboardLoop();
   await verifyCommercialWorkflowEngineLoop();
   await verifyLegacyWorkflowBatchSafetyLoop();
+  await verifyWorkflowConsistencyInspectionLoop();
   await verifyVariationArchiveLoop();
   await verifyVariationDetailCrudLoop();
   await verifyOriginalWorkflowBatchSemanticsLoop();

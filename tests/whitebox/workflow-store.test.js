@@ -122,6 +122,14 @@ test("module, project and tenant form independent instance keys", () => withStor
   transition(store, { tenantId: "tenant-b" });
   transition(store, { module: "billmeasure" });
   assert.equal(store.getInstance("tenant-a", "project-a", "manualmeasure", 101).revision, 1);
+  assert.deepEqual(store.eventStats({ tenantId: "tenant-a", projectId: "project-a", module: "manualmeasure", businessId: 101 }), { count: 1, firstRevision: 1, latestRevision: 1 });
+  assert.deepEqual(store.eventStats({ tenantId: "tenant-a", projectId: "project-a", module: "manualmeasure", businessId: "missing" }), { count: 0, firstRevision: 0, latestRevision: 0 });
+  assert.equal(store.listInstances("tenant-a", "project-a", "manualmeasure", 1).length, 1);
+  assert.equal(store.listInstances("tenant-a", "project-a", "manualmeasure", { limit: 1, offset: 1 }).length, 0);
+  assert.equal(store.listInstances("tenant-a", "project-a", "manualmeasure", 0)[0].businessId, "101");
+  assert.equal(store.listInstances("tenant-a", "project-b", "manualmeasure").length, 1);
+  assert.equal(store.listInstances("tenant-a", "project-a", "billmeasure").length, 1);
+  assert.equal(store.listInstances("tenant-b", "project-b", "manualmeasure").length, 0);
   assert.equal(store.getInstance("tenant-a", "project-b", "manualmeasure", 101).revision, 1);
   assert.equal(store.getInstance("tenant-b", "project-a", "manualmeasure", 101).revision, 1);
   assert.equal(store.getInstance("tenant-a", "project-a", "billmeasure", 101).revision, 1);

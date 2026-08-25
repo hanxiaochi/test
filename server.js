@@ -20,6 +20,7 @@ const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
 const { browserMutationGuard, securityHeaders } = require("./lib/security/http-security");
 const { WorkflowError, WorkflowStore, defaultDefinition } = require("./lib/workflow/workflow-store");
 const workflowCoordinator = require("./lib/workflow/workflow-coordinator");
+const { scanWorkflowConsistency } = require("./lib/workflow/workflow-consistency");
 const engine = require("./costEngine");
 
 (engine.db.projects || []).forEach((project) => {
@@ -1413,6 +1414,25 @@ leftMenus.set("9000", [
     resourceUrl: "admin/workflows_page",
     sysBusinessResources: [],
     sysIdentityResources: ""
+  },
+  {
+    appImageUrl: "",
+    appPageUrl: "",
+    controllerDes: "",
+    flagFlow: 1,
+    isShow: 1,
+    menuIcon: "layui-icon layui-icon-vercode",
+    parentId: 9000,
+    refreshType: 1,
+    resourceCode: "990007",
+    resourceDes: "业务状态、审批实例与事件修订一致性巡检",
+    resourceId: 9060,
+    resourceLevel: 0,
+    resourceName: "审批一致性巡检",
+    resourceNo: "model",
+    resourceUrl: "admin/workflow_consistency_page",
+    sysBusinessResources: [],
+    sysIdentityResources: ""
   }
 ]);
 
@@ -1907,7 +1927,8 @@ function adminDashboardHtml() {
     ["备份恢复管理", "/admin/backups_page", "按当前项目导出、导入和恢复校验备份"],
     ["数据导入导出", "/admin/data_exchange_page", "批量校验、追加、更新并导出核心业务数据"],
     ["国际合同设置", "/admin/international_settings_page", "维护项目语言、币种、汇率和FIDIC付款证书参数"],
-    ["审批流程配置", "/admin/workflows_page", "按项目维护流程版本、状态、跳转权限并查看启用记录"]
+    ["审批流程配置", "/admin/workflows_page", "按项目维护流程版本、状态、跳转权限并查看启用记录"],
+    ["审批一致性巡检", "/admin/workflow_consistency_page", "核对业务状态、审批实例、事件修订和待决事务"]
   ].map(([name, href, desc]) => `
     <tr>
       <td>${htmlEscape(name)}</td>
@@ -1996,6 +2017,50 @@ function workflowManagementHtml(req) {
       root.querySelector('#workflow-definition-form').addEventListener('submit',function(event){event.preventDefault();var form=event.currentTarget,payload;try{payload={module:moduleEl.value,changeReason:form.elements.changeReason.value,definition:JSON.parse(form.elements.definition.value)}}catch(error){message.textContent='JSON 格式错误：'+error.message;return}request('/api/admin/workflows',{method:'POST',body:JSON.stringify(payload)}).then(function(){location.reload()}).catch(function(error){message.textContent=error.message})});
       Array.prototype.forEach.call(root.querySelectorAll('[data-activate-workflow]'),function(button){button.addEventListener('click',function(){request('/api/admin/workflows/'+button.getAttribute('data-activate-workflow')+'/activate',{method:'POST',body:JSON.stringify({module:moduleEl.value})}).then(function(){location.reload()}).catch(function(error){message.textContent=error.message})})});
     })();</script>
+  </div>`;
+}
+
+function workflowConsistencyReport(req) {
+  const tenantId = req.authUser.tenantId;
+  const projectId = req.businessContext.projectId;
+  return scanWorkflowConsistency({
+    state: engine.db,
+    workflowStore,
+    tenantId,
+    projectId,
+    modules: workflowModules.map((module) => {
+      const config = workflowConfig(module);
+      return { code: module, rows: config.rows, key: config.key };
+    })
+  });
+}
+
+function workflowConsistencyHtml(req) {
+  const report = workflowConsistencyReport(req);
+  const severityText = { error: "错误", warning: "警告", info: "信息" };
+  const statusText = { error: "发现错误", warning: "需要关注", ok: "检查通过" };
+  const issueRows = report.issues.map((issue) => `<tr>
+    <td>${htmlEscape(severityText[issue.severity] || issue.severity)}</td>
+    <td>${htmlEscape(issue.code)}</td>
+    <td>${htmlEscape(issue.module || "-")}</td>
+    <td>${htmlEscape(issue.businessId || issue.instanceKey || issue.transactionId || "-")}</td>
+    <td class="core-left">${htmlEscape(JSON.stringify(Object.fromEntries(Object.entries(issue).filter(([key]) => !["severity", "code", "module"].includes(key)))))}</td>
+  </tr>`).join("");
+  const cards = coreCardsHtml([
+    ["巡检状态", statusText[report.status], `租户 ${report.tenantId} / 项目 ${report.projectId}`],
+    ["业务记录", report.totals.businessRows, `已关联审批 ${report.totals.linkedRows}`],
+    ["审批实例", report.totals.instances, `事件 ${report.totals.events}`],
+    ["错误", report.counts.error, "必须处理"],
+    ["警告", report.counts.warning, "需要跟进"],
+    ["审计信息", report.counts.info, "包含已删除业务保留历史"]
+  ]);
+  return `<div class="core-page" data-core-page="workflow-consistency">
+    ${corePageStyle(report.status === "error" ? "#b91c1c" : report.status === "warning" ? "#a16207" : "#047857")}
+    <div class="core-shell">
+      <div class="core-head"><div><h2>审批一致性巡检</h2><p>只读核对当前租户与项目，不自动修改业务数据或审批历史。</p></div><div class="core-tools"><a class="layui-btn layui-btn-sm layui-btn-primary" href="/admin/workflow_consistency_page">重新巡检</a><a class="layui-btn layui-btn-sm layui-btn-primary" href="/admin/workflows_page">流程配置</a></div></div>
+      <div class="core-cards">${cards}</div>
+      <div class="core-panel core-panel-wide"><h3>巡检结果</h3><table class="layui-table" lay-size="sm"><thead><tr><th>级别</th><th>代码</th><th>模块</th><th>对象</th><th>详情</th></tr></thead><tbody>${issueRows || `<tr><td colspan="5" class="core-empty">未发现一致性问题</td></tr>`}</tbody></table>${report.truncated ? `<div class="core-note">问题数量超过展示上限，请先处理已列出问题后重新巡检。</div>` : ""}</div>
+    </div>
   </div>`;
 }
 
@@ -2803,6 +2868,8 @@ function contentForId(id) {
   if (String(id) === "9020") return backupManagementHtml({ businessContext: businessContext.current(), authUser: { tenantId: businessContext.current().tenantId } });
   if (String(id) === "9030") return dataExchangeManagementHtml({ businessContext: businessContext.current() });
   if (String(id) === "9040") return internationalSettingsHtml({ businessContext: businessContext.current() });
+  if (String(id) === "9050") return workflowManagementHtml({ query: {}, authUser: { tenantId: businessContext.current().tenantId }, businessContext: businessContext.current() });
+  if (String(id) === "9060") return workflowConsistencyHtml({ authUser: { tenantId: businessContext.current().tenantId }, businessContext: businessContext.current() });
   if (String(id) === "6998") return reportManagerDashboardHtml({ query: {}, body: {}, params: {} });
   const file = path.join(dataDir, "content", `page_content_${id}.html`);
   const htmlText = readText(file, "");
@@ -14040,6 +14107,7 @@ app.get("/admin/backups_page", requirePermission("admin:access"), (req, res) => 
 app.get("/admin/data_exchange_page", requirePermission("admin:access"), (req, res) => html(res, dataExchangeManagementHtml(req)));
 app.get("/admin/international_settings_page", requirePermission("admin:access"), (req, res) => html(res, internationalSettingsHtml(req)));
 app.get("/admin/workflows_page", requirePermission("admin:access"), (req, res) => html(res, workflowManagementHtml(req)));
+app.get("/admin/workflow_consistency_page", requirePermission("admin:access"), (req, res) => html(res, workflowConsistencyHtml(req)));
 app.get("/system/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml(req)));
 app.all("/payment/jl_report_page", (req, res) => html(res, jlPaymentReportPageHtml(req)));
 app.all("/payment/jl_print_page", (req, res) => html(res, jlPaymentPrintableHtml(req)));
@@ -14086,6 +14154,13 @@ app.get("/api/admin/workflows", requirePermission("admin:access"), (req, res, ne
       activeVersion: workflowStore.getActive(req.authUser.tenantId, projectId, module),
       projectHistory: workflowStore.history(req.authUser.tenantId, projectId, module, 100)
     });
+  } catch (error) {
+    next(error);
+  }
+});
+app.get("/api/admin/workflow_consistency", requirePermission("admin:access"), (req, res, next) => {
+  try {
+    operationOk(res, workflowConsistencyReport(req));
   } catch (error) {
     next(error);
   }
