@@ -97,6 +97,13 @@ async function verifyHealth() {
   assert.strictEqual(response.headers.get("x-frame-options"), "SAMEORIGIN", "same-origin embedded application pages should remain usable");
   assert.strictEqual(response.headers.get("content-security-policy"), "frame-ancestors 'self'", "responses should reject cross-origin framing");
   assert.strictEqual(response.headers.get("x-powered-by"), null, "responses must not disclose the Express implementation");
+
+  const ready = await requestJson("/api/ready");
+  assert.strictEqual(ready.response.status, 200, "public readiness endpoint should accept traffic only when data stores pass integrity checks");
+  assert.strictEqual(ready.json.data.status, "ready", "readiness endpoint should report all stores ready");
+  assert.strictEqual(ready.json.data.checks.length, 5, "readiness endpoint should inspect runtime, security, rules, workflow and attachments");
+  assert.ok(ready.json.data.checks.every((check) => check.status === "ok"), "every readiness check should pass");
+  assert.strictEqual(JSON.stringify(ready.json.data).includes(ROOT), false, "public readiness endpoint must not expose local paths");
 }
 
 async function verifyUnauthenticatedAccess() {

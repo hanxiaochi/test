@@ -225,6 +225,8 @@ npm run verify:external
 
 ## 部署验收
 
+负载均衡、容器或 systemd 的存活探针使用 `GET /api/health`；接流量前的就绪探针使用 `GET /api/ready`。后者会只读校验当前运行态数据库的校验和与 JSON 载荷、待决审批事务，以及安全、规则、审批和附件 SQLite 库的 `quick_check`。返回 HTTP `503` 时必须摘除实例并排查，不能只因首页可打开就继续提供写入服务。响应只包含检查名称和错误代码，不暴露数据库路径。
+
 命令门禁：
 
 ```bash

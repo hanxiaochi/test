@@ -17,6 +17,7 @@ const internationalSettingsService = require("./lib/international/project-settin
 const { mapClientConfig } = require("./lib/client-config");
 const { AttachmentStore } = require("./lib/attachments/attachment-store");
 const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
+const { readinessReport } = require("./lib/runtime/readiness");
 const { browserMutationGuard, securityHeaders } = require("./lib/security/http-security");
 const { WorkflowError, WorkflowStore, defaultDefinition } = require("./lib/workflow/workflow-store");
 const workflowCoordinator = require("./lib/workflow/workflow-coordinator");
@@ -94,6 +95,7 @@ const publicPathRules = [
   /^\/login\.html$/,
   /^\/dologin$/,
   /^\/api\/health$/,
+  /^\/api\/ready$/,
   /^\/(?:assets|js|css|img|common)\//,
   /^\/favicon\.ico$/
 ];
@@ -14596,6 +14598,22 @@ app.get("/api/cost/5d_model", (req, res) => operationOk(res, fiveDCostModelData(
 app.get("/api/cost/boq_validation", (req, res) => operationOk(res, boqValidationData()));
 app.get("/api/cost/unit_price_analysis", (req, res) => operationOk(res, unitPriceAnalysisData()));
 app.get("/api/health", (_req, res) => operationOk(res, { status: "ok", storageMode: appStore.mode }));
+app.get("/api/ready", (_req, res) => {
+  const report = readinessReport({
+    runtimeStatus: appStore.status(),
+    databases: [
+      { name: "security", db: authService.store.db },
+      { name: "rules", db: ruleStore.db },
+      { name: "workflow", db: workflowStore.db },
+      { name: "attachments", db: attachmentStore.db }
+    ]
+  });
+  res.status(report.status === "ready" ? 200 : 503).json({
+    code: report.status === "ready" ? 1 : 0,
+    msg: report.status === "ready" ? "成功" : "系统未就绪",
+    data: report
+  });
+});
 app.get("/api/debug/runtime", (req, res) => {
   const storage = appStore.status();
   operationOk(res, {
