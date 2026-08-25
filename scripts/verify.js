@@ -83,6 +83,20 @@ async function verifyUnauthenticatedAccess() {
   assert.strictEqual(malformed.response.status, 400, "malformed JSON should retain its client-error status");
   assert.strictEqual(malformed.json.code, 0, "malformed JSON should use a failure envelope");
   assert.strictEqual(malformed.json.stack, undefined, "request errors must not expose server stacks");
+  const crossSite = await requestJson("/dologin", {
+    method: "POST",
+    headers: { Origin: "https://attacker.example", "Sec-Fetch-Site": "cross-site" },
+    body: JSON.stringify({ user_account: "cross-site-probe", password: "wrong" })
+  });
+  assert.strictEqual(crossSite.response.status, 403, "cross-site browser mutations should be rejected before authentication work");
+  assert.strictEqual(crossSite.json.errorCode, "CROSS_SITE_REQUEST", "cross-site rejection should be machine readable");
+  const sameOrigin = await requestJson("/dologin", {
+    method: "POST",
+    headers: { Origin: BASE_URL, "Sec-Fetch-Site": "same-origin" },
+    body: JSON.stringify({ user_account: "same-origin-probe", password: "wrong" })
+  });
+  assert.strictEqual(sameOrigin.response.status, 200, "same-origin browser mutations should reach the existing login contract");
+  assert.strictEqual(sameOrigin.json.code, 0, "same-origin probe should be rejected only for invalid credentials");
 }
 
 async function verifyLoginFlow() {

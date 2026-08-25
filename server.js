@@ -12,7 +12,7 @@ const tabularService = require("./lib/import-export/tabular-service");
 const fidicCore = require("./lib/international/fidic-core");
 const internationalSettingsService = require("./lib/international/project-settings");
 const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
-const { LoginRateLimiter, securityHeaders } = require("./lib/security/http-security");
+const { LoginRateLimiter, browserMutationGuard, securityHeaders } = require("./lib/security/http-security");
 const engine = require("./costEngine");
 
 (engine.db.projects || []).forEach((project) => {
@@ -51,6 +51,7 @@ if (process.env.APP_TRUST_PROXY) app.set("trust proxy", process.env.APP_TRUST_PR
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use(express.json({ limit: process.env.APP_BODY_LIMIT || "64mb" }));
 app.use(securityHeaders);
+app.use(browserMutationGuard);
 app.use((req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Pragma", "no-cache");

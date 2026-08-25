@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { LoginRateLimiter, identityKey, positiveInteger, securityHeaders } = require("../../lib/security/http-security");
+const { LoginRateLimiter, browserMutationDecision, browserMutationGuard, identityKey, positiveInteger, securityHeaders } = require("../../lib/security/http-security");
 
 test("positive integers and login identities are normalized", () => {
   assert.equal(positiveInteger("5", 9), 5);
@@ -63,4 +63,32 @@ test("security middleware sets compatible baseline headers", () => {
     "X-XSS-Protection": "0"
   });
   assert.equal(nextCalls, 1);
+});
+
+test("browser mutation decisions reject cross-origin evidence without blocking API clients", () => {
+  assert.deepEqual(browserMutationDecision({ method: "GET" }), { allowed: true, reason: "safe-method" });
+  assert.deepEqual(browserMutationDecision({ method: "POST", headers: {} }), { allowed: true, reason: "non-browser-client" });
+  assert.deepEqual(browserMutationDecision({ method: "POST", headers: { host: "erp.example.com", origin: "https://erp.example.com" } }), { allowed: true, reason: "same-origin" });
+  assert.deepEqual(browserMutationDecision({ method: "POST", headers: { host: "erp.example.com", referer: "https://erp.example.com/form" } }), { allowed: true, reason: "same-origin" });
+  assert.deepEqual(browserMutationDecision({ method: "POST", headers: { host: "erp.example.com", origin: "https://evil.example" } }), { allowed: false, reason: "origin-host" });
+  assert.deepEqual(browserMutationDecision({ method: "POST", headers: { host: "erp.example.com", origin: "not a url" } }), { allowed: false, reason: "invalid-origin" });
+  assert.deepEqual(browserMutationDecision({ method: "POST", headers: { host: "erp.example.com", origin: "https://erp.example.com", "sec-fetch-site": "cross-site" } }), { allowed: false, reason: "cross-site" });
+  assert.deepEqual(browserMutationDecision({ method: "POST", headers: { host: "erp.example.com", "sec-fetch-site": "same-site" } }), { allowed: false, reason: "same-site-without-origin" });
+  assert.deepEqual(browserMutationDecision({ method: "POST", headers: { origin: "https://erp.example.com" } }), { allowed: false, reason: "origin-host" });
+});
+
+test("browser mutation middleware forwards accepted requests and rejects denied ones", () => {
+  let nextCalls = 0;
+  browserMutationGuard({ method: "POST", headers: {} }, {}, () => { nextCalls += 1; });
+  assert.equal(nextCalls, 1);
+  let statusCode;
+  let responseBody;
+  browserMutationGuard(
+    { method: "POST", headers: { host: "localhost:3100", origin: "https://evil.example" } },
+    { status(code) { statusCode = code; return this; }, json(body) { responseBody = body; } },
+    () => { nextCalls += 1; }
+  );
+  assert.equal(nextCalls, 1);
+  assert.equal(statusCode, 403);
+  assert.equal(responseBody.errorCode, "CROSS_SITE_REQUEST");
 });
