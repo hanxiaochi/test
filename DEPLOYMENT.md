@@ -1,253 +1,121 @@
-# 网站部署文档
+# 网站部署与运维手册
 
-本文档用于部署本地工程计量支付网站。项目是 Node.js + Express 应用，默认端口为 `3100`。
+本文档是当前版本的部署基线，适用于 Windows 本地验证和 Ubuntu/Debian 云服务器。简版步骤见 `DEPLOY.md`。
 
-## 代码位置
-
-本机项目目录：
+## 交付信息
 
 ```text
-G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
+本机项目：G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
+GitHub：https://github.com/hanxiaochi/test/tree/codex/zwkjy-clone
+默认端口：3100
+初始账号：ys1 / 000000
+运行要求：Node.js >= 22.5
 ```
 
-主要文件：
+收到代码的 AI 或运维人员必须先读本文件，并以实际 `package.json`、`.env` 和服务器数据目录为准。不得用仓库基线数据覆盖服务器运行数据。
+
+## 当前架构
+
+- Node.js + Express 提供前端、业务 API 和管理后台。
+- `data/runtime.db` 保存默认租户/项目业务状态和不可变修订。
+- `data/security.db` 保存账号、密码摘要、角色、权限、会话、安全审计和计算规则版本。
+- `data/tenants/` 保存其他租户和项目的隔离业务数据库。
+- `data/backups/` 保存应用内创建或导入的项目级业务备份。
+- `data/runtime-db.json` 是旧版数据源，仅用于首次非破坏迁移和应急 JSON 回滚。
+
+SQLite 是默认模式，不需要 MySQL 或 PostgreSQL。账号、RBAC、租户/项目隔离、审计、规则版本、备份恢复和数据交换后台均已包含在当前版本中。
+
+## 首次 JSON 到 SQLite 迁移
+
+首次启动时，如果目标 SQLite 库中没有业务状态，程序会读取对应旧 JSON，创建 SQLite 第一个检查点，并保留 JSON 原文件。
+
+迁移规则：
+
+1. 已有 SQLite 状态永远优先，不会被较新、陈旧或损坏的 JSON 覆盖。
+2. 每个租户/项目独立判断和迁移。
+3. JSON 解析失败时启动失败并保留空 SQLite，不会写入半份业务状态。
+4. 不要在迁移后删除旧 JSON；它仍是回滚证据。
+5. 仅排障时设置 `APP_STORAGE=json`。该模式没有 SQLite 修订历史，不应长期作为生产模式。
+
+## 必须持久化的数据
+
+更新、迁移、换机和备份时，把以下内容作为一个整体处理：
 
 ```text
-server.js                 后端服务入口
-costEngine.js             工程造价与计量支付计算引擎
-constructionData.js       初始数据与运行数据加载
-data/runtime-db.json      当前运行数据库
-scripts/verify.js         全站自动验证
-scripts/sample-regression.js  第13/14期样本回归验证
-```
-
-默认登录账号：
-
-```text
-账号：ys1
-密码：000000
-```
-
-## 交给其他 AI 或协作者部署时
-
-如果把部署任务交给 MiniMax、其他 AI 或运维协作者，可以直接让对方先读本节，再按本文档后续步骤执行。
-
-核心信息：
-
-```text
-项目 GitHub：
-https://github.com/hanxiaochi/test/tree/codex/zwkjy-clone
-
-主要部署文档：
-DEPLOYMENT.md
-
-本机项目路径：
-G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
-
-默认账号：
-ys1 / 000000
-
-云服务器建议部署目录：
-/opt/zwkjy-clone
-
-默认服务端口：
-3100
-```
-
-重要注意事项：
-
-```text
-1. data/runtime-db.json 是当前测试版数据库，部署和更新时不要覆盖。
-2. 如果云端需要和本机当前数据一致，要把本机 data/runtime-db.json 上传到服务器的 /opt/zwkjy-clone/data/runtime-db.json。
-3. CALCULATION_USAGE.md 是本机计算使用文档，不上传 GitHub；部署网站本身不依赖它。
-4. PAYMENT_REGRESSION_TEST_DATA.md 和 test-data/payment-regression-12-14.json 是给其他 AI/协作者验收用的三组非 PDF 测试数据。
-5. 数据库、账号权限、角色管控、后台审计和正式后台系统放到下一阶段处理。
-6. 每次更新代码前，先备份服务器上的 data/runtime-db.json。
-```
-
-如果对方从 GitHub 部署，按“方式 A：从 GitHub 拉取”执行；如果对方需要部署本机当前完整测试数据，除了拉代码以外，还必须额外上传本机的 `data/runtime-db.json`。
-
-## 当前测试版数据说明
-
-当前版本不依赖 MySQL、PostgreSQL 或 SQLite，运行数据保存在本项目内的 JSON 文件：
-
-```text
+data/runtime.db
+data/runtime.db-wal
+data/runtime.db-shm
+data/security.db
+data/security.db-wal
+data/security.db-shm
+data/tenants/
+data/backups/
 data/runtime-db.json
 ```
 
-这个文件就是当前测试版的本地数据库，包含工程数据、计量数据、计算规则、后台规则和业务操作后的状态。部署到云服务器后也是同样逻辑：只要服务器上的 `data/runtime-db.json` 不被删除或覆盖，重启服务后数据仍然会保留。
+SQLite 正在运行时不能只复制主 `.db` 文件。最稳妥的全量文件备份方式是短暂停服后复制整个 `data/` 目录。应用后台中的“备份恢复管理”可在线导出项目业务状态，但它不能替代账号/权限数据库和全租户文件备份。
 
-适用范围：
-
-```text
-适合：测试版、演示版、小范围试用、单人或少量人员录入验证
-不适合：多人高并发、正式生产、复杂权限隔离、强审计要求
-```
-
-数据库升级、账号权限、角色管控、后台审计和更完整的管理后台放到下一阶段处理。本次部署先以 JSON 数据库作为测试先行版，重点保证网站能跑、计算模块可用、数据能保留、更新时不丢数据。
-
-## 一、本地 Windows 运行
-
-进入项目目录：
+## Windows 本地运行
 
 ```powershell
 cd G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
-```
-
-安装依赖：
-
-```powershell
-npm.cmd install
-```
-
-启动服务：
-
-```powershell
+node --version
+npm.cmd ci
+npm.cmd run test:all
 npm.cmd start
 ```
 
-访问：
-
-```text
-http://localhost:3100/
-```
-
-全站验证需要服务已经在 `3100` 端口运行：
+访问 `http://localhost:3100/`。首次启动后检查：
 
 ```powershell
-npm.cmd run verify
+Get-ChildItem .\data\runtime.db*
+Get-ChildItem .\data\security.db*
 ```
 
-第13/14期样本回归：
+应急 JSON 模式只在独立排障窗口使用：
 
 ```powershell
-npm.cmd run sample:regression
+$env:APP_STORAGE = "json"
+npm.cmd start
+Remove-Item Env:APP_STORAGE
 ```
 
-第12/13/14期非 PDF 测试数据回归：
+## Linux 首次部署
 
-```powershell
-npm.cmd run test:payment-fixtures
-```
-
-回归报告生成在：
-
-```text
-tmp/sample-regression/latest-result.md
-tmp/sample-regression/latest-result.json
-tmp/payment-fixture-regression/latest-result.md
-tmp/payment-fixture-regression/latest-result.json
-```
-
-## 二、部署前备份数据
-
-`data/runtime-db.json` 是当前运行数据库，里面包含后台规则、工程数据、计量数据和业务操作后的状态。部署、更新、回归测试前建议备份。
-
-Windows：
-
-```powershell
-Copy-Item .\data\runtime-db.json .\data\runtime-db.backup.json -Force
-```
-
-Linux：
-
-```bash
-cp data/runtime-db.json data/runtime-db.$(date +%F-%H%M%S).bak
-```
-
-服务器上建议使用单独备份目录：
-
-```bash
-mkdir -p /opt/zwkjy-clone/data/backups
-cp /opt/zwkjy-clone/data/runtime-db.json /opt/zwkjy-clone/data/backups/runtime-db-$(date +%F-%H%M%S).json
-```
-
-注意：`scripts/sample-regression.js` 会临时替换运行数据库进行测试，脚本结束后会自动恢复原 `data/runtime-db.json`。
-
-## 三、Linux 云服务器部署
-
-以下命令以 Ubuntu/Debian 为例。建议部署目录为：
-
-```text
-/opt/zwkjy-clone
-```
-
-安装基础环境：
+安装依赖：
 
 ```bash
 apt update
-apt install -y git curl unzip nginx
-```
-
-安装 Node.js 20 LTS：
-
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y git curl nginx rsync unzip
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt install -y nodejs
-node -v
-npm -v
+node --version
 ```
 
-### 方式 A：从 GitHub 拉取
-
-如果当前代码已经推送到 GitHub：
+拉取代码：
 
 ```bash
 mkdir -p /opt/zwkjy-clone
 cd /opt/zwkjy-clone
-git clone -b 你的分支名 你的仓库地址 .
+git clone -b codex/zwkjy-clone https://github.com/hanxiaochi/test.git .
 npm ci
+npm run test:all
 ```
 
-如果要让云服务器使用本机当前的测试数据，在本机另开 PowerShell 上传当前 JSON 数据库：
+如果需要带入本机旧 JSON 基线，必须在首次启动前上传：
 
 ```powershell
-cd G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
-scp .\data\runtime-db.json root@服务器IP:/opt/zwkjy-clone/data/runtime-db.json
+scp G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone\data\runtime-db.json root@服务器IP:/opt/zwkjy-clone/data/runtime-db.json
 ```
 
-上传后在服务器执行一次保护标记，避免后续 `git pull` 把服务器运行数据覆盖回仓库里的基线数据：
+如果迁移的是已经运行过的 SQLite 实例，不要只上传 JSON。先停止源实例，再把完整 `data/` 目录传到服务器，并核对文件数量与 SHA-256。
 
-```bash
-cd /opt/zwkjy-clone
-git update-index --skip-worktree data/runtime-db.json
-```
-
-如果已经克隆过：
-
-```bash
-cd /opt/zwkjy-clone
-git pull
-npm ci
-```
-
-### 方式 B：本机打包上传
-
-在 Windows 本机执行：
-
-```powershell
-cd G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
-Compress-Archive -Path assets,common,css,data,img,js,scripts,constructionData.js,costEngine.js,index.html,login.html,package.json,package-lock.json,pageoffice.js,server.js,work_form_http.js,README.md,DEPLOYMENT.md -DestinationPath zwkjy-clone.zip -Force
-scp .\zwkjy-clone.zip root@服务器IP:/opt/
-```
-
-在服务器执行：
-
-```bash
-mkdir -p /opt/zwkjy-clone
-cd /opt/zwkjy-clone
-unzip -o /opt/zwkjy-clone.zip
-npm ci
-```
-
-## 四、systemd 常驻运行
-
-创建服务文件：
+## systemd 服务
 
 ```bash
 cat >/etc/systemd/system/zwkjy-clone.service <<'EOF'
 [Unit]
-Description=APP Local Clone
+Description=Engineering Payment Platform
 After=network.target
 
 [Service]
@@ -255,6 +123,7 @@ Type=simple
 WorkingDirectory=/opt/zwkjy-clone
 Environment=NODE_ENV=production
 Environment=PORT=3100
+Environment=APP_STORAGE=sqlite
 ExecStart=/usr/bin/node /opt/zwkjy-clone/server.js
 Restart=always
 RestartSec=3
@@ -263,45 +132,22 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
-```
 
-启动：
-
-```bash
 systemctl daemon-reload
 systemctl enable --now zwkjy-clone
 systemctl status zwkjy-clone --no-pager
+curl -fsS http://127.0.0.1:3100/api/health
 ```
 
-查看日志：
+生产环境后续应改为专用低权限系统用户，并确保该用户只对项目 `data/`、日志和必要临时目录有写权限。
 
-```bash
-journalctl -u zwkjy-clone -f
-```
-
-本机验证服务：
-
-```bash
-curl -I http://127.0.0.1:3100/
-curl http://127.0.0.1:3100/api/debug/runtime
-```
-
-确认 JSON 数据库位置：
-
-```bash
-ls -lh /opt/zwkjy-clone/data/runtime-db.json
-```
-
-## 五、Nginx 反向代理
-
-如果希望通过 `http://服务器IP/` 访问，而不是 `http://服务器IP:3100/`，配置 Nginx。
+## Nginx
 
 ```bash
 cat >/etc/nginx/sites-available/zwkjy-clone <<'EOF'
 server {
     listen 80;
     server_name _;
-
     client_max_body_size 100m;
 
     location / {
@@ -311,222 +157,81 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
     }
 }
 EOF
-```
 
-启用配置：
-
-```bash
 ln -sf /etc/nginx/sites-available/zwkjy-clone /etc/nginx/sites-enabled/zwkjy-clone
 nginx -t
 systemctl reload nginx
 ```
 
-访问：
+公网开放 `80`；若直接访问 Node 服务才开放 `3100`。正式商用必须配置 HTTPS、域名、防火墙和最小权限运行用户。
 
-```text
-http://服务器IP/
-```
+## 更新部署
 
-## 六、服务器防火墙与安全组
-
-如果直接访问 `3100` 端口，需要开放：
-
-```text
-TCP 3100
-```
-
-如果使用 Nginx 反向代理，需要开放：
-
-```text
-TCP 80
-```
-
-SSH 管理需要开放：
-
-```text
-TCP 22
-```
-
-在 Windows 测试端口：
-
-```powershell
-Test-NetConnection -ComputerName 服务器IP -Port 22
-Test-NetConnection -ComputerName 服务器IP -Port 80
-Test-NetConnection -ComputerName 服务器IP -Port 3100
-```
-
-## 七、部署后验收
-
-确认 systemd 正常：
-
-```bash
-systemctl status zwkjy-clone --no-pager
-```
-
-确认后端运行：
-
-```bash
-curl http://127.0.0.1:3100/api/debug/runtime
-```
-
-确认全站功能：
-
-```bash
-cd /opt/zwkjy-clone
-npm run verify
-```
-
-如需跑第13/14期样本回归，需要把样本 PDF 放到：
-
-```text
-tmp/sample-regression/p13
-tmp/sample-regression/p14
-```
-
-然后执行：
-
-```bash
-npm run sample:regression
-```
-
-如果样本目录放在其他位置：
-
-```bash
-SAMPLE_REGRESSION_ROOT=/path/to/sample-regression npm run sample:regression
-```
-
-## 八、更新部署
-
-更新前先备份运行数据库：
-
-```bash
-cd /opt/zwkjy-clone
-mkdir -p data/backups
-cp data/runtime-db.json data/backups/runtime-db-$(date +%F-%H%M%S).json
-cp data/runtime-db.json /tmp/zwkjy-runtime-db.json
-```
-
-GitHub 更新：
-
-```bash
-git pull
-npm ci
-cp /tmp/zwkjy-runtime-db.json data/runtime-db.json
-systemctl restart zwkjy-clone
-npm run verify
-```
-
-Zip 更新：
-
-```bash
-unzip -o /opt/zwkjy-clone.zip
-npm ci
-cp /tmp/zwkjy-runtime-db.json data/runtime-db.json
-systemctl restart zwkjy-clone
-npm run verify
-```
-
-如果确认新版本需要使用新的初始化数据结构，先不要直接覆盖旧数据库。建议先保留备份，再单独对比或迁移 `data/runtime-db.json`，确认计算数据和业务数据没有丢失后再上线。
-
-## 九、建议开启自动备份
-
-测试版虽然可以直接用 JSON 数据库，但要养成备份习惯。可以在服务器创建每日备份脚本：
-
-```bash
-cat >/usr/local/bin/zwkjy-backup-jsondb.sh <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-APP_DIR=/opt/zwkjy-clone
-BACKUP_DIR="$APP_DIR/data/backups"
-
-mkdir -p "$BACKUP_DIR"
-cp "$APP_DIR/data/runtime-db.json" "$BACKUP_DIR/runtime-db-$(date +%F-%H%M%S).json"
-find "$BACKUP_DIR" -name 'runtime-db-*.json' -mtime +14 -delete
-EOF
-
-chmod +x /usr/local/bin/zwkjy-backup-jsondb.sh
-```
-
-加入每天凌晨 2 点自动备份：
-
-```bash
-(crontab -l 2>/dev/null; echo "0 2 * * * /usr/local/bin/zwkjy-backup-jsondb.sh") | crontab -
-```
-
-手动验证备份：
-
-```bash
-/usr/local/bin/zwkjy-backup-jsondb.sh
-ls -lh /opt/zwkjy-clone/data/backups | tail
-```
-
-## 十、常见问题
-
-### 页面打不开
-
-先在服务器本机检查：
-
-```bash
-curl -I http://127.0.0.1:3100/
-systemctl status zwkjy-clone --no-pager
-```
-
-如果本机能访问，公网不能访问，通常是安全组或防火墙没有开放 `80` 或 `3100`。
-
-### 端口被占用
-
-```bash
-ss -lntp | grep 3100
-```
-
-可以改 systemd 里的端口：
-
-```text
-Environment=PORT=3101
-```
-
-改完后：
-
-```bash
-systemctl daemon-reload
-systemctl restart zwkjy-clone
-```
-
-### 数据不对或想恢复
-
-停止服务：
-
-```bash
-systemctl stop zwkjy-clone
-```
-
-恢复备份：
-
-```bash
-cp data/backups/你的备份文件.json data/runtime-db.json
-```
-
-启动服务：
-
-```bash
-systemctl start zwkjy-clone
-```
-
-### 更新后数据变回去了
-
-通常是更新代码或解压 zip 时覆盖了 `data/runtime-db.json`。处理方法：
+先停服并备份，再更新代码。不要执行会覆盖或清理 `data/` 的命令。
 
 ```bash
 cd /opt/zwkjy-clone
 systemctl stop zwkjy-clone
-cp data/backups/你的备份文件.json data/runtime-db.json
+STAMP=$(date +%F-%H%M%S)
+mkdir -p "/var/backups/zwkjy-clone/$STAMP"
+cp -a data "/var/backups/zwkjy-clone/$STAMP/"
+git pull --ff-only
+npm ci
+npm run test:all
 systemctl start zwkjy-clone
+npm run verify:external
 ```
 
-之后更新前按“八、更新部署”的步骤先保存 `/tmp/zwkjy-runtime-db.json`，更新后再复制回来。
+任何一步失败都不要覆盖备份。保留失败现场、日志和当前 `data/`，查明原因后再决定回滚。
+
+## 部署验收
+
+命令门禁：
+
+```bash
+npm run test:all
+npm audit
+curl -fsS http://127.0.0.1:3100/api/health
+```
+
+人工门禁：
+
+1. 登录、退出、错误密码和会话失效正常。
+2. 项目切换后数据互相隔离。
+3. 代表性清单、材料到场、手动计量和支付证书表单可保存并重开。
+4. 计算规则必须填写变更原因，历史版本可查看和重新启用。
+5. 用户/RBAC、审计、备份恢复、数据交换和国际设置页面正常。
+6. 重启服务后业务数据、账号、规则版本和审计仍存在。
+7. 执行第 12/13/14 期 fixture 回归，结果与基准一致。
+
+## 完整恢复
+
+恢复前先保留故障现场，不要直接覆盖：
+
+```bash
+cd /opt/zwkjy-clone
+systemctl stop zwkjy-clone
+mv data "data.failed-$(date +%F-%H%M%S)"
+cp -a /var/backups/zwkjy-clone/备份时间/data ./data
+systemctl start zwkjy-clone
+curl -fsS http://127.0.0.1:3100/api/health
+```
+
+恢复后必须重新执行计算回归和关键页面验收。若只需要恢复单个项目业务状态，优先使用管理后台的校验备份恢复功能。
+
+## 常用环境变量
+
+```text
+PORT                    HTTP 端口，默认 3100
+APP_STORAGE             sqlite（默认）或 json（应急回滚）
+APP_RUNTIME_DB_PATH     旧 JSON 路径
+APP_SQLITE_DB_PATH      默认业务 SQLite 路径
+APP_SECURITY_DB_PATH    账号、权限和审计 SQLite 路径
+APP_RULE_DB_PATH        规则版本库路径，默认复用 security.db
+APP_BACKUP_DIR          应用内项目备份目录
+```
+
+修改路径后必须同步调整 systemd 权限、全量备份范围和监控规则。

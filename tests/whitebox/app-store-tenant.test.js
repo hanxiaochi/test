@@ -7,7 +7,8 @@ const path = require("path");
 const test = require("node:test");
 
 function freshStore(mode, root) {
-  process.env.APP_STORAGE = mode;
+  if (mode === undefined) delete process.env.APP_STORAGE;
+  else process.env.APP_STORAGE = mode;
   process.env.APP_RUNTIME_DB_PATH = path.join(root, "runtime-db.json");
   process.env.APP_SQLITE_DB_PATH = path.join(root, "runtime.db");
   const contextPath = require.resolve("../../lib/business-state-context");
@@ -85,6 +86,68 @@ test("SQLite tenant state uses a separate transactional database", () => {
     assert.deepEqual(defaultState.rows, [{ id: 1 }]);
     store.close();
   } finally {
+    if (originalEnv.storage === undefined) delete process.env.APP_STORAGE; else process.env.APP_STORAGE = originalEnv.storage;
+    if (originalEnv.json === undefined) delete process.env.APP_RUNTIME_DB_PATH; else process.env.APP_RUNTIME_DB_PATH = originalEnv.json;
+    if (originalEnv.sqlite === undefined) delete process.env.APP_SQLITE_DB_PATH; else process.env.APP_SQLITE_DB_PATH = originalEnv.sqlite;
+    cleanup(root);
+  }
+});
+
+test("SQLite is the default and migrates each legacy JSON scope exactly once", () => {
+  const root = tempRoot();
+  const originalEnv = { storage: process.env.APP_STORAGE, json: process.env.APP_RUNTIME_DB_PATH, sqlite: process.env.APP_SQLITE_DB_PATH };
+  try {
+    delete process.env.APP_STORAGE;
+    process.env.APP_RUNTIME_DB_PATH = path.join(root, "runtime-db.json");
+    process.env.APP_SQLITE_DB_PATH = path.join(root, "runtime.db");
+    const defaultSeed = { rows: [{ id: 1, value: "json-seed" }], calculationRules: { moneyDigits: 2 } };
+    fs.writeFileSync(process.env.APP_RUNTIME_DB_PATH, JSON.stringify(defaultSeed), "utf8");
+    const { context, store } = freshStore(undefined, root);
+    assert.equal(store.mode, "sqlite");
+    const defaultState = store.load({ rows: [] });
+    assert.deepEqual(defaultState, defaultSeed);
+    context.configure({ defaultState, loadTenant: (tenantId, projectId, source) => store.loadScope(tenantId, projectId, source) });
+
+    const tenantJson = store.tenantJsonFile("legacy-tenant", "project-2");
+    fs.mkdirSync(path.dirname(tenantJson), { recursive: true });
+    fs.writeFileSync(tenantJson, JSON.stringify({ rows: [{ id: 2, value: "tenant-json" }], calculationRules: { moneyDigits: 3 } }), "utf8");
+    const migratedTenant = context.stateForScope("legacy-tenant", "project-2");
+    assert.equal(migratedTenant.rows[0].value, "tenant-json");
+    context.runForScope("legacy-tenant", "project-2", () => store.save({ ...migratedTenant, rows: [{ id: 3, value: "sqlite-newer" }] }, { actor: "tester", action: "edit", checkpoint: true }));
+    assert.equal(context.runForScope("legacy-tenant", "project-2", () => store.history(10)).length, 2);
+    const restored = context.runForScope("legacy-tenant", "project-2", () => store.restore(1, { actor: "tester" }));
+    assert.equal(restored.version, 3);
+    assert.equal(context.runForScope("legacy-tenant", "project-2", () => store.status()).version, 3);
+    store.close();
+
+    fs.writeFileSync(process.env.APP_RUNTIME_DB_PATH, "{corrupt-default-json", "utf8");
+    fs.writeFileSync(tenantJson, "{corrupt-tenant-json", "utf8");
+    const reopened = freshStore(undefined, root);
+    const reopenedDefault = reopened.store.load({ rows: [] });
+    assert.deepEqual(reopenedDefault, defaultSeed);
+    reopened.context.configure({ defaultState: reopenedDefault, loadTenant: (tenantId, projectId, source) => reopened.store.loadScope(tenantId, projectId, source) });
+    assert.equal(reopened.context.stateForScope("legacy-tenant", "project-2").rows[0].value, "tenant-json");
+    reopened.store.close();
+  } finally {
+    if (originalEnv.storage === undefined) delete process.env.APP_STORAGE; else process.env.APP_STORAGE = originalEnv.storage;
+    if (originalEnv.json === undefined) delete process.env.APP_RUNTIME_DB_PATH; else process.env.APP_RUNTIME_DB_PATH = originalEnv.json;
+    if (originalEnv.sqlite === undefined) delete process.env.APP_SQLITE_DB_PATH; else process.env.APP_SQLITE_DB_PATH = originalEnv.sqlite;
+    cleanup(root);
+  }
+});
+
+test("default SQLite migration fails closed when the only legacy JSON source is corrupt", () => {
+  const root = tempRoot();
+  const originalEnv = { storage: process.env.APP_STORAGE, json: process.env.APP_RUNTIME_DB_PATH, sqlite: process.env.APP_SQLITE_DB_PATH };
+  let store;
+  try {
+    fs.writeFileSync(path.join(root, "runtime-db.json"), "{invalid-json", "utf8");
+    ({ store } = freshStore(undefined, root));
+    assert.throws(() => store.load({ rows: [] }), SyntaxError);
+    fs.rmSync(path.join(root, "runtime-db.json"));
+    assert.deepEqual(store.load({ rows: [{ id: "fallback" }] }), { rows: [{ id: "fallback" }] });
+  } finally {
+    if (store) store.close();
     if (originalEnv.storage === undefined) delete process.env.APP_STORAGE; else process.env.APP_STORAGE = originalEnv.storage;
     if (originalEnv.json === undefined) delete process.env.APP_RUNTIME_DB_PATH; else process.env.APP_RUNTIME_DB_PATH = originalEnv.json;
     if (originalEnv.sqlite === undefined) delete process.env.APP_SQLITE_DB_PATH; else process.env.APP_SQLITE_DB_PATH = originalEnv.sqlite;

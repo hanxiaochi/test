@@ -49,32 +49,38 @@ ys1 / 000000
 关键提醒：
 
 ```text
-1. data/runtime-db.json 是当前测试版数据库，部署和更新时不要覆盖。
-2. 如果云端需要和本机当前数据一致，要把本机 data/runtime-db.json 上传到服务器的 /opt/zwkjy-clone/data/runtime-db.json。
+1. 默认业务数据库是 data/runtime.db；账号、权限、审计和规则版本保存在 data/security.db。
+2. 首次启动会把旧 data/runtime-db.json 非破坏迁移到 SQLite，旧 JSON 会原样保留，不能删除或覆盖。
 3. CALCULATION_USAGE.md 是本机计算使用文档，不上传 GitHub；部署网站本身不依赖它。
 4. PAYMENT_REGRESSION_TEST_DATA.md 和 test-data/payment-regression-12-14.json 是给其他 AI/协作者验收用的三组非 PDF 测试数据。
-5. 数据库、账号权限、角色管控、后台审计和正式后台系统放到下一阶段处理。
-6. 每次更新代码前，先备份服务器上的 data/runtime-db.json。
+5. 当前版本已经包含账号、RBAC、租户/项目隔离、审计、规则版本、备份恢复和数据交换后台。
+6. 每次更新代码前，完整备份 data/runtime*.db*、data/security.db*、data/tenants/ 和旧 JSON 文件。
 ```
 
-## 当前测试版数据持久化
+## 数据持久化与首次迁移
 
-当前版本没有外接 MySQL、PostgreSQL 或 SQLite，运行数据保存在：
+默认存储模式是 SQLite：
 
 ```text
-data/runtime-db.json
+data/runtime.db                 默认租户/项目业务数据和不可变修订
+data/security.db                账号、角色、会话、安全审计和计算规则版本
+data/tenants/.../*.db           其他租户/项目隔离业务数据库
+data/runtime-db.json            旧版 JSON 数据源，仅用于首次迁移和应急回滚
 ```
 
-这个文件就是测试版数据库。部署到云服务器后，只要服务器上的 `data/runtime-db.json` 不被删除或覆盖，重启服务后数据仍然保留。这个方案适合作为测试先行版、小范围试用和演示版；数据库升级、账号权限、角色管控、后台审计和更完整的管理后台放到下一阶段处理。
+首次以默认配置启动时，如果对应 SQLite 库尚无业务状态，程序会读取旧 JSON 并创建 SQLite 第一个检查点。SQLite 一旦已有状态，后续启动不再重新导入 JSON；即使旧 JSON 比较新或已损坏，也不会覆盖已有 SQLite 数据。迁移不会修改或删除 JSON 源文件。
 
-部署和更新时最重要的一点：保护 `data/runtime-db.json`。
+应急回滚到旧 JSON 模式时显式设置 `APP_STORAGE=json`。回滚模式不使用 SQLite 修订历史，只用于排障；确认问题后应回到默认 `sqlite`。
 
 服务器备份命令：
 
 ```bash
 cd /opt/zwkjy-clone
-mkdir -p data/backups
-cp data/runtime-db.json data/backups/runtime-db-$(date +%F-%H%M%S).json
+systemctl stop zwkjy-clone
+STAMP=$(date +%F-%H%M%S)
+mkdir -p "/var/backups/zwkjy-clone/$STAMP"
+cp -a data "/var/backups/zwkjy-clone/$STAMP/"
+systemctl start zwkjy-clone
 ```
 
 ## 服务器网络先决条件
@@ -106,13 +112,13 @@ ssh root@服务器IP
 
 ```bash
 apt update
-apt install -y git curl nginx
+apt install -y git curl nginx unzip rsync
 ```
 
-安装 Node.js 20 LTS：
+安装 Node.js 22 LTS（最低要求 22.5，项目使用内置 `node:sqlite`）：
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt install -y nodejs
 node -v
 npm -v
@@ -126,21 +132,14 @@ cd /opt/zwkjy-clone
 git clone -b codex/zwkjy-clone https://github.com/hanxiaochi/test.git .
 ```
 
-如果要把本机当前测试数据一起部署上去，在 Windows 本机上传 JSON 数据库：
+如果要让全新云端从本机旧 JSON 基线首次迁移，可在第一次启动前上传：
 
 ```powershell
 cd G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
 scp .\data\runtime-db.json root@服务器IP:/opt/zwkjy-clone/data/runtime-db.json
 ```
 
-然后在服务器执行：
-
-```bash
-cd /opt/zwkjy-clone
-git update-index --skip-worktree data/runtime-db.json
-```
-
-这样后续 `git pull` 时不容易把服务器运行数据覆盖成仓库里的基线数据。
+JSON 是迁移源，不再对它设置 Git `skip-worktree`。正式运行后应以完整 `data/` 持久化文件集为准，并在更新前执行上面的完整备份。
 
 安装依赖并验证：
 
@@ -155,9 +154,11 @@ npm run verify
 
 ```powershell
 cd G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
-Compress-Archive -Path assets,common,css,data,img,js,scripts,constructionData.js,costEngine.js,index.html,login.html,package.json,package-lock.json,pageoffice.js,server.js,work_form_http.js,README.md,DEPLOY.md,DEPLOYMENT.md -DestinationPath zwkjy-clone.zip -Force
+git archive --format=zip --output zwkjy-clone.zip HEAD
 scp .\zwkjy-clone.zip root@服务器IP:/opt/
 ```
+
+`git archive` 只打包已提交文件，不会把本地 SQLite、账号库、备份、日志或临时文件带入发布包。
 
 在服务器执行：
 
@@ -184,6 +185,7 @@ Type=simple
 WorkingDirectory=/opt/zwkjy-clone
 Environment=NODE_ENV=production
 Environment=PORT=3100
+Environment=APP_STORAGE=sqlite
 ExecStart=/usr/bin/node /opt/zwkjy-clone/server.js
 Restart=always
 RestartSec=3
@@ -268,28 +270,30 @@ http://服务器IP/
 
 ```bash
 cd /opt/zwkjy-clone
-mkdir -p data/backups
-cp data/runtime-db.json data/backups/runtime-db-$(date +%F-%H%M%S).json
-cp data/runtime-db.json /tmp/zwkjy-runtime-db.json
+systemctl stop zwkjy-clone
+STAMP=$(date +%F-%H%M%S)
+mkdir -p "/var/backups/zwkjy-clone/$STAMP"
+cp -a data "/var/backups/zwkjy-clone/$STAMP/"
 git pull
 npm ci
-cp /tmp/zwkjy-runtime-db.json data/runtime-db.json
 systemctl restart zwkjy-clone
-npm run verify
+npm run verify:external
 ```
 
 如果使用 zip 上传部署，重新上传 zip 后执行：
 
 ```bash
 cd /opt/zwkjy-clone
-mkdir -p data/backups
-cp data/runtime-db.json data/backups/runtime-db-$(date +%F-%H%M%S).json
-cp data/runtime-db.json /tmp/zwkjy-runtime-db.json
-unzip -o /opt/zwkjy-clone.zip
+systemctl stop zwkjy-clone
+STAMP=$(date +%F-%H%M%S)
+RELEASE_DIR="/tmp/zwkjy-release-$STAMP"
+mkdir -p "/var/backups/zwkjy-clone/$STAMP" "$RELEASE_DIR"
+cp -a data "/var/backups/zwkjy-clone/$STAMP/"
+unzip -o /opt/zwkjy-clone.zip -d "$RELEASE_DIR"
+rsync -a --exclude data/ "$RELEASE_DIR/" /opt/zwkjy-clone/
 npm ci
-cp /tmp/zwkjy-runtime-db.json data/runtime-db.json
 systemctl restart zwkjy-clone
-npm run verify
+npm run verify:external
 ```
 
 ## 建议开启自动备份
@@ -297,25 +301,29 @@ npm run verify
 创建每日备份脚本：
 
 ```bash
-cat >/usr/local/bin/zwkjy-backup-jsondb.sh <<'EOF'
+cat >/usr/local/bin/zwkjy-backup-data.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
 APP_DIR=/opt/zwkjy-clone
-BACKUP_DIR="$APP_DIR/data/backups"
+BACKUP_DIR=/var/backups/zwkjy-clone
+STAMP=$(date +%F-%H%M%S)
 
-mkdir -p "$BACKUP_DIR"
-cp "$APP_DIR/data/runtime-db.json" "$BACKUP_DIR/runtime-db-$(date +%F-%H%M%S).json"
-find "$BACKUP_DIR" -name 'runtime-db-*.json' -mtime +14 -delete
+mkdir -p "$BACKUP_DIR/$STAMP"
+systemctl stop zwkjy-clone
+trap 'systemctl start zwkjy-clone' EXIT
+cp -a "$APP_DIR/data" "$BACKUP_DIR/$STAMP/"
+systemctl start zwkjy-clone
+trap - EXIT
 EOF
 
-chmod +x /usr/local/bin/zwkjy-backup-jsondb.sh
+chmod +x /usr/local/bin/zwkjy-backup-data.sh
 ```
 
 加入每天凌晨 2 点自动备份：
 
 ```bash
-(crontab -l 2>/dev/null; echo "0 2 * * * /usr/local/bin/zwkjy-backup-jsondb.sh") | crontab -
+(crontab -l 2>/dev/null; echo "0 2 * * * /usr/local/bin/zwkjy-backup-data.sh") | crontab -
 ```
 
 ## 常见问题
@@ -348,19 +356,20 @@ curl -I http://127.0.0.1:3100/
 
 ### 数据文件说明
 
-本地运行数据在：
+必须作为一个整体保护的数据包括：
 
 ```text
-data/runtime-db.json
+data/runtime.db*、data/security.db*、data/tenants/、data/backups/、data/runtime-db.json
 ```
 
-部署前建议保留该文件，它包含演示数据和当前复刻系统的运行数据。生成的导出文件在 `data/exports/`，该目录不需要提交到 Git。
+其中 SQLite 文件是当前运行状态，旧 JSON 是首次迁移和回滚来源。生成的导出文件在 `data/exports/`，该目录不需要提交到 Git。
 
-如果更新后发现数据变回去了，通常是 `data/runtime-db.json` 被覆盖。先停止服务，再从 `data/backups/` 恢复一个最近的备份：
+如果更新后数据异常，先停止服务并把当前 `data/` 再留一份现场副本，然后整体恢复最近的完整备份：
 
 ```bash
 cd /opt/zwkjy-clone
 systemctl stop zwkjy-clone
-cp data/backups/你的备份文件.json data/runtime-db.json
+mv data "data.failed-$(date +%F-%H%M%S)"
+cp -a /var/backups/zwkjy-clone/备份时间/data ./data
 systemctl start zwkjy-clone
 ```
