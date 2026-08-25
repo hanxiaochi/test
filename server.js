@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const express = require("express");
+const multer = require("multer");
 const appStore = require("./lib/app-store");
 const businessContext = require("./lib/business-state-context");
 const authCore = require("./lib/security/auth-core");
@@ -12,6 +13,7 @@ const tabularService = require("./lib/import-export/tabular-service");
 const fidicCore = require("./lib/international/fidic-core");
 const internationalSettingsService = require("./lib/international/project-settings");
 const { mapClientConfig } = require("./lib/client-config");
+const { AttachmentStore } = require("./lib/attachments/attachment-store");
 const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
 const { browserMutationGuard, securityHeaders } = require("./lib/security/http-security");
 const engine = require("./costEngine");
@@ -29,6 +31,9 @@ const root = __dirname;
 const dataDir = path.join(root, "data");
 const exportDir = process.env.APP_EXPORT_DIR || path.join(dataDir, "exports");
 const backupDir = path.resolve(process.env.APP_BACKUP_DIR || path.join(dataDir, "backups"));
+const attachmentDir = path.resolve(process.env.APP_ATTACHMENT_DIR || path.join(dataDir, "attachments"));
+const attachmentDbFile = path.resolve(process.env.APP_ATTACHMENT_DB_PATH || path.join(dataDir, "attachments.db"));
+const attachmentMaxBytes = Math.max(1024, Number(process.env.APP_ATTACHMENT_MAX_BYTES) || 20 * 1024 * 1024);
 const port = process.env.PORT || 3100;
 const loginRateLimitOptions = {
   maxAttempts: process.env.APP_LOGIN_MAX_ATTEMPTS,
@@ -36,6 +41,11 @@ const loginRateLimitOptions = {
   maxEntries: process.env.APP_LOGIN_MAX_ENTRIES
 };
 fs.mkdirSync(backupDir, { recursive: true });
+const attachmentStore = new AttachmentStore({ dbFile: attachmentDbFile, objectDir: attachmentDir, maxBytes: attachmentMaxBytes });
+const attachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: attachmentMaxBytes, files: 1, fields: 6, parts: 7, fieldNameSize: 80, fieldSize: 2048, headerPairs: 50 }
+}).single("file");
 const ruleStore = new RuleStore(process.env.APP_RULE_DB_PATH || authService.securityFile);
 const initializedRuleTenants = new Set();
 const storedRuleVersion = ruleStore.getActive("default", "*");
@@ -1174,6 +1184,31 @@ function zipBuffer(files) {
   return Buffer.concat([...localParts, centralBuffer, end]);
 }
 
+function documentAttachmentScope(req, entityId) {
+  const scope = req.businessContext || businessContext.current();
+  return {
+    tenantId: scope.tenantId,
+    projectId: scope.projectId,
+    module: "project_information",
+    entityType: "document",
+    entityId: String(entityId)
+  };
+}
+
+function attachmentAudit(req, action, result, details = {}) {
+  authService.store.audit({
+    tenantId: req.authUser.tenantId,
+    userId: req.authUser.id,
+    action,
+    result,
+    targetType: "attachment",
+    targetId: String(details.attachmentId || details.entityId || ""),
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+    details: { projectId: req.businessContext.projectId, ...details }
+  });
+}
+
 function downloadDocumentZip(req, res) {
   const ids = idsFrom(req, "nodeId").concat(idsFrom(req, "ids"));
   const rows = engine.documentRows().filter((row) => !ids.length || ids.includes(Number(row.nodeId || row.id)));
@@ -1187,27 +1222,22 @@ function downloadDocumentZip(req, res) {
     fileCount: row.fileCount || 0,
     remark: row.remark || ""
   }));
-  const attachmentFiles = selected.flatMap((row) => {
-    const nodeId = row.nodeId || row.id;
-    const attachments = Array.isArray(row.attachments) ? row.attachments : [];
-    return attachments.map((attachment, index) => {
-      const attachmentId = attachment.attachmentId || attachment.id || index + 1;
-      const fileName = attachment.fileName || `attachment-${attachmentId}.txt`;
-      const detail = [
-        `资料编号: ${row.dataNo || `ZL-${String(nodeId).padStart(3, "0")}`}`,
-        `资料名称: ${row.title || row.dataName || row.nodeName || ""}`,
-        `附件名称: ${fileName}`,
-        `上传人: ${attachment.uploadUser || "ys1"}`,
-        `上传日期: ${attachment.uploadDate || ""}`,
-        `大小: ${attachment.size || 0}`,
-        `说明: ${attachment.remark || ""}`
-      ].join("\n");
-      return {
-        name: `attachments/${String(nodeId).padStart(4, "0")}-${String(attachmentId).padStart(3, "0")}-${safeZipName(fileName, `attachment-${attachmentId}`)}.txt`,
-        data: `${detail}\n`
-      };
+  let attachmentFiles;
+  try {
+    attachmentFiles = selected.flatMap((row) => {
+      const nodeId = row.nodeId || row.id;
+      return attachmentStore.list(documentAttachmentScope(req, nodeId)).map((attachment) => {
+        const verified = attachmentStore.read({ ...documentAttachmentScope(req, nodeId), id: attachment.id });
+        return {
+          name: `attachments/${String(nodeId).padStart(4, "0")}-${String(attachment.id).padStart(6, "0")}-${safeZipName(attachment.fileName, `attachment-${attachment.id}`)}`,
+          data: verified.buffer
+        };
+      });
     });
-  });
+  } catch (error) {
+    attachmentAudit(req, "attachment.download", "failure", { entityIds: selected.map((row) => String(row.nodeId || row.id)), reason: error.code || error.message, mode: "zip" });
+    throw error;
+  }
   const files = [
     { name: "documents.csv", data: csvBody(manifest) },
     { name: "README.txt", data: `Project information export\nGenerated: ${today()}\nRecords: ${manifest.length}\n` },
@@ -1232,6 +1262,7 @@ function downloadDocumentZip(req, res) {
     ...attachmentFiles
   ];
   const zip = zipBuffer(files);
+  attachmentAudit(req, "attachment.download", "success", { entityIds: selected.map((row) => String(row.nodeId || row.id)), attachmentCount: attachmentFiles.length, bytes: zip.length, mode: "zip" });
   res.setHeader("Content-Type", "application/zip");
   res.setHeader("Content-Disposition", 'attachment; filename="project-information.zip"');
   res.send(zip);
@@ -6530,7 +6561,12 @@ function documentNodePayload() {
   };
 }
 
-function projectInformationTreeRows() {
+function documentAttachmentCount(req, item) {
+  const entityId = item.nodeId || item.id || item.hangId;
+  return entityId ? attachmentStore.count(documentAttachmentScope(req, entityId)) : 0;
+}
+
+function projectInformationTreeRows(req) {
   ensureDocumentModuleCoverage();
   return engine.documentRows().map((item) => ({
     ...item,
@@ -6539,26 +6575,26 @@ function projectInformationTreeRows() {
     parentId: item.parentId || 0,
     name: item.title || item.nodeName || item.dataName,
     title: item.title || item.nodeName || item.dataName,
+    fileCount: documentAttachmentCount(req, item),
     state: item.state || "open",
     open: true,
     checked: false
   }));
 }
 
-function projectInformationHangRows() {
+function projectInformationHangRows(req) {
   ensureDocumentModuleCoverage();
   const sections = engine.db.sections.length ? engine.db.sections : [{ sectionId: 0, sectionName: "" }];
   return engine.documentRows().map((doc, index) => {
     const section = sections[index % sections.length];
     const nodeId = doc.nodeId || doc.id || index + 1;
-    const attachments = Array.isArray(doc.attachments) ? doc.attachments : [];
     const dataNo = doc.dataNo || `ZL-${String(nodeId).padStart(3, "0")}`;
     const dataName = doc.title || doc.nodeName || doc.dataName || `Data ${nodeId}`;
     return {
       ...doc,
       zizeng: index + 1,
       hangId: doc.hangId || nodeId,
-      fileCount: attachments.length || doc.fileCount || 0,
+      fileCount: documentAttachmentCount(req, doc),
       hangDate: doc.hangDate || doc.updateDate || doc.createDate || new Date().toISOString().slice(0, 10),
       projectInformationParam: {
         informationId: nodeId,
@@ -6604,18 +6640,15 @@ function documentById(id) {
 function documentAttachmentRows(req) {
   const id = documentIdFrom(req);
   const item = documentById(id) || {};
-  const attachments = Array.isArray(item.attachments) ? item.attachments : [];
-  return attachments.map((row, index) => ({
+  if (!item.nodeId && !item.id && !item.hangId) return [];
+  return attachmentStore.list(documentAttachmentScope(req, item.nodeId || item.id || id)).map((row) => ({
     ...row,
-    id: row.id || row.attachmentId || index + 1,
-    attachmentId: row.attachmentId || row.id || index + 1,
+    id: row.id,
+    attachmentId: row.id,
     hangId: item.hangId || item.nodeId || id,
     nodeId: item.nodeId || id,
-    fileName: row.fileName || row.name || `附件${index + 1}.doc`,
-    uploadDate: row.uploadDate || row.createDate || today(),
-    uploadUser: row.uploadUser || row.userName || "ys1",
-    size: Number(row.size || 0),
-    remark: row.remark || ""
+    uploadUser: Number(row.uploaderUserId) === Number(req.authUser.id) ? (req.authUser.displayName || req.authUser.account) : `用户 #${row.uploaderUserId || "-"}`,
+    downloadUrl: `/projectInformationNode/attachment/${row.id}/download?hangId=${encodeURIComponent(item.hangId || item.nodeId || id)}`
   }));
 }
 
@@ -6629,11 +6662,11 @@ function documentAttachmentPageHtml(req) {
       <td>${htmlEscape(row.uploadDate || "")}</td>
       <td>${htmlEscape(String(row.size || 0))}</td>
       <td class="left">${htmlEscape(row.remark || "")}</td>
-      <td><button type="button" class="layui-btn layui-btn-danger layui-btn-xs" data-delete="${row.attachmentId}">删除</button></td>
+      <td><a class="layui-btn layui-btn-primary layui-btn-xs" href="${htmlEscape(row.downloadUrl)}">下载</a><button type="button" class="layui-btn layui-btn-danger layui-btn-xs" data-delete="${row.attachmentId}">删除</button></td>
     </tr>`).join("");
   return `
     <div style="padding:16px 20px;" class="document-attachment-page">
-      <form class="layui-form" id="document-attachment-form">
+      <form class="layui-form" id="document-attachment-form" enctype="multipart/form-data">
         <input type="hidden" name="hangId" value="${htmlEscape(item.hangId || item.nodeId || id || "")}">
         <input type="hidden" name="nodeId" value="${htmlEscape(item.nodeId || id || "")}">
         <div class="layui-form-item">
@@ -6641,12 +6674,8 @@ function documentAttachmentPageHtml(req) {
           <div class="layui-input-block"><input class="layui-input" readonly value="${htmlEscape(item.title || item.dataName || item.nodeName || "")}"></div>
         </div>
         <div class="layui-form-item">
-          <label class="layui-form-label">附件名称</label>
-          <div class="layui-input-block"><input class="layui-input" name="fileName" value="资料附件.docx"></div>
-        </div>
-        <div class="layui-form-item">
-          <label class="layui-form-label">文件大小</label>
-          <div class="layui-input-block"><input class="layui-input" name="size" value="1024"></div>
+          <label class="layui-form-label">选择文件</label>
+          <div class="layui-input-block"><input class="layui-input" type="file" name="file" required accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.zip"></div>
         </div>
         <div class="layui-form-item">
           <label class="layui-form-label">附件说明</label>
@@ -6654,7 +6683,7 @@ function documentAttachmentPageHtml(req) {
         </div>
         <div class="layui-form-item">
           <div class="layui-input-block">
-            <button type="button" class="layui-btn" onclick="(function(btn){var form=btn.closest('form');var data={};Array.prototype.forEach.call(form.querySelectorAll('[name]'),function(el){data[el.name]=el.value});fetch('/projectInformationNode/upload_attachment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json()}).then(function(r){if(window.layer){layer.msg(r.msg||'上传成功')} setTimeout(function(){(window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload())},500)});})(this)">上传附件</button>
+            <button type="submit" class="layui-btn">上传附件</button><span id="document-attachment-message" style="margin-left:12px;color:#64748b;"></span>
           </div>
         </div>
       </form>
@@ -6663,13 +6692,30 @@ function documentAttachmentPageHtml(req) {
         <tbody>${rows || `<tr><td colspan="6" style="text-align:center;color:#94a3b8;">暂无附件</td></tr>`}</tbody>
       </table>
       <script>
+        (function() {
+          var form = document.getElementById('document-attachment-form');
+          var message = document.getElementById('document-attachment-message');
+          form.addEventListener('submit', function(event) {
+            event.preventDefault();
+            var button = form.querySelector('[type="submit"]');
+            button.disabled = true;
+            message.textContent = '正在上传...';
+            fetch('/projectInformationNode/upload_attachment', { method:'POST', body:new FormData(form) })
+              .then(function(response){ return response.json().then(function(body){ if(!response.ok || body.code !== 1) throw new Error(body.msg || '上传失败'); return body; }); })
+              .then(function(body){ message.textContent = body.msg || '上传成功'; (window.appReloadCurrentContent ? window.appReloadCurrentContent() : location.reload()); })
+              .catch(function(error){ message.textContent = error.message; button.disabled = false; });
+          });
+        })();
         Array.prototype.forEach.call(document.querySelectorAll('[data-delete]'), function(btn) {
           btn.onclick = function() {
+            if (!window.confirm('确认删除这个附件？')) return;
             fetch('/projectInformationNode/delete_attachment', {
               method:'POST',
               headers:{'Content-Type':'application/json'},
               body:JSON.stringify({ hangId:'${htmlEscape(item.hangId || item.nodeId || id || "")}', attachmentId:btn.getAttribute('data-delete') })
-            }).then(function(r){return r.json()}).then(function(){ (window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload()); });
+            }).then(function(response){return response.json().then(function(body){if(!response.ok || body.code !== 1)throw new Error(body.msg || '删除失败');return body;});})
+              .then(function(){ (window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload()); })
+              .catch(function(error){ if(window.layer)layer.msg(error.message); });
           };
         });
       </script>
@@ -6677,39 +6723,84 @@ function documentAttachmentPageHtml(req) {
 }
 
 function saveDocumentAttachment(req) {
-  const body = { ...req.query, ...req.body };
   const id = documentIdFrom(req);
   const item = documentById(id);
-  if (!item) return { changed: 0, reason: "document_not_found" };
-  item.attachments = Array.isArray(item.attachments) ? item.attachments : [];
-  const attachmentId = nextId(item.attachments, "attachmentId");
-  const row = {
-    id: attachmentId,
-    attachmentId,
-    hangId: item.hangId || item.nodeId || id,
-    nodeId: item.nodeId || id,
-    fileName: String(body.fileName || body.filename || body.name || `资料附件-${attachmentId}.docx`).trim(),
-    size: numeric(body.size, 0),
-    remark: body.remark || "",
-    uploadUser: body.uploadUser || body.userName || "ys1",
-    uploadDate: body.uploadDate || today()
-  };
-  item.attachments.push(row);
-  item.fileCount = item.attachments.length;
-  item.updateDate = today();
-  return { changed: 1, attachmentId, row };
+  if (!item) throw Object.assign(new Error("资料节点不存在"), { status: 404 });
+  if (!req.file) throw Object.assign(new Error("请选择需要上传的文件"), { status: 400 });
+  const entityId = item.nodeId || item.id || id;
+  try {
+    const row = attachmentStore.create({
+      ...documentAttachmentScope(req, entityId),
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      buffer: req.file.buffer,
+      uploaderUserId: req.authUser.id,
+      remark: req.body.remark
+    });
+    attachmentAudit(req, "attachment.upload", "success", { attachmentId: row.id, entityId: String(entityId), fileName: row.fileName, bytes: row.byteSize, sha256: row.sha256 });
+    return { changed: 1, attachmentId: row.id, row };
+  } catch (error) {
+    attachmentAudit(req, "attachment.upload", "failure", { entityId: String(entityId), fileName: req.file.originalname, bytes: req.file.size, reason: error.code || error.message });
+    if (!error.status) error.status = 400;
+    throw error;
+  }
 }
 
 function deleteDocumentAttachment(req) {
-  const body = { ...req.query, ...req.body };
   const id = documentIdFrom(req);
   const item = documentById(id);
-  if (!item || !Array.isArray(item.attachments)) return { changed: 0 };
+  if (!item) throw Object.assign(new Error("资料节点不存在"), { status: 404 });
   const ids = idsFromAny(req, ["attachmentId", "attachmentIds", "attId", "attIds"]);
-  const changed = removeRows(item.attachments, "attachmentId", ids);
-  item.fileCount = item.attachments.length;
-  item.updateDate = today();
-  return { changed, rows: item.attachments.length };
+  const entityId = item.nodeId || item.id || id;
+  try {
+    const changed = ids.reduce((total, attachmentId) => total + attachmentStore.delete({
+      ...documentAttachmentScope(req, entityId), id: attachmentId, deletedBy: req.authUser.id
+    }), 0);
+    attachmentAudit(req, "attachment.delete", changed ? "success" : "failure", { attachmentIds: ids, entityId: String(entityId), changed, reason: changed ? undefined : "not_found" });
+    return { changed, rows: attachmentStore.count(documentAttachmentScope(req, entityId)) };
+  } catch (error) {
+    attachmentAudit(req, "attachment.delete", "failure", { attachmentIds: ids, entityId: String(entityId), reason: error.code || error.message });
+    throw error;
+  }
+}
+
+function downloadDocumentAttachment(req, res) {
+  const entityId = Number(req.query.hangId || req.query.nodeId || req.query.entityId || 0);
+  const attachmentId = Number(req.params.id || 0);
+  const item = documentById(entityId);
+  if (!item || !attachmentId) {
+    attachmentAudit(req, "attachment.download", "failure", { attachmentId, entityId: String(entityId), reason: "not_found" });
+    res.status(404).json({ code: 0, msg: "附件不存在", data: null });
+    return;
+  }
+  const resolvedEntityId = item.nodeId || item.id || entityId;
+  try {
+    const verified = attachmentStore.read({ ...documentAttachmentScope(req, resolvedEntityId), id: attachmentId });
+    const extension = path.extname(verified.row.fileName).replace(/[^.a-z0-9]/gi, "").slice(0, 12);
+    const encodedName = encodeURIComponent(verified.row.fileName).replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+    res.setHeader("Content-Type", verified.row.mimeType);
+    res.setHeader("Content-Length", String(verified.buffer.length));
+    res.setHeader("Content-Disposition", `attachment; filename="attachment-${verified.row.id}${extension}"; filename*=UTF-8''${encodedName}`);
+    res.setHeader("X-Content-SHA256", verified.row.sha256);
+    attachmentAudit(req, "attachment.download", "success", { attachmentId, entityId: String(resolvedEntityId), fileName: verified.row.fileName, bytes: verified.buffer.length, sha256: verified.row.sha256, mode: "single" });
+    res.send(verified.buffer);
+  } catch (error) {
+    attachmentAudit(req, "attachment.download", "failure", { attachmentId, entityId: String(resolvedEntityId), reason: error.code || error.message, mode: "single" });
+    const corrupt = error.code === "ATTACHMENT_CORRUPT";
+    res.status(corrupt ? 409 : 404).json({ code: 0, msg: corrupt ? "附件完整性校验失败" : "附件不存在", data: null, errorCode: error.code });
+  }
+}
+
+function documentUploadMiddleware(req, res, next) {
+  attachmentUpload(req, res, (error) => {
+    if (!error) {
+      next();
+      return;
+    }
+    attachmentAudit(req, "attachment.upload", "failure", { entityId: String(documentIdFrom(req)), reason: error.code || error.message });
+    error.status = error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+    next(error);
+  });
 }
 
 function documentFormHtml(req, mode = "node") {
@@ -7074,14 +7165,14 @@ function documentManagementDashboardHtml(req) {
   const view = documentViewConfig(req);
   const showTestOnly = view.key === "syzl";
   const rows = engine.documentRows();
-  const allTreeRows = projectInformationTreeRows();
-  const allHangRows = projectInformationHangRows();
+  const allTreeRows = projectInformationTreeRows(req);
+  const allHangRows = projectInformationHangRows(req);
   const testRows = rows.filter(documentIsTestRow);
   const displayRows = rows.filter(view.filter);
   const displayIds = new Set(displayRows.map((row) => Number(row.nodeId || row.id || row.hangId)));
   const treeRows = view.key === "dashboard" || view.key === "ledger" ? allTreeRows : allTreeRows.filter((row) => displayIds.has(Number(row.nodeId || row.id || row.hangId)));
   const hangRows = view.key === "dashboard" || view.key === "ledger" ? allHangRows : allHangRows.filter((row) => displayIds.has(Number(row.nodeId || row.id || row.hangId)));
-  const totalFiles = displayRows.reduce((sum, row) => sum + Number(row.fileCount || 0), 0);
+  const totalFiles = treeRows.reduce((sum, row) => sum + Number(row.fileCount || 0), 0);
   const hangFileCount = hangRows.reduce((sum, row) => sum + Number(row.fileCount || 0), 0);
   const recentRows = [...displayRows].sort((a, b) => String(b.updateDate || b.createDate || "").localeCompare(String(a.updateDate || a.createDate || ""))).slice(0, 12);
   const sectionNames = [...new Set(hangRows.map((row) => row.projectInformationNode && row.projectInformationNode.sysSection && row.projectInformationNode.sysSection.sectionName).filter(Boolean))];
@@ -7787,7 +7878,8 @@ function workflowSvg() {
 
 function projectInformationWordHtml(req) {
   const hangId = Number(req.query.hangId || req.body.hangId || 0);
-  const row = projectInformationHangRows().find((item) => Number(item.hangId) === hangId) || projectInformationHangRows()[0] || {};
+  const hangRows = projectInformationHangRows(req);
+  const row = hangRows.find((item) => Number(item.hangId) === hangId) || hangRows[0] || {};
   const title = row.projectInformationParam ? row.projectInformationParam.dataName : row.title || "资料预览";
   const mode = req.query.type === "edit" ? "编辑" : "查看";
   return `
@@ -14842,14 +14934,19 @@ app.all("/projectInformationNode/page/:type?", (req, res) => html(res, documentM
 app.all("/projectInformationNode/edit_page", (req, res) => html(res, projectInformationEditorHtml(req)));
 app.all("/projectInformationParam/edit_page", (req, res) => html(res, projectInformationEditorHtml(req)));
 app.all("/projectInformationParam/page", (req, res) => html(res, documentManagementDashboardHtml(req)));
-app.all("/projectInformationNode/get_node_tree", (req, res) => operationOk(res, projectInformationTreeRows()));
-app.all("/projectInformationParam/get_node_tree", (req, res) => operationOk(res, { data: projectInformationTreeRows(), closeData: [] }));
-app.all("/projectInformationNode/find_hang_by_param", (req, res) => table(res, req, projectInformationHangRows()));
-app.all("/projectInformationNode/find_hang_param", (req, res) => table(res, req, projectInformationHangRows()));
+app.all("/projectInformationNode/get_node_tree", (req, res) => operationOk(res, projectInformationTreeRows(req)));
+app.all("/projectInformationParam/get_node_tree", (req, res) => operationOk(res, { data: projectInformationTreeRows(req), closeData: [] }));
+app.all("/projectInformationNode/find_hang_by_param", (req, res) => table(res, req, projectInformationHangRows(req)));
+app.all("/projectInformationNode/find_hang_param", (req, res) => table(res, req, projectInformationHangRows(req)));
 app.all("/project_information_hang_file/page", (req, res) => html(res, documentAttachmentPageHtml(req)));
 app.all("/projectInformationNode/attachment_list", (req, res) => table(res, req, documentAttachmentRows(req)));
-app.all("/projectInformationNode/upload_attachment", (req, res) => mutate(res, () => saveDocumentAttachment(req)));
-app.all("/projectInformationNode/delete_attachment", (req, res) => mutate(res, () => deleteDocumentAttachment(req)));
+app.post("/projectInformationNode/upload_attachment", documentUploadMiddleware, (req, res, next) => {
+  try { operationOk(res, saveDocumentAttachment(req)); } catch (error) { next(error); }
+});
+app.get("/projectInformationNode/attachment/:id/download", (req, res) => downloadDocumentAttachment(req, res));
+app.post("/projectInformationNode/delete_attachment", (req, res, next) => {
+  try { operationOk(res, deleteDocumentAttachment(req)); } catch (error) { next(error); }
+});
 app.all("/projectInformationNode/delete_hang_param", (req, res) => mutate(res, () => ({ deleted: true, changed: deleteDocumentHang(idsFrom(req, "hangId")) })));
 app.all("/projectInformationNode/init_node", (req, res) => mutate(res, () => {
   engine.db.documents = defaultDocuments();
@@ -14954,10 +15051,15 @@ app.use((error, req, res, _next) => {
   const status = reportedStatus >= 400 && reportedStatus <= 599 ? reportedStatus : 500;
   if (status >= 500) console.error("request failed", req.method, req.path, error && error.stack ? error.stack : error);
   else console.warn("request rejected", req.method, req.path, status);
+  const attachmentRequest = req.path.startsWith("/projectInformationNode/") && /attachment/i.test(req.path);
+  const clientMessage = attachmentRequest && status < 500
+    ? (error.code === "LIMIT_FILE_SIZE" ? "附件超过允许的大小限制" : String(error.message || "附件请求无效"))
+    : status === 413 ? "请求数据超过限制" : status < 500 ? "请求数据无效" : "服务器处理失败";
   res.status(status).json({
     code: 0,
-    msg: status === 413 ? "请求数据超过限制" : status < 500 ? "请求数据无效" : "服务器处理失败",
-    data: null
+    msg: clientMessage,
+    data: null,
+    errorCode: attachmentRequest ? (error.code || "ATTACHMENT_REQUEST_INVALID") : undefined
   });
 });
 
@@ -14967,7 +15069,7 @@ const server = app.listen(port, () => {
 
 const shutdown = createGracefulShutdown({
   server,
-  resources: [authService.store, ruleStore, appStore],
+  resources: [authService.store, ruleStore, attachmentStore, appStore],
   timeoutMs: Number(process.env.APP_SHUTDOWN_TIMEOUT_MS) || 5000
 });
 

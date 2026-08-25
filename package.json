@@ -25,6 +25,7 @@
     "test:tabular": "node --test --experimental-test-coverage --test-coverage-include=lib/import-export/tabular-service.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=90 tests/whitebox/tabular-service.test.js",
     "test:fidic": "node --test --experimental-test-coverage --test-coverage-include=lib/international/fidic-core.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=90 tests/whitebox/fidic-core.test.js",
     "test:international-settings": "node --test --experimental-test-coverage --test-coverage-include=lib/international/project-settings.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=90 tests/whitebox/project-settings.test.js",
+    "test:attachments": "node --test --experimental-test-coverage --test-coverage-include=lib/attachments/attachment-store.js --test-coverage-lines=90 --test-coverage-functions=100 --test-coverage-branches=85 tests/whitebox/attachment-store.test.js",
     "sample:regression": "node scripts/sample-regression.js",
     "test:payment-fixtures": "node scripts/payment-fixture-regression.js",
     "test:all": "node scripts/test-all.js"
@@ -33,7 +34,8 @@
     "csv-parse": "^7.0.2",
     "csv-stringify": "^6.8.3",
     "decimal.js": "^10.6.0",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "multer": "^2.2.0"
   },
   "overrides": {
     "body-parser": "1.20.6"

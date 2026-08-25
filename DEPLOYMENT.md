@@ -19,6 +19,8 @@ GitHub：https://github.com/hanxiaochi/test/tree/codex/zwkjy-clone
 - Node.js + Express 提供前端、业务 API 和管理后台。
 - `data/runtime.db` 保存默认租户/项目业务状态和不可变修订。
 - `data/security.db` 保存账号、密码摘要、角色、权限、会话、安全审计和计算规则版本。
+- `data/attachments.db` 保存附件租户、项目、资料节点、校验和、上传人和删除状态等元数据。
+- `data/attachments/` 保存随机对象名的真实附件字节；下载和 ZIP 打包前会重新校验 SHA-256。
 - `data/tenants/` 保存其他租户和项目的隔离业务数据库。
 - `data/backups/` 保存应用内创建或导入的项目级业务备份。
 - `data/runtime-db.json` 是旧版数据源，仅用于首次非破坏迁移和应急 JSON 回滚。
@@ -50,6 +52,10 @@ data/runtime.db-shm
 data/security.db
 data/security.db-wal
 data/security.db-shm
+data/attachments.db
+data/attachments.db-wal
+data/attachments.db-shm
+data/attachments/
 data/tenants/
 data/backups/
 data/runtime-db.json
@@ -72,6 +78,8 @@ npm.cmd start
 ```powershell
 Get-ChildItem .\data\runtime.db*
 Get-ChildItem .\data\security.db*
+Get-ChildItem .\data\attachments.db*
+Get-ChildItem .\data\attachments -Recurse -File
 ```
 
 应急 JSON 模式只在独立排障窗口使用：
@@ -126,6 +134,7 @@ APP_STORAGE=sqlite
 APP_BOOTSTRAP_PASSWORD=请替换为至少10位且含字母数字特殊字符的初始密码
 APP_COOKIE_SECURE=true
 APP_TRUST_PROXY=true
+APP_ATTACHMENT_MAX_BYTES=20971520
 # APP_AMAP_KEY=请在需要地图功能时填写并限制生产域名
 # APP_AMAP_SECURITY_CODE=请填写与 Key 配套的安全密钥
 EOF
@@ -171,7 +180,7 @@ cat >/etc/nginx/sites-available/zwkjy-clone <<'EOF'
 server {
     listen 80;
     server_name _;
-    client_max_body_size 100m;
+    client_max_body_size 21m;
 
     location / {
         proxy_pass http://127.0.0.1:3100;
@@ -227,8 +236,9 @@ curl -fsS http://127.0.0.1:3100/api/health
 3. 代表性清单、材料到场、手动计量和支付证书表单可保存并重开。
 4. 计算规则必须填写变更原因，历史版本可查看和重新启用。
 5. 用户/RBAC、审计、备份恢复、数据交换和国际设置页面正常。
-6. 重启服务后业务数据、账号、规则版本和审计仍存在。
-7. 执行第 12/13/14 期 fixture 回归，结果与基准一致。
+6. 工程资料可上传允许类型的真实文件；列表、单文件下载和资料 ZIP 字节一致，只读用户不能上传或删除。
+7. 重启服务后业务数据、账号、规则版本、审计和附件仍存在。
+8. 执行第 12/13/14 期 fixture 回归，结果与基准一致。
 
 ## 完整恢复
 
@@ -255,6 +265,9 @@ APP_SQLITE_DB_PATH      默认业务 SQLite 路径
 APP_SECURITY_DB_PATH    账号、权限和审计 SQLite 路径
 APP_RULE_DB_PATH        规则版本库路径，默认复用 security.db
 APP_BACKUP_DIR          应用内项目备份目录
+APP_ATTACHMENT_DB_PATH  附件元数据 SQLite 路径，默认 data/attachments.db
+APP_ATTACHMENT_DIR      附件对象目录，默认 data/attachments
+APP_ATTACHMENT_MAX_BYTES 单文件上限字节数，默认 20971520（20 MiB）
 APP_SHUTDOWN_TIMEOUT_MS 优雅停机等待毫秒数，默认 5000
 APP_LOGIN_MAX_ATTEMPTS  同一IP、租户和账号在窗口内的失败上限，默认 10
 APP_LOGIN_WINDOW_MS     登录失败计数窗口毫秒数，默认 900000
@@ -268,6 +281,8 @@ APP_AMAP_SECURITY_CODE   可选；与高德地图 Key 配套的安全密钥
 ```
 
 修改路径后必须同步调整 systemd 权限、全量备份范围和监控规则。不要在应用直接暴露公网时启用 `APP_TRUST_PROXY`，否则攻击者可能伪造来源地址绕过登录限流。
+
+Nginx 的 `client_max_body_size` 必须略大于 `APP_ATTACHMENT_MAX_BYTES` 以容纳 multipart 边界开销。应用只接受 PDF、Word、Excel、CSV、TXT、JPEG、PNG 和 ZIP，并同时检查扩展名、MIME、文件签名、大小和 SHA-256。后台“备份恢复管理”只覆盖项目业务状态，不包含附件对象；完整灾备必须停服复制整个 `data/` 目录。
 
 首次初始化的管理员会被强制进入密码修改页。新密码至少 10 位，并同时包含字母、数字和特殊字符；修改成功后全部已有会话会立即失效，必须使用新密码重新登录。
 

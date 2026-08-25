@@ -49,12 +49,12 @@ ys1 / 000000
 关键提醒：
 
 ```text
-1. 默认业务数据库是 data/runtime.db；账号、权限、审计和规则版本保存在 data/security.db。
+1. 默认业务数据库是 data/runtime.db；账号、权限、审计和规则版本保存在 data/security.db；附件元数据和真实文件保存在 data/attachments.db 与 data/attachments/。
 2. 首次启动会把旧 data/runtime-db.json 非破坏迁移到 SQLite，旧 JSON 会原样保留，不能删除或覆盖。
 3. CALCULATION_USAGE.md 是本机计算使用文档，不上传 GitHub；部署网站本身不依赖它。
 4. PAYMENT_REGRESSION_TEST_DATA.md 和 test-data/payment-regression-12-14.json 是给其他 AI/协作者验收用的三组非 PDF 测试数据。
 5. 当前版本已经包含账号、RBAC、租户/项目隔离、审计、规则版本、备份恢复和数据交换后台。
-6. 每次更新代码前，完整备份 data/runtime*.db*、data/security.db*、data/tenants/ 和旧 JSON 文件。
+6. 每次更新代码前，停服完整备份整个 data/，其中必须包含 data/attachments.db* 和 data/attachments/。
 ```
 
 ## 数据持久化与首次迁移
@@ -64,6 +64,8 @@ ys1 / 000000
 ```text
 data/runtime.db                 默认租户/项目业务数据和不可变修订
 data/security.db                账号、角色、会话、安全审计和计算规则版本
+data/attachments.db             附件租户/项目范围、校验和和删除状态
+data/attachments/               真实附件对象字节
 data/tenants/.../*.db           其他租户/项目隔离业务数据库
 data/runtime-db.json            旧版 JSON 数据源，仅用于首次迁移和应急回滚
 ```
@@ -188,6 +190,7 @@ APP_STORAGE=sqlite
 APP_BOOTSTRAP_PASSWORD=请替换为至少10位且含字母数字特殊字符的初始密码
 APP_COOKIE_SECURE=true
 APP_TRUST_PROXY=true
+APP_ATTACHMENT_MAX_BYTES=20971520
 # APP_AMAP_KEY=请在需要地图功能时填写并限制生产域名
 # APP_AMAP_SECURITY_CODE=请填写与 Key 配套的安全密钥
 EOF
@@ -268,7 +271,7 @@ server {
     listen 80;
     server_name _;
 
-    client_max_body_size 100m;
+    client_max_body_size 21m;
 
     location / {
         proxy_pass http://127.0.0.1:3100;
@@ -393,10 +396,10 @@ curl -I http://127.0.0.1:3100/
 必须作为一个整体保护的数据包括：
 
 ```text
-data/runtime.db*、data/security.db*、data/tenants/、data/backups/、data/runtime-db.json
+data/runtime.db*、data/security.db*、data/attachments.db*、data/attachments/、data/tenants/、data/backups/、data/runtime-db.json
 ```
 
-其中 SQLite 文件是当前运行状态，旧 JSON 是首次迁移和回滚来源。生成的导出文件在 `data/exports/`，该目录不需要提交到 Git。
+其中 SQLite 文件是当前运行状态，旧 JSON 是首次迁移和回滚来源。`data/attachments.db*` 与 `data/attachments/` 必须成套恢复，否则完整性校验会拒绝下载。生成的导出文件在 `data/exports/`，该目录不需要提交到 Git。
 
 如果更新后数据异常，先停止服务并把当前 `data/` 再留一份现场副本，然后整体恢复最近的完整备份：
 

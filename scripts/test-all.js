@@ -23,6 +23,7 @@ const commands = [
   ["run", "test:tabular"],
   ["run", "test:fidic"],
   ["run", "test:international-settings"],
+  ["run", "test:attachments"],
   ["run", "test:payment-fixtures"],
   ["run", "sample:regression"],
   ["run", "verify"],

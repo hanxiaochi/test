@@ -9,7 +9,7 @@ npm install
 npm start
 ```
 
-要求 Node.js 22.5 或更高版本。业务数据默认保存在 `data/runtime.db`，账号、权限、审计和规则版本默认保存在 `data/security.db`。
+要求 Node.js 22.5 或更高版本。业务数据默认保存在 `data/runtime.db`，账号、权限、审计和规则版本默认保存在 `data/security.db`，真实附件元数据和文件分别保存在 `data/attachments.db` 与 `data/attachments/`。
 
 默认地址：
 
@@ -42,7 +42,7 @@ npm.cmd run verify
 - 多项目/标段查询、计量台账、支付报表、各级审核金额台账。
 - 工程资料、试验资料、质检资料、资料挂接和资料 ZIP 导出。
 - 流程上报、审核、归档、退回、撤回和流程记录展示。
-- 报表预览、CSV/Excel 类导出、附件下载和导入模拟。
+- 报表预览、CSV/Excel 类导出、工程资料真实附件上传/校验/下载/ZIP 打包，以及业务数据导入。
 
 ## 核心计算
 
@@ -83,4 +83,4 @@ POST /api/cost/calculate
 
 首次启动且 SQLite 为空时，程序会把旧 `data/runtime-db.json` 非破坏迁移到 `data/runtime.db`；已有 SQLite 状态始终优先，不会被 JSON 重复覆盖。旧 JSON 应继续保留。仅在应急排障时可设置 `APP_STORAGE=json` 回到旧存储模式。
 
-部署和更新前应完整备份 `data/runtime.db*`、`data/security.db*`、`data/tenants/`、`data/backups/` 和旧 JSON 文件。不要通过删除数据库来“恢复初始数据”。
+部署和更新前应完整备份 `data/runtime.db*`、`data/security.db*`、`data/attachments.db*`、`data/attachments/`、`data/tenants/`、`data/backups/` 和旧 JSON 文件。不要通过删除数据库来“恢复初始数据”。

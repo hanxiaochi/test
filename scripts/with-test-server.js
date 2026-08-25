@@ -64,6 +64,8 @@ async function main() {
   const ruleFile = path.join(tempRoot, "rules.db");
   const exportDir = path.join(tempRoot, "exports");
   const backupDir = path.join(tempRoot, "backups");
+  const attachmentDir = path.join(tempRoot, "attachments");
+  const attachmentDbFile = path.join(tempRoot, "attachments.db");
   fs.copyFileSync(path.join(ROOT, "data", "runtime-db.json"), runtimeFile);
   const port = await freePort();
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -72,6 +74,9 @@ async function main() {
     APP_BASE_URL: baseUrl,
     APP_EXPORT_DIR: exportDir,
     APP_BACKUP_DIR: backupDir,
+    APP_ATTACHMENT_DIR: attachmentDir,
+    APP_ATTACHMENT_DB_PATH: attachmentDbFile,
+    APP_ATTACHMENT_MAX_BYTES: "1048576",
     APP_RUNTIME_DB_PATH: runtimeFile,
     APP_SECURITY_DB_PATH: securityFile,
     APP_RULE_DB_PATH: ruleFile,

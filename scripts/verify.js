@@ -51,6 +51,30 @@ async function postJson(url, body) {
   return requestJson(url, { method: "POST", body: JSON.stringify(body) });
 }
 
+async function postMultipart(url, fields, file) {
+  const body = new FormData();
+  Object.entries(fields || {}).forEach(([key, value]) => body.append(key, String(value)));
+  if (file) body.append("file", new Blob([file.buffer], { type: file.mimeType }), file.name);
+  const { response, text } = await requestText(url, { method: "POST", body });
+  return { response, json: JSON.parse(text), text };
+}
+
+function uncompressedZipEntries(buffer) {
+  const entries = new Map();
+  let offset = 0;
+  while (offset + 30 <= buffer.length && buffer.readUInt32LE(offset) === 0x04034b50) {
+    const compressedSize = buffer.readUInt32LE(offset + 18);
+    const fileNameLength = buffer.readUInt16LE(offset + 26);
+    const extraLength = buffer.readUInt16LE(offset + 28);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + fileNameLength + extraLength;
+    const name = buffer.subarray(nameStart, nameStart + fileNameLength).toString("utf8");
+    entries.set(name, buffer.subarray(dataStart, dataStart + compressedSize));
+    offset = dataStart + compressedSize;
+  }
+  return entries;
+}
+
 function uniqueInternalContractUrls() {
   const contracts = JSON.parse(fs.readFileSync(CONTRACTS_PATH, "utf8"));
   return [...new Set(contracts.flatMap((item) => item.urls || []))]
@@ -202,6 +226,13 @@ async function verifyAuthorizationFlow() {
   });
   assert.strictEqual(created.response.status, 200, "admin should create a viewer account");
   assert.deepStrictEqual(created.json.data.permissions, ["data:read"], "viewer should receive read-only permission");
+  const attachmentDocumentId = engine.documentRows()[0].nodeId || engine.documentRows()[0].id;
+  const viewerFixtureBytes = Buffer.from("%PDF-1.7\nviewer-permission-fixture\n");
+  const viewerFixture = await postMultipart("/projectInformationNode/upload_attachment", { hangId: attachmentDocumentId, remark: "viewer permission fixture" }, {
+    name: "viewer-permission-fixture.pdf", mimeType: "application/pdf", buffer: viewerFixtureBytes
+  });
+  assert.strictEqual(viewerFixture.response.status, 200, "administrator should create a real attachment permission fixture");
+  const viewerFixtureId = viewerFixture.json.data.attachmentId;
 
   authCookieHeader = "";
   const viewerBody = new URLSearchParams({
@@ -239,8 +270,35 @@ async function verifyAuthorizationFlow() {
   assert.strictEqual(auditRetentionDenied.response.status, 403, "viewer should not apply security audit retention");
   const runtimeDenied = await requestJson("/api/debug/runtime");
   assert.strictEqual(runtimeDenied.response.status, 403, "viewer should not access runtime diagnostics");
+  const viewerDownload = await requestBuffer(`/projectInformationNode/attachment/${viewerFixtureId}/download?hangId=${attachmentDocumentId}`);
+  assert.strictEqual(viewerDownload.response.status, 200, "viewer should download an attachment in an assigned project");
+  assert.deepEqual(viewerDownload.buffer, viewerFixtureBytes, "viewer attachment download should preserve exact bytes");
+  const viewerCrossProjectDownload = await requestBuffer(`/projectInformationNode/attachment/${viewerFixtureId}/download?hangId=${attachmentDocumentId}&projectId=regression-project-2`);
+  assert.strictEqual(viewerCrossProjectDownload.response.status, 403, "viewer should not download attachments across project assignments");
+  const viewerUploadDenied = await postMultipart("/projectInformationNode/upload_attachment", { hangId: attachmentDocumentId }, {
+    name: "viewer-denied.txt", mimeType: "text/plain", buffer: Buffer.from("denied")
+  });
+  assert.strictEqual(viewerUploadDenied.response.status, 403, "viewer should not upload attachments");
+  const viewerDeleteDenied = await postJson("/projectInformationNode/delete_attachment", { hangId: attachmentDocumentId, attachmentId: viewerFixtureId });
+  assert.strictEqual(viewerDeleteDenied.response.status, 403, "viewer should not delete attachments");
 
   authCookieHeader = adminCookie;
+  const viewerFixtureDeleted = await postJson("/projectInformationNode/delete_attachment", { hangId: attachmentDocumentId, attachmentId: viewerFixtureId });
+  assert.strictEqual(viewerFixtureDeleted.json.data.changed, 1, "administrator should clean up the attachment permission fixture");
+  const invalidAttachment = await postMultipart("/projectInformationNode/upload_attachment", { hangId: attachmentDocumentId }, {
+    name: "invalid.exe", mimeType: "application/octet-stream", buffer: Buffer.from("MZ")
+  });
+  assert.strictEqual(invalidAttachment.response.status, 400, "disallowed attachment types should fail explicitly");
+  const missingAttachmentDownload = await requestJson(`/projectInformationNode/attachment/999999999/download?hangId=${attachmentDocumentId}`);
+  assert.strictEqual(missingAttachmentDownload.response.status, 404, "unknown attachment downloads should fail closed");
+  const missingAttachmentDelete = await postJson("/projectInformationNode/delete_attachment", { hangId: attachmentDocumentId, attachmentId: 999999999 });
+  assert.strictEqual(missingAttachmentDelete.json.data.changed, 0, "unknown attachment deletes should not affect another object");
+  const uploadAudits = await requestJson("/api/admin/security_audit/query?action=attachment.upload&limit=20");
+  assert.ok(uploadAudits.json.data.rows.some((row) => row.result === "success") && uploadAudits.json.data.rows.some((row) => row.result === "failure"), "successful and rejected attachment uploads should be audited");
+  const downloadAudits = await requestJson("/api/admin/security_audit/query?action=attachment.download&limit=20");
+  assert.ok(downloadAudits.json.data.rows.some((row) => row.result === "success") && downloadAudits.json.data.rows.some((row) => row.result === "failure"), "successful and rejected attachment downloads should be audited");
+  const deleteAudits = await requestJson("/api/admin/security_audit/query?action=attachment.delete&limit=20");
+  assert.ok(deleteAudits.json.data.rows.some((row) => row.result === "success") && deleteAudits.json.data.rows.some((row) => row.result === "failure"), "successful and ineffective attachment deletes should be audited");
   const runtimeDebug = await requestJson("/api/debug/runtime");
   assert.strictEqual(runtimeDebug.response.status, 200, "administrator should access runtime diagnostics");
   assert.ok(runtimeDebug.json.data.runtimeExists, "administrator diagnostics should verify runtime storage");
@@ -3324,28 +3382,39 @@ async function verifyDocumentNodeLoop() {
 
     const attachmentPage = await requestText(`/project_information_hang_file/page?id=${secondId}`);
     assert.strictEqual(attachmentPage.response.status, 200, "project information attachment page should load");
-    assert.ok(attachmentPage.text.includes("document-attachment-form") && attachmentPage.text.includes("附件名称"), "project information attachment page should render upload form");
+    assert.ok(attachmentPage.text.includes("document-attachment-form") && attachmentPage.text.includes("选择文件") && attachmentPage.text.includes('enctype="multipart/form-data"'), "project information attachment page should render a real multipart upload form");
+    const pageScripts = [...attachmentPage.text.matchAll(/<script>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
+    assert.doesNotThrow(() => pageScripts.forEach((script) => new Function(script)), "project information attachment page scripts should compile");
 
-    const attachment = await postJson("/projectInformationNode/upload_attachment", {
-      hangId: secondId,
-      fileName: "验证资料附件.docx",
-      size: 2048,
-      remark: "资料附件验证"
+    const originalBytes = Buffer.concat([Buffer.from("504b0304", "hex"), Buffer.from("document-attachment-exact-bytes")]);
+    const attachment = await postMultipart("/projectInformationNode/upload_attachment", { hangId: secondId, remark: "资料附件验证" }, {
+      name: "验证资料附件.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      buffer: originalBytes
     });
-    assert.strictEqual(attachment.json.data.changed, 1, "project information attachment upload should save metadata");
+    assert.strictEqual(attachment.json.data.changed, 1, "project information attachment upload should store real bytes and metadata");
     const attachmentId = attachment.json.data.attachmentId;
     const attachmentRows = await requestJson(`/projectInformationNode/attachment_list?hangId=${secondId}&page=1&limit=100`);
     assert.ok(attachmentRows.json.data.some((row) => Number(row.attachmentId) === Number(attachmentId) && row.fileName === "验证资料附件.docx"), "project information attachment list should include uploaded file");
     const hangRowsAfterAttachment = await requestJson("/projectInformationNode/find_hang_param?page=1&limit=500");
     const hangWithAttachment = hangRowsAfterAttachment.json.data.find((item) => Number(item.hangId || item.nodeId) === Number(secondId));
     assert.ok(Number(hangWithAttachment.fileCount || 0) >= 1, "project information hang row should reflect attachment count");
+    const singleDownload = await requestBuffer(`/projectInformationNode/attachment/${attachmentId}/download?hangId=${secondId}`);
+    assert.strictEqual(singleDownload.response.status, 200, "stored document attachment should download through an authenticated endpoint");
+    assert.deepEqual(singleDownload.buffer, originalBytes, "single document attachment download should preserve exact original bytes");
+    assert.strictEqual(singleDownload.response.headers.get("x-content-sha256"), attachment.json.data.row.sha256, "single download should expose its verified SHA-256 checksum");
     const zipWithAttachment = await requestBuffer(`/oaDataNode/downLoadZipFile?nodeId=${secondId}`);
-    assert.ok(zipWithAttachment.buffer.toString("utf8").includes("验证资料附件.docx"), "selected document ZIP should include uploaded attachment metadata");
+    const zipEntries = uncompressedZipEntries(zipWithAttachment.buffer);
+    const attachmentEntry = [...zipEntries.entries()].find(([name]) => name.endsWith("验证资料附件.docx"));
+    assert.ok(attachmentEntry, "selected document ZIP should include the original attachment file");
+    assert.deepEqual(attachmentEntry[1], originalBytes, "selected document ZIP should preserve exact attachment bytes");
 
     const deletedAttachment = await postJson("/projectInformationNode/delete_attachment", { hangId: secondId, attachmentId });
     assert.strictEqual(deletedAttachment.json.data.changed, 1, "project information attachment delete should remove metadata");
     const attachmentRowsAfterDelete = await requestJson(`/projectInformationNode/attachment_list?hangId=${secondId}&page=1&limit=100`);
     assert.ok(!attachmentRowsAfterDelete.json.data.some((row) => Number(row.attachmentId) === Number(attachmentId)), "deleted project information attachment should disappear from list");
+    const downloadAfterDelete = await requestJson(`/projectInformationNode/attachment/${attachmentId}/download?hangId=${secondId}`);
+    assert.strictEqual(downloadAfterDelete.response.status, 404, "deleted project information attachment should no longer download");
 
     const powerPage = await requestText(`/oaDataNode/get_node_user_power_page?nodeId=${secondId}`);
     assert.strictEqual(powerPage.response.status, 200, "document power page should load");
