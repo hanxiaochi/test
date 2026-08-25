@@ -134,6 +134,9 @@ async function verifyAuthorizationFlow() {
 
   const readable = await requestJson("/api/cost/summary");
   assert.strictEqual(readable.response.status, 200, "viewer should read business data");
+  const viewerCertificate = await postJson("/api/international/certificate/calculate", { lines: [{ code: "VIEW", category: "work", amount: 100, currency: "CNY" }] });
+  assert.strictEqual(viewerCertificate.response.status, 200, "read-only users should calculate a non-mutating international certificate");
+  assert.strictEqual(viewerCertificate.json.data.totals.netCertified, "90.00", "viewer certificate should use the current project retention settings");
   const crossProjectDenied = await requestJson("/api/cost/summary?projectId=regression-project-2");
   assert.strictEqual(crossProjectDenied.response.status, 403, "viewer should not cross a project assignment boundary");
   assert.strictEqual(crossProjectDenied.json.requiredProjectId, "regression-project-2", "project denial should identify the rejected project scope");
@@ -263,6 +266,60 @@ async function verifyDataExchangeFlow() {
   assert.ok(audit.json.data.some((row) => row.action === "data_exchange.import" && row.result === "failure"), "failed imports should be explicitly audited");
 }
 
+async function verifyInternationalContractFlow() {
+  const page = await requestText("/admin/international_settings_page");
+  assert.strictEqual(page.response.status, 200, "international contract settings page should load");
+  assert.ok(page.text.includes("国际合同设置") && page.text.includes("付款证书试算") && page.text.includes("certificateStandard"), "international settings page should expose project settings and certificate calculation controls");
+  const catalog = await requestJson("/api/admin/international_settings/catalog");
+  assert.strictEqual(catalog.json.data.locales.length, 6, "international catalog should expose six initial locales");
+  assert.ok(catalog.json.data.certificateStandards.includes("FIDIC_RED_2017"), "international catalog should expose FIDIC contract profiles");
+
+  const defaultSettings = await requestJson("/api/admin/international_settings?projectId=1");
+  assert.strictEqual(defaultSettings.json.data.locale, "zh-CN", "default project should retain its Chinese locale");
+  assert.strictEqual(defaultSettings.json.data.baseCurrency, "CNY", "default project should retain CNY as its base currency");
+  const projectId = "regression-project-2";
+  const saved = await postJson("/api/admin/international_settings", {
+    projectId,
+    locale: "en-US",
+    baseCurrency: "USD",
+    certificateStandard: "FIDIC_RED_2017",
+    moneyDigits: 2,
+    exchangeRates: { "CNY:USD": "0.14" },
+    currencyDigits: { JPY: 0 },
+    retentionRate: "5",
+    retentionLimitAmount: "100",
+    minimumCertificateAmount: "100"
+  });
+  assert.strictEqual(saved.json.data.settings.locale, "en-US", "project should persist its own locale");
+  assert.strictEqual(saved.json.data.settings.baseCurrency, "USD", "project should persist its own base currency");
+  const projectSettings = await requestJson(`/api/admin/international_settings?projectId=${projectId}`);
+  assert.deepStrictEqual(projectSettings.json.data.exchangeRates, { "CNY:USD": "0.14" }, "project should read back normalized contract exchange rates");
+
+  const certificate = await postJson("/api/international/certificate/calculate", {
+    projectId,
+    previousRetention: 0,
+    lines: [
+      { code: "WORK-USD", category: "work", amount: "1000", currency: "USD" },
+      { code: "VO-CNY", category: "variation", amount: "1000", currency: "CNY" },
+      { code: "ADV-REC", category: "advanceRepayment", amount: "50", currency: "USD" }
+    ]
+  });
+  assert.strictEqual(certificate.json.data.baseCurrency, "USD", "certificate should use the selected project's base currency");
+  assert.strictEqual(certificate.json.data.totals.retentionEligibleBase, "1140.00", "certificate should convert eligible work at the project contract rate");
+  assert.strictEqual(certificate.json.data.totals.currentRetention, "57.00", "certificate should apply project retention rules after conversion");
+  assert.strictEqual(certificate.json.data.totals.netCertified, "1033.00", "certificate should close additions, deductions, and retention exactly");
+
+  const invalid = await postJson("/api/admin/international_settings", { projectId, exchangeRates: { EUR: 0 } });
+  assert.strictEqual(invalid.response.status, 400, "zero contract exchange rates should fail closed");
+  const afterInvalid = await requestJson(`/api/admin/international_settings?projectId=${projectId}`);
+  assert.deepStrictEqual(afterInvalid.json.data, projectSettings.json.data, "failed settings updates must not mutate project state");
+  const defaultAfter = await requestJson("/api/admin/international_settings?projectId=1");
+  assert.deepStrictEqual(defaultAfter.json.data, defaultSettings.json.data, "international settings must remain isolated by project");
+  const audit = await requestJson("/api/admin/security_audit?limit=200");
+  assert.ok(audit.json.data.some((row) => row.action === "international_settings.update" && row.result === "success"), "successful international settings updates should be audited");
+  assert.ok(audit.json.data.some((row) => row.action === "international_settings.update" && row.result === "failure"), "failed international settings updates should be audited");
+}
+
 async function verifyTenantBusinessIsolation() {
   const defaultCookie = authCookieHeader;
   const { SecurityStore } = require("../lib/security/security-store");
@@ -292,6 +349,8 @@ async function verifyTenantBusinessIsolation() {
   assert.strictEqual(Number(tenantSummary.json.data.contractSumMoney || 0), 0, "new tenant must not inherit the default tenant contract data");
   const tenantMaterialExport = await requestText("/api/admin/data_exchange/materials/export?format=json");
   assert.deepStrictEqual(JSON.parse(tenantMaterialExport.text), [], "new tenant must not inherit default-tenant data exchange rows");
+  const tenantInternationalSettings = await requestJson("/api/admin/international_settings");
+  assert.strictEqual(tenantInternationalSettings.json.data.locale, "zh-CN", "new tenant should start with independent international defaults");
   const tenantProjects = await requestJson("/api/session/projects");
   assert.deepStrictEqual(tenantProjects.json.data.projects.map((project) => project.projectId), ["1", "2"], "session should expose only the tenant user's accessible projects");
   assert.strictEqual(tenantProjects.json.data.currentProjectId, "1", "session should start in the first accessible project");
@@ -3509,6 +3568,7 @@ async function verifyOriginalMenuUrlAliasesLoop() {
   assert.ok(systemMenuText.includes("账号权限管理") && systemMenuText.includes("admin/users_page"), "backend menu should expose user and role administration");
   assert.ok(systemMenuText.includes("备份恢复管理") && systemMenuText.includes("admin/backups_page"), "backend menu should expose project-scoped backup administration");
   assert.ok(systemMenuText.includes("数据导入导出") && systemMenuText.includes("admin/data_exchange_page"), "backend menu should expose validated business data exchange");
+  assert.ok(systemMenuText.includes("国际合同设置") && systemMenuText.includes("admin/international_settings_page"), "backend menu should expose project-scoped language, currency, and FIDIC settings");
 }
 
 async function main() {
@@ -3518,6 +3578,7 @@ async function main() {
   await verifyLoginFlow();
   await verifyAuthorizationFlow();
   await verifyDataExchangeFlow();
+  await verifyInternationalContractFlow();
   await verifyTenantBusinessIsolation();
   const contractUrls = await verifyContractUrls();
   const actionUrls = await verifyCachedPageActions();

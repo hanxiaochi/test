@@ -9,6 +9,8 @@ const authService = require("./lib/security/auth-service");
 const { RuleStore } = require("./lib/rules/rule-store");
 const backupService = require("./lib/backup/backup-service");
 const tabularService = require("./lib/import-export/tabular-service");
+const fidicCore = require("./lib/international/fidic-core");
+const internationalSettingsService = require("./lib/international/project-settings");
 const engine = require("./costEngine");
 
 (engine.db.projects || []).forEach((project) => {
@@ -56,6 +58,7 @@ const publicPathRules = [
 ];
 
 function requiredPermission(req) {
+  if (req.path === "/api/international/certificate/calculate") return "data:read";
   if (/^\/(?:admin|api\/admin)(?:\/|$)/.test(req.path)) return "admin:access";
   const legacyMutation = /\/(?:save|delete|del|update|create|add|edit|upload|import|move|init|agree|return|withdraw|archive|adjust|up_order)(?:_|\/|$)/i.test(req.path);
   if (!["GET", "HEAD", "OPTIONS"].includes(req.method) || legacyMutation) return "data:write";
@@ -230,6 +233,28 @@ function applyDataExchangeImport(req) {
     return { ...validation, prepared: { ...prepared, nextRows: undefined }, storage };
   } catch (error) {
     engine.db[module.storageKey] = previousRows;
+    throw error;
+  }
+}
+
+function currentInternationalSettings() {
+  return internationalSettingsService.normalizeProjectSettings(engine.db.internationalSettings || {});
+}
+
+function saveInternationalSettings(req) {
+  const previous = engine.db.internationalSettings;
+  const settings = internationalSettingsService.normalizeProjectSettings(req.body, currentInternationalSettings());
+  engine.db.internationalSettings = settings;
+  try {
+    const storage = appStore.save(engine.db, {
+      actor: req.authUser.account,
+      action: "international-settings:update",
+      checkpoint: true
+    });
+    return { settings, storage };
+  } catch (error) {
+    if (previous === undefined) delete engine.db.internationalSettings;
+    else engine.db.internationalSettings = previous;
     throw error;
   }
 }
@@ -1396,6 +1421,25 @@ leftMenus.set("9000", [
     resourceUrl: "admin/data_exchange_page",
     sysBusinessResources: [],
     sysIdentityResources: ""
+  },
+  {
+    appImageUrl: "",
+    appPageUrl: "",
+    controllerDes: "",
+    flagFlow: 1,
+    isShow: 1,
+    menuIcon: "layui-icon layui-icon-engine",
+    parentId: 9000,
+    refreshType: 1,
+    resourceCode: "990005",
+    resourceDes: "多语言、多币种与FIDIC付款证书设置",
+    resourceId: 9040,
+    resourceLevel: 0,
+    resourceName: "国际合同设置",
+    resourceNo: "model",
+    resourceUrl: "admin/international_settings_page",
+    sysBusinessResources: [],
+    sysIdentityResources: ""
   }
 ]);
 
@@ -1888,7 +1932,8 @@ function adminDashboardHtml() {
     ["计算规则后台", "/admin/calculation_rules_page", "修改应付构成、小数位和审核比例"],
     ["账号权限管理", "/admin/users_page", "管理用户、角色、状态和安全审计"],
     ["备份恢复管理", "/admin/backups_page", "按当前项目导出、导入和恢复校验备份"],
-    ["数据导入导出", "/admin/data_exchange_page", "批量校验、追加、更新并导出核心业务数据"]
+    ["数据导入导出", "/admin/data_exchange_page", "批量校验、追加、更新并导出核心业务数据"],
+    ["国际合同设置", "/admin/international_settings_page", "维护项目语言、币种、汇率和FIDIC付款证书参数"]
   ].map(([name, href, desc]) => `
     <tr>
       <td>${htmlEscape(name)}</td>
@@ -2155,6 +2200,57 @@ function dataExchangeManagementHtml(req) {
       importButton.addEventListener('click',function(){if(validatedSignature!==signature()){summaryEl.textContent='文件或选项已变化，请重新校验。';importButton.disabled=true;return}importButton.disabled=true;submit('import').then(function(result){renderResult(result);summaryEl.textContent='导入完成：新增 '+result.inserted+' 行，更新 '+result.updated+' 行。';validatedSignature=''}).catch(function(error){summaryEl.textContent=error.message;importButton.disabled=false})});
       root.querySelector('#exchange-export').addEventListener('click',function(){location.href='/api/admin/data_exchange/'+encodeURIComponent(moduleEl.value)+'/export?format='+encodeURIComponent(formatEl.value)});
       refreshSchema();
+    })();</script>
+  </div>`;
+}
+
+function internationalSettingsHtml(req) {
+  const settings = currentInternationalSettings();
+  const catalog = internationalSettingsService.publicCatalog();
+  const localeOptions = catalog.locales.map((item) => `<option value="${item.code}"${item.code === settings.locale ? " selected" : ""}>${htmlEscape(item.name)} (${item.code})</option>`).join("");
+  const standardOptions = catalog.certificateStandards.map((item) => `<option value="${item}"${item === settings.certificateStandard ? " selected" : ""}>${item}</option>`).join("");
+  return `<div class="core-page" data-core-page="international-settings">
+    ${corePageStyle("#0369a1")}
+    <div class="core-shell">
+      <div class="core-head">
+        <div><h2>国际合同设置</h2><p>当前项目：${htmlEscape(req.businessContext.projectId)}</p></div>
+        <div class="core-tools"><a class="layui-btn layui-btn-sm layui-btn-primary" href="/admin/dashboard_page">返回后台</a></div>
+      </div>
+      <div class="core-grid">
+        <form class="core-panel" id="international-settings-form">
+          <h3>项目参数</h3>
+          <div class="layui-form-item"><label class="layui-form-label">界面语言</label><div class="layui-input-block"><select name="locale" class="layui-select">${localeOptions}</select></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">基础币种</label><div class="layui-input-block"><input class="layui-input" name="baseCurrency" maxlength="3" value="${htmlEscape(settings.baseCurrency)}"></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">证书标准</label><div class="layui-input-block"><select name="certificateStandard" class="layui-select">${standardOptions}</select></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">金额位数</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" max="4" step="1" name="moneyDigits" value="${settings.moneyDigits}"></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">保留金率(%)</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" max="100" step="0.01" name="retentionRate" value="${htmlEscape(settings.retentionRate)}"></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">保留金限额</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" step="0.01" name="retentionLimitAmount" value="${htmlEscape(settings.retentionLimitAmount)}"></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">最低证书金额</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" step="0.01" name="minimumCertificateAmount" value="${htmlEscape(settings.minimumCertificateAmount)}"></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">合同汇率(JSON)</label><div class="layui-input-block"><textarea class="layui-textarea" name="exchangeRates" rows="5">${htmlEscape(JSON.stringify(settings.exchangeRates, null, 2))}</textarea></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">币种位数(JSON)</label><div class="layui-input-block"><textarea class="layui-textarea" name="currencyDigits" rows="4">${htmlEscape(JSON.stringify(settings.currencyDigits, null, 2))}</textarea></div></div>
+          <div class="core-tools"><button class="layui-btn layui-btn-sm" type="submit">保存项目设置</button></div>
+          <div id="international-settings-message" class="core-note" style="margin-top:10px;"></div>
+        </form>
+        <div class="core-panel">
+          <h3>付款证书试算</h3>
+          <div class="layui-form-item"><label class="layui-form-label">证书行(JSON)</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-lines" rows="13">${htmlEscape(JSON.stringify([
+            { code: "WORK-001", description: "Interim work", category: "work", amount: "100000", currency: settings.baseCurrency },
+            { code: "ADV-REC-001", description: "Advance repayment", category: "advanceRepayment", amount: "5000", currency: settings.baseCurrency }
+          ], null, 2))}</textarea></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">上期保留金</label><div class="layui-input-block"><input class="layui-input" id="fidic-previous-retention" type="number" min="0" step="0.01" value="0"></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">本期释放</label><div class="layui-input-block"><input class="layui-input" id="fidic-retention-release" type="number" min="0" step="0.01" value="0"></div></div>
+          <div class="core-tools"><button class="layui-btn layui-btn-sm layui-btn-normal" type="button" id="fidic-calculate">计算付款证书</button></div>
+          <table class="layui-table" lay-size="sm"><tbody id="fidic-totals"><tr><td class="core-empty">尚未计算</td></tr></tbody></table>
+        </div>
+      </div>
+    </div>
+    <script>(function(){
+      var root=document.querySelector('[data-core-page="international-settings"]');if(!root)return;
+      var form=root.querySelector('#international-settings-form'),message=root.querySelector('#international-settings-message'),totals=root.querySelector('#fidic-totals');
+      function escapeHtml(value){var node=document.createElement('div');node.textContent=String(value==null?'':value);return node.innerHTML}
+      function request(url,body){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json().then(function(result){if(!response.ok||result.code!==1)throw new Error(result.msg||'操作失败');return result.data})})}
+      form.addEventListener('submit',function(event){event.preventDefault();var data=new FormData(form),payload={locale:data.get('locale'),baseCurrency:data.get('baseCurrency'),certificateStandard:data.get('certificateStandard'),moneyDigits:Number(data.get('moneyDigits')),retentionRate:data.get('retentionRate'),retentionLimitAmount:data.get('retentionLimitAmount'),minimumCertificateAmount:data.get('minimumCertificateAmount')};try{payload.exchangeRates=JSON.parse(data.get('exchangeRates')||'{}');payload.currencyDigits=JSON.parse(data.get('currencyDigits')||'{}')}catch(error){message.textContent='JSON格式错误：'+error.message;return}request('/api/admin/international_settings',payload).then(function(){message.textContent='项目设置已保存'}).catch(function(error){message.textContent=error.message})});
+      root.querySelector('#fidic-calculate').addEventListener('click',function(){var payload;try{payload={lines:JSON.parse(root.querySelector('#fidic-lines').value||'[]'),previousRetention:root.querySelector('#fidic-previous-retention').value,retentionRelease:root.querySelector('#fidic-retention-release').value}}catch(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>';return}request('/api/international/certificate/calculate',payload).then(function(result){var order=['grossCertified','lineDeductions','currentRetention','retentionRelease','netCertified','payableNow','carriedForward','cumulativeCertified'];totals.innerHTML=order.map(function(key){return '<tr><th>'+escapeHtml(key)+'</th><td>'+escapeHtml(result.totals[key])+' '+escapeHtml(result.baseCurrency)+'</td></tr>'}).join('')}).catch(function(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>'})});
     })();</script>
   </div>`;
 }
@@ -2644,6 +2740,7 @@ function contentForId(id) {
   if (String(id) === "9010") return userManagementHtml();
   if (String(id) === "9020") return backupManagementHtml({ businessContext: businessContext.current(), authUser: { tenantId: businessContext.current().tenantId } });
   if (String(id) === "9030") return dataExchangeManagementHtml({ businessContext: businessContext.current() });
+  if (String(id) === "9040") return internationalSettingsHtml({ businessContext: businessContext.current() });
   if (String(id) === "6998") return reportManagerDashboardHtml({ query: {}, body: {}, params: {} });
   const file = path.join(dataDir, "content", `page_content_${id}.html`);
   const htmlText = readText(file, "");
@@ -13476,6 +13573,7 @@ app.get("/admin/calculation_rules_page", (req, res) => html(res, calculationRule
 app.get("/admin/users_page", requirePermission("admin:users"), (req, res) => html(res, userManagementHtml(req)));
 app.get("/admin/backups_page", requirePermission("admin:access"), (req, res) => html(res, backupManagementHtml(req)));
 app.get("/admin/data_exchange_page", requirePermission("admin:access"), (req, res) => html(res, dataExchangeManagementHtml(req)));
+app.get("/admin/international_settings_page", requirePermission("admin:access"), (req, res) => html(res, internationalSettingsHtml(req)));
 app.get("/system/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml(req)));
 app.all("/payment/jl_report_page", (req, res) => html(res, jlPaymentReportPageHtml(req)));
 app.all("/payment/jl_print_page", (req, res) => html(res, jlPaymentPrintableHtml(req)));
@@ -13640,6 +13738,37 @@ app.get("/api/admin/security_audit", requirePermission("admin:users"), (req, res
 });
 app.get("/api/admin/data_exchange", requirePermission("admin:access"), (req, res) => {
   operationOk(res, Object.keys(dataExchangeModules).map(dataExchangeSchema));
+});
+app.get("/api/admin/international_settings/catalog", requirePermission("admin:access"), (req, res) => {
+  operationOk(res, internationalSettingsService.publicCatalog());
+});
+app.get("/api/admin/international_settings", requirePermission("admin:access"), (req, res) => {
+  operationOk(res, currentInternationalSettings());
+});
+app.post("/api/admin/international_settings", requirePermission("admin:access"), (req, res) => {
+  try {
+    const result = saveInternationalSettings(req);
+    authService.store.audit({
+      tenantId: req.authUser.tenantId,
+      userId: req.authUser.id,
+      action: "international_settings.update",
+      result: "success",
+      targetType: "project",
+      targetId: req.businessContext.projectId,
+      details: { locale: result.settings.locale, baseCurrency: result.settings.baseCurrency, certificateStandard: result.settings.certificateStandard }
+    });
+    operationOk(res, result);
+  } catch (error) {
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_settings.update", result: "failure", targetType: "project", targetId: req.businessContext.projectId, details: { message: error.message } });
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/international/certificate/calculate", (req, res) => {
+  try {
+    operationOk(res, fidicCore.calculateCertificate(req.body, currentInternationalSettings()));
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
 });
 app.get("/api/admin/data_exchange/:module/schema", requirePermission("admin:access"), (req, res) => {
   try {

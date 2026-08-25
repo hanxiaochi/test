@@ -16,6 +16,8 @@ const commands = [
   ["run", "test:business-context"],
   ["run", "test:tenant-store"],
   ["run", "test:tabular"],
+  ["run", "test:fidic"],
+  ["run", "test:international-settings"],
   ["run", "test:payment-fixtures"],
   ["run", "sample:regression"],
   ["run", "verify"],
