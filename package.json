@@ -28,6 +28,7 @@
     "test:attachments": "node --test --experimental-test-coverage --test-coverage-include=lib/attachments/attachment-store.js --test-coverage-lines=90 --test-coverage-functions=100 --test-coverage-branches=85 tests/whitebox/attachment-store.test.js",
     "test:measure-import": "node --test --experimental-test-coverage --test-coverage-include=lib/import-export/measure-import-service.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=90 tests/whitebox/measure-import-service.test.js",
     "test:report-export": "node --test --experimental-test-coverage --test-coverage-include=lib/reports/payment-report-export.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=85 tests/whitebox/payment-report-export.test.js",
+    "test:workflow": "node --test --experimental-test-coverage --test-coverage-include=lib/workflow/workflow-store.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=90 tests/whitebox/workflow-store.test.js",
     "sample:regression": "node scripts/sample-regression.js",
     "test:payment-fixtures": "node scripts/payment-fixture-regression.js",
     "qa:report-artifacts": "node scripts/with-test-server.js scripts/generate-report-qa.js",

@@ -18,6 +18,7 @@ const { mapClientConfig } = require("./lib/client-config");
 const { AttachmentStore } = require("./lib/attachments/attachment-store");
 const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
 const { browserMutationGuard, securityHeaders } = require("./lib/security/http-security");
+const { WorkflowError, WorkflowStore, defaultDefinition } = require("./lib/workflow/workflow-store");
 const engine = require("./costEngine");
 
 (engine.db.projects || []).forEach((project) => {
@@ -56,6 +57,13 @@ const measureImportUpload = multer({
   limits: { fileSize: measureImportMaxBytes, files: 1, fields: 4, parts: 5, fieldNameSize: 80, fieldSize: 2048, headerPairs: 50 }
 }).single("file");
 const ruleStore = new RuleStore(process.env.APP_RULE_DB_PATH || authService.securityFile);
+const workflowStore = new WorkflowStore(process.env.APP_WORKFLOW_DB_PATH || authService.securityFile);
+const workflowModules = ["billmeasure", "meterialdiasmeasure", "meterialinmeasure", "manualmeasure", "varyapplication", "engineeringcontactbill"];
+workflowModules.forEach((module) => {
+  if (!workflowStore.getActive("default", "*", module)) {
+    workflowStore.createVersion({ tenantId: "default", projectId: "*", module, definition: defaultDefinition(), changeReason: "初始化标准审批流程" });
+  }
+});
 const initializedRuleTenants = new Set();
 const storedRuleVersion = ruleStore.getActive("default", "*");
 if (storedRuleVersion) {
@@ -1389,6 +1397,25 @@ leftMenus.set("9000", [
     resourceUrl: "admin/international_settings_page",
     sysBusinessResources: [],
     sysIdentityResources: ""
+  },
+  {
+    appImageUrl: "",
+    appPageUrl: "",
+    controllerDes: "",
+    flagFlow: 1,
+    isShow: 1,
+    menuIcon: "layui-icon layui-icon-chart-screen",
+    parentId: 9000,
+    refreshType: 1,
+    resourceCode: "990006",
+    resourceDes: "审批状态、跳转权限与流程版本管理",
+    resourceId: 9050,
+    resourceLevel: 0,
+    resourceName: "审批流程配置",
+    resourceNo: "model",
+    resourceUrl: "admin/workflows_page",
+    sysBusinessResources: [],
+    sysIdentityResources: ""
   }
 ]);
 
@@ -1882,7 +1909,8 @@ function adminDashboardHtml() {
     ["账号权限管理", "/admin/users_page", "管理用户、角色、状态和安全审计"],
     ["备份恢复管理", "/admin/backups_page", "按当前项目导出、导入和恢复校验备份"],
     ["数据导入导出", "/admin/data_exchange_page", "批量校验、追加、更新并导出核心业务数据"],
-    ["国际合同设置", "/admin/international_settings_page", "维护项目语言、币种、汇率和FIDIC付款证书参数"]
+    ["国际合同设置", "/admin/international_settings_page", "维护项目语言、币种、汇率和FIDIC付款证书参数"],
+    ["审批流程配置", "/admin/workflows_page", "按项目维护流程版本、状态、跳转权限并查看启用记录"]
   ].map(([name, href, desc]) => `
     <tr>
       <td>${htmlEscape(name)}</td>
@@ -1928,6 +1956,50 @@ function adminDashboardHtml() {
       </div>
       ${coreInteractionScript('[data-core-page="admin-dashboard"]')}
     </div>`;
+}
+
+function workflowManagementHtml(req) {
+  const selectedModule = workflowModules.includes(String(req.query.module || "")) ? String(req.query.module) : workflowModules[0];
+  const labels = {
+    billmeasure: "清单计量", meterialdiasmeasure: "材料补差", meterialinmeasure: "材料到场",
+    manualmeasure: "手动计量", varyapplication: "工程变更", engineeringcontactbill: "工程联系单"
+  };
+  ensureWorkflowDefinition(req.authUser.tenantId, selectedModule);
+  const projectId = req.businessContext.projectId;
+  const active = workflowStore.getActive(req.authUser.tenantId, projectId, selectedModule);
+  const projectHistory = workflowStore.history(req.authUser.tenantId, projectId, selectedModule, 100);
+  const inherited = active && active.projectId === "*";
+  const options = workflowModules.map((module) => `<option value="${module}"${module === selectedModule ? " selected" : ""}>${htmlEscape(labels[module])}</option>`).join("");
+  const states = active.definition.states.map((state) => `<tr><td>${htmlEscape(state.code)}</td><td>${htmlEscape(state.label)}</td><td>${state.terminal ? "终态" : "处理中"}</td></tr>`).join("");
+  const transitions = active.definition.transitions.map((item) => `<tr><td>${htmlEscape(item.label)}</td><td>${htmlEscape(item.action)}</td><td>${htmlEscape(item.from.join(", "))}</td><td>${htmlEscape(item.to)}</td><td>${htmlEscape(item.permission)}</td><td>${item.requireRemark ? "必填" : "可选"}</td></tr>`).join("");
+  const history = projectHistory.map((item) => `<tr><td>V${item.version}</td><td>${htmlEscape(item.status)}</td><td>${htmlEscape(item.changeReason)}</td><td>${htmlEscape(item.createdAt)}</td><td>${item.status === "active" ? "当前启用" : `<button type="button" class="layui-btn layui-btn-xs layui-btn-primary" data-activate-workflow="${item.id}">启用</button>`}</td></tr>`).join("");
+  return `<div class="core-page" data-core-page="workflow-management">
+    ${corePageStyle("#0f766e")}
+    <div class="core-shell">
+      <div class="core-head"><div><h2>审批流程配置</h2><p>当前项目 ${htmlEscape(projectId)}，实例启动后固定使用当时的流程版本，避免审批途中规则漂移。</p></div><div class="core-tools"><a class="layui-btn layui-btn-sm layui-btn-primary" href="/workflow/dashboard_page">流程工作台</a></div></div>
+      <div class="core-grid">
+        <div class="core-panel core-panel-wide">
+          <div class="core-toolbar"><label>业务类型 <select id="workflow-module">${options}</select></label><span class="core-note">当前 V${active.version} · ${inherited ? "继承租户默认" : "当前项目专用"}</span></div>
+          <h3>状态</h3><table class="layui-table" lay-size="sm"><thead><tr><th>代码</th><th>显示名称</th><th>类型</th></tr></thead><tbody>${states}</tbody></table>
+          <h3>允许跳转</h3><table class="layui-table" lay-size="sm"><thead><tr><th>操作</th><th>动作代码</th><th>来源状态</th><th>目标状态</th><th>所需权限</th><th>处理意见</th></tr></thead><tbody>${transitions}</tbody></table>
+        </div>
+        <div class="core-panel core-panel-wide">
+          <h3>创建当前项目新版本</h3>
+          <form id="workflow-definition-form"><label>变更原因</label><input class="layui-input" name="changeReason" required value="调整审批流程"><label style="display:block;margin-top:10px;">流程定义 JSON</label><textarea class="layui-textarea" name="definition" rows="18">${htmlEscape(JSON.stringify(active.definition, null, 2))}</textarea><button type="submit" class="layui-btn" style="margin-top:10px;">校验并启用新版本</button></form>
+          <div id="workflow-message" class="core-note" style="margin-top:10px;"></div>
+        </div>
+        <div class="core-panel core-panel-wide"><h3>当前项目版本记录</h3><table class="layui-table" lay-size="sm"><thead><tr><th>版本</th><th>状态</th><th>变更原因</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${history || `<tr><td colspan="5" class="core-empty">当前项目尚无专用版本，正在继承租户默认版本</td></tr>`}</tbody></table></div>
+      </div>
+    </div>
+    <script>(function(){
+      var root=document.querySelector('[data-core-page="workflow-management"]');if(!root)return;
+      var moduleEl=root.querySelector('#workflow-module'),message=root.querySelector('#workflow-message');
+      moduleEl.addEventListener('change',function(){location.href='/admin/workflows_page?module='+encodeURIComponent(moduleEl.value)});
+      function request(url,options){return fetch(url,Object.assign({headers:{'Content-Type':'application/json','Accept':'application/json'}},options||{})).then(function(response){return response.json().then(function(body){if(!response.ok||body.code!==1)throw new Error(body.msg||'操作失败');return body})})}
+      root.querySelector('#workflow-definition-form').addEventListener('submit',function(event){event.preventDefault();var form=event.currentTarget,payload;try{payload={module:moduleEl.value,changeReason:form.elements.changeReason.value,definition:JSON.parse(form.elements.definition.value)}}catch(error){message.textContent='JSON 格式错误：'+error.message;return}request('/api/admin/workflows',{method:'POST',body:JSON.stringify(payload)}).then(function(){location.reload()}).catch(function(error){message.textContent=error.message})});
+      Array.prototype.forEach.call(root.querySelectorAll('[data-activate-workflow]'),function(button){button.addEventListener('click',function(){request('/api/admin/workflows/'+button.getAttribute('data-activate-workflow')+'/activate',{method:'POST',body:JSON.stringify({module:moduleEl.value})}).then(function(){location.reload()}).catch(function(error){message.textContent=error.message})})});
+    })();</script>
+  </div>`;
 }
 
 function userManagementHtml(req = {}) {
@@ -7764,6 +7836,20 @@ function workflowDashboardRows() {
   }));
 }
 
+function workflowActionButtons(req, row) {
+  const tenantId = req.authUser.tenantId;
+  const projectId = req.businessContext.projectId;
+  const active = ensureWorkflowDefinition(tenantId, row.workflowModule);
+  const instance = workflowStore.getInstance(tenantId, projectId, row.workflowModule, row.workflowId);
+  const version = instance ? workflowStore.getDefinition(instance.definitionId) : active;
+  const currentState = instance ? instance.currentState : workflowStore.resolveInitialState(version.definition, row.states);
+  const revision = instance ? instance.revision : 0;
+  return version.definition.transitions
+    .filter((item) => item.from.includes(currentState) && authCore.hasPermission(req.currentSession.user.permissions, item.permission))
+    .map((item) => `<button type="button" class="workflow-link" data-workflow-module="${row.workflowModule}" data-workflow-id="${row.workflowId}" data-workflow-action="${item.action}" data-workflow-revision="${revision}" data-workflow-remark="${item.requireRemark ? "1" : "0"}">${htmlEscape(item.label)}</button>`)
+    .join("");
+}
+
 function workflowDashboardHtml(req) {
   const moduleFilter = normalizeWorkflowType(req.query.module || req.body.module || "");
   const stateFilter = String(req.query.state || req.body.state || "");
@@ -7813,6 +7899,7 @@ function workflowDashboardHtml(req) {
       <td>${htmlEscape(row.updateDate)}</td>
       <td>
         <a href="${row.trackHref}">追踪</a>
+        ${workflowActionButtons(req, row)}
         <a href="${row.adjustHref}">调整</a>
         <a href="${row.returnHref}">退回</a>
         <a href="${row.smsHref}">通知</a>
@@ -7855,7 +7942,8 @@ function workflowDashboardHtml(req) {
         .workflow-panel h3 { margin:0 0 10px; font-size:16px; font-weight:600; }
         .workflow-panel table { margin:0; min-width:760px; }
         .workflow-wide { grid-column:1 / -1; }
-        .workflow-panel td a { margin-right:8px; }
+        .workflow-panel td a, .workflow-link { margin-right:8px; }
+        .workflow-link { border:0; padding:0; background:transparent; color:#1677b3; cursor:pointer; font:inherit; }
         .left { text-align:left; }
         .workflow-empty { text-align:center; color:#94a3b8; padding:24px; }
         @media (max-width:1100px) { .workflow-cards { grid-template-columns:repeat(3, 1fr); } .workflow-grid { grid-template-columns:1fr; } .workflow-head { align-items:flex-start; flex-direction:column; } }
@@ -7900,7 +7988,14 @@ function workflowDashboardHtml(req) {
           </div>
         </div>
       </div>
-    </div>`;
+    </div>
+    <script>(function(){
+      var root=document.querySelector('.workflow-dashboard');if(!root)return;
+      Array.prototype.forEach.call(root.querySelectorAll('[data-workflow-action]'),function(button){button.addEventListener('click',function(){
+        var remark='';if(button.getAttribute('data-workflow-remark')==='1'){remark=window.prompt('请输入处理意见','')||'';if(!remark)return}
+        button.disabled=true;fetch('/api/workflows/'+encodeURIComponent(button.getAttribute('data-workflow-module'))+'/'+encodeURIComponent(button.getAttribute('data-workflow-id'))+'/transition',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({action:button.getAttribute('data-workflow-action'),expectedRevision:Number(button.getAttribute('data-workflow-revision')),remark:remark})}).then(function(response){return response.json().then(function(body){if(!response.ok||body.code!==1)throw new Error(body.msg||'处理失败');return body})}).then(function(){location.reload()}).catch(function(error){button.disabled=false;if(window.layer)layer.msg(error.message);else window.alert(error.message)})
+      })});
+    })();</script>`;
 }
 
 function workflowSvg() {
@@ -12381,6 +12476,90 @@ function workflowConfig(type) {
   return configs[String(type || "").toLowerCase()] || configs.billmeasure;
 }
 
+function requireWorkflowModule(value) {
+  const module = normalizeWorkflowType(value);
+  if (!workflowModules.includes(module)) throw new WorkflowError("不支持的流程业务类型", "WORKFLOW_MODULE_NOT_FOUND", 404);
+  return module;
+}
+
+function ensureWorkflowDefinition(tenantId, module) {
+  const normalizedModule = requireWorkflowModule(module);
+  let active = workflowStore.getActive(tenantId, "*", normalizedModule);
+  if (!active) {
+    active = workflowStore.createVersion({
+      tenantId,
+      projectId: "*",
+      module: normalizedModule,
+      definition: defaultDefinition(),
+      changeReason: "初始化标准审批流程"
+    });
+  }
+  return active;
+}
+
+function workflowBusinessTarget(module, businessId) {
+  const normalizedModule = requireWorkflowModule(module);
+  const config = workflowConfig(normalizedModule);
+  const row = config.rows.find((item) => String(item[config.key] || item.id) === String(businessId));
+  if (!row) throw new WorkflowError("流程业务单据不存在", "WORKFLOW_BUSINESS_NOT_FOUND", 404);
+  return { module: normalizedModule, config, row };
+}
+
+function executeWorkflowTransition(req, moduleValue, businessId) {
+  const target = workflowBusinessTarget(moduleValue, businessId);
+  const tenantId = req.authUser.tenantId;
+  const projectId = req.businessContext.projectId;
+  ensureWorkflowDefinition(tenantId, target.module);
+  const previousState = target.row.states;
+  const logs = ensureWorkflowLogs();
+  const previousLogLength = logs.length;
+  const result = workflowStore.transition({
+    tenantId,
+    projectId,
+    module: target.module,
+    businessId: String(target.row[target.config.key] || target.row.id),
+    businessNo: workflowLabel(target.row, target.config.key),
+    currentStateLabel: target.row.states,
+    action: req.body.action,
+    expectedRevision: req.body.expectedRevision,
+    remark: req.body.remark,
+    actorUserId: req.authUser.id,
+    actorAccount: req.authUser.account,
+    permissions: req.currentSession.user.permissions,
+    applyState: (transition) => {
+      target.row.states = transition.toStateLabel;
+      addWorkflowLog({
+        module: target.module,
+        businessId: Number(target.row[target.config.key] || target.row.id || 0),
+        businessNo: workflowLabel(target.row, target.config.key),
+        action: transition.action,
+        result: transition.toStateLabel,
+        userName: req.authUser.account,
+        remark: req.body.remark || ""
+      });
+      try {
+        appStore.save(engine.db, { actor: req.authUser.account, action: `workflow:${target.module}:${transition.action}` });
+      } catch (error) {
+        target.row.states = previousState;
+        logs.splice(previousLogLength);
+        throw error;
+      }
+    }
+  });
+  authService.store.audit({
+    tenantId,
+    userId: req.authUser.id,
+    action: "workflow.transition",
+    result: "success",
+    targetType: target.module,
+    targetId: String(businessId),
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+    details: { projectId, workflowAction: result.action, fromState: result.fromState, toState: result.toState, revision: result.instance.revision }
+  });
+  return result;
+}
+
 function normalizeWorkflowType(value) {
   const text = String(value || "").toLowerCase().replace(/[_-]/g, "");
   const aliases = {
@@ -13822,6 +14001,7 @@ app.get("/admin/users_page", requirePermission("admin:users"), (req, res) => htm
 app.get("/admin/backups_page", requirePermission("admin:access"), (req, res) => html(res, backupManagementHtml(req)));
 app.get("/admin/data_exchange_page", requirePermission("admin:access"), (req, res) => html(res, dataExchangeManagementHtml(req)));
 app.get("/admin/international_settings_page", requirePermission("admin:access"), (req, res) => html(res, internationalSettingsHtml(req)));
+app.get("/admin/workflows_page", requirePermission("admin:access"), (req, res) => html(res, workflowManagementHtml(req)));
 app.get("/system/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml(req)));
 app.all("/payment/jl_report_page", (req, res) => html(res, jlPaymentReportPageHtml(req)));
 app.all("/payment/jl_print_page", (req, res) => html(res, jlPaymentPrintableHtml(req)));
@@ -13858,6 +14038,88 @@ app.get("/api/admin/calculation_rules", (req, res) => operationOk(res, {
   activeVersion: ruleStore.getActive(req.authUser.tenantId, String(req.query.projectId || req.businessContext.projectId)),
   history: ruleStore.history(req.authUser.tenantId, String(req.query.projectId || req.businessContext.projectId), 100)
 }));
+app.get("/api/admin/workflows", requirePermission("admin:access"), (req, res, next) => {
+  try {
+    const module = requireWorkflowModule(req.query.module || workflowModules[0]);
+    const projectId = String(req.query.projectId || req.businessContext.projectId);
+    ensureWorkflowDefinition(req.authUser.tenantId, module);
+    operationOk(res, {
+      modules: workflowModules,
+      activeVersion: workflowStore.getActive(req.authUser.tenantId, projectId, module),
+      projectHistory: workflowStore.history(req.authUser.tenantId, projectId, module, 100)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+app.post("/api/admin/workflows", requirePermission("admin:access"), (req, res, next) => {
+  try {
+    const module = requireWorkflowModule(req.body.module);
+    const projectId = String(req.body.projectId || req.businessContext.projectId);
+    const version = workflowStore.createVersion({
+      tenantId: req.authUser.tenantId,
+      projectId,
+      module,
+      definition: req.body.definition,
+      changeReason: req.body.changeReason,
+      createdBy: req.authUser.id
+    });
+    authService.store.audit({
+      tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "workflow.definition.create", result: "success",
+      targetType: module, targetId: String(version.id), ipAddress: req.ip, userAgent: req.headers["user-agent"],
+      details: { projectId, version: version.version, changeReason: version.changeReason }
+    });
+    operationOk(res, version);
+  } catch (error) {
+    next(error);
+  }
+});
+app.post("/api/admin/workflows/:id/activate", requirePermission("admin:access"), (req, res, next) => {
+  try {
+    const module = requireWorkflowModule(req.body.module);
+    const projectId = String(req.body.projectId || req.businessContext.projectId);
+    const version = workflowStore.activate({ id: req.params.id, tenantId: req.authUser.tenantId, projectId, module });
+    authService.store.audit({
+      tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "workflow.definition.activate", result: "success",
+      targetType: module, targetId: String(version.id), ipAddress: req.ip, userAgent: req.headers["user-agent"],
+      details: { projectId, version: version.version }
+    });
+    operationOk(res, version);
+  } catch (error) {
+    next(error);
+  }
+});
+app.get("/api/workflows/:module/:businessId", (req, res, next) => {
+  try {
+    const target = workflowBusinessTarget(req.params.module, req.params.businessId);
+    const tenantId = req.authUser.tenantId;
+    const projectId = req.businessContext.projectId;
+    const active = ensureWorkflowDefinition(tenantId, target.module);
+    const instance = workflowStore.getInstance(tenantId, projectId, target.module, req.params.businessId);
+    const version = instance ? workflowStore.getDefinition(instance.definitionId) : active;
+    const currentState = instance ? instance.currentState : workflowStore.resolveInitialState(version.definition, target.row.states);
+    const availableActions = version.definition.transitions
+      .filter((item) => item.from.includes(currentState) && authCore.hasPermission(req.currentSession.user.permissions, item.permission))
+      .map((item) => ({ action: item.action, label: item.label, to: item.to, permission: item.permission, requireRemark: item.requireRemark }));
+    operationOk(res, {
+      business: { module: target.module, businessId: String(req.params.businessId), businessNo: workflowLabel(target.row, target.config.key), state: target.row.states || "" },
+      instance,
+      definition: { id: version.id, version: version.version, projectId: version.projectId },
+      currentState,
+      availableActions,
+      events: instance ? workflowStore.events({ tenantId, projectId, module: target.module, businessId: req.params.businessId, limit: 100 }) : []
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+app.post("/api/workflows/:module/:businessId/transition", (req, res, next) => {
+  try {
+    operationOk(res, executeWorkflowTransition(req, req.params.module, req.params.businessId));
+  } catch (error) {
+    next(error);
+  }
+});
 app.post("/api/admin/calculation_rules", (req, res) => {
   try {
     const result = saveCalculationRules(req.body, {
@@ -15085,7 +15347,11 @@ app.use((error, req, res, _next) => {
     code: 0,
     msg: clientMessage,
     data: null,
-    errorCode: attachmentRequest ? (error.code || "ATTACHMENT_REQUEST_INVALID") : measureImportRequest ? (error.code || "MEASURE_IMPORT_REQUEST_INVALID") : undefined
+    errorCode: attachmentRequest ? (error.code || "ATTACHMENT_REQUEST_INVALID") : measureImportRequest ? (error.code || "MEASURE_IMPORT_REQUEST_INVALID") : error && error.code ? error.code : undefined,
+    expectedRevision: error && error.expectedRevision,
+    actualRevision: error && error.actualRevision,
+    currentState: error && error.currentState,
+    requiredPermission: error && error.requiredPermission
   });
 });
 
@@ -15095,7 +15361,7 @@ const server = app.listen(port, () => {
 
 const shutdown = createGracefulShutdown({
   server,
-  resources: [authService.store, ruleStore, attachmentStore, appStore],
+  resources: [authService.store, ruleStore, workflowStore, attachmentStore, appStore],
   timeoutMs: Number(process.env.APP_SHUTDOWN_TIMEOUT_MS) || 5000
 });
 

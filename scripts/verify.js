@@ -3900,7 +3900,8 @@ async function verifyOriginalMenuUrlAliasesLoop() {
     ["/projectInformationParam/page", "资料"],
     ["/admin/dashboard_page", "后台管理"],
     ["/admin/calculation_rules_page", "计算规则管理后台"],
-    ["/admin/users_page", "账号权限管理"]
+    ["/admin/users_page", "账号权限管理"],
+    ["/admin/workflows_page", "审批流程配置"]
   ];
   for (const [url, expected] of pages) {
     const page = await requestText(url);
@@ -3945,6 +3946,73 @@ async function verifyOriginalMenuUrlAliasesLoop() {
   assert.ok(systemMenuText.includes("备份恢复管理") && systemMenuText.includes("admin/backups_page"), "backend menu should expose project-scoped backup administration");
   assert.ok(systemMenuText.includes("数据导入导出") && systemMenuText.includes("admin/data_exchange_page"), "backend menu should expose validated business data exchange");
   assert.ok(systemMenuText.includes("国际合同设置") && systemMenuText.includes("admin/international_settings_page"), "backend menu should expose project-scoped language, currency, and FIDIC settings");
+  assert.ok(systemMenuText.includes("审批流程配置") && systemMenuText.includes("admin/workflows_page"), "backend menu should expose versioned workflow administration");
+}
+
+async function verifyCommercialWorkflowEngineLoop() {
+  const module = "manualmeasure";
+  const adminPage = await requestText(`/admin/workflows_page?module=${module}`);
+  assert.strictEqual(adminPage.response.status, 200, "workflow administration page should load");
+  assert.ok(adminPage.text.includes("创建当前项目新版本") && adminPage.text.includes("允许跳转") && adminPage.text.includes("实例启动后固定使用"), "workflow administration should explain and expose versioned transitions");
+
+  const initialAdmin = await requestJson(`/api/admin/workflows?module=${module}`);
+  assert.strictEqual(initialAdmin.response.status, 200, "workflow definition API should load");
+  assert.ok(initialAdmin.json.data.activeVersion.definition.transitions.some((item) => item.action === "approve"), "active workflow should contain approval transition");
+  const createdVersion = await postJson("/api/admin/workflows", {
+    module,
+    changeReason: "VERIFY-WORKFLOW-VERSION",
+    definition: initialAdmin.json.data.activeVersion.definition
+  });
+  assert.strictEqual(createdVersion.response.status, 200, "workflow definition should create and activate");
+  assert.strictEqual(createdVersion.json.data.projectId, "1", "new workflow definition should be project scoped");
+  const history = await requestJson(`/api/admin/workflows?module=${module}`);
+  assert.ok(history.json.data.projectHistory.some((item) => item.changeReason === "VERIFY-WORKFLOW-VERSION" && item.status === "active"), "workflow history should retain the active project version");
+
+  let manualId = 0;
+  try {
+    const saved = await postJson("/manualMeasure/save_measure", {
+      measureNo: "WF-COMMERCIAL-VERIFY",
+      sectionId: 101,
+      billNo: "900-WFC",
+      billName: "商业审批引擎验证",
+      measureUnit: "项",
+      measureNum: 2,
+      price: 150,
+      states: "草稿"
+    });
+    manualId = saved.json.data.manualMeasureId;
+    const before = await requestJson(`/api/workflows/${module}/${manualId}`);
+    assert.strictEqual(before.json.data.currentState, "draft", "legacy business state should initialize a workflow instance at draft");
+    assert.ok(before.json.data.availableActions.some((item) => item.action === "submit"), "draft workflow should expose submit action");
+    const dashboard = await requestText(`/workflow/dashboard_page?module=${module}`);
+    assert.ok(dashboard.text.includes(`data-workflow-id="${manualId}"`) && dashboard.text.includes('data-workflow-action="submit"'), "workflow dashboard should render the structured action available for the current state");
+
+    const submitted = await postJson(`/api/workflows/${module}/${manualId}/transition`, { action: "submit", expectedRevision: 0 });
+    assert.strictEqual(submitted.response.status, 200, "workflow submit should succeed");
+    assert.strictEqual(submitted.json.data.instance.currentStateLabel, "审核中", "submit should synchronize the business display state");
+
+    const conflict = await postJson(`/api/workflows/${module}/${manualId}/transition`, { action: "approve", expectedRevision: 0 });
+    assert.strictEqual(conflict.response.status, 409, "stale workflow revision should fail with conflict");
+    assert.strictEqual(conflict.json.errorCode, "WORKFLOW_REVISION_CONFLICT", "workflow conflict should be machine readable");
+
+    const approved = await postJson(`/api/workflows/${module}/${manualId}/transition`, { action: "approve", expectedRevision: 1 });
+    assert.strictEqual(approved.json.data.instance.currentState, "approved", "authorized approval should advance the instance");
+    const missingRemark = await postJson(`/api/workflows/${module}/${manualId}/transition`, { action: "return", expectedRevision: 2 });
+    assert.strictEqual(missingRemark.response.status, 400, "return should require a processing remark");
+    assert.strictEqual(missingRemark.json.errorCode, "WORKFLOW_REMARK_REQUIRED", "missing workflow remark should be machine readable");
+    const returned = await postJson(`/api/workflows/${module}/${manualId}/transition`, { action: "return", expectedRevision: 2, remark: "VERIFY-RETURN-REASON" });
+    assert.strictEqual(returned.json.data.instance.currentStateLabel, "已退回", "return should update the instance and business label");
+
+    const after = await requestJson(`/api/workflows/${module}/${manualId}`);
+    assert.strictEqual(after.json.data.events.length, 3, "workflow query should return the complete event chain");
+    assert.ok(after.json.data.events.every((event) => event.actorAccount === "ys1"), "workflow events should record the authenticated actor instead of a hard-coded user");
+    const list = await requestJson("/manualMeasure/detail_list?page=1&limit=1000");
+    assert.strictEqual(list.json.data.find((row) => Number(row.manualId) === Number(manualId)).states, "已退回", "structured transition should persist the legacy business state");
+    const track = await requestText(`/manualMeasure/record_page?measureType=${module}&ids=${manualId}`);
+    assert.ok(track.text.includes("VERIFY-RETURN-REASON") && track.text.includes("ys1"), "legacy workflow track should remain synchronized with structured events");
+  } finally {
+    if (manualId) await postJson("/manualMeasure/delete", { manualMeasureIds: String(manualId) });
+  }
 }
 
 async function main() {
@@ -3996,6 +4064,7 @@ async function main() {
   await verifyWorkflowAdjustReturnLoop();
   await verifyWorkflowAdjustReturnAcrossModulesLoop();
   await verifyWorkflowDashboardLoop();
+  await verifyCommercialWorkflowEngineLoop();
   await verifyVariationArchiveLoop();
   await verifyVariationDetailCrudLoop();
   await verifyOriginalWorkflowBatchSemanticsLoop();

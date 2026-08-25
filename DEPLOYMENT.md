@@ -18,7 +18,7 @@ GitHub：https://github.com/hanxiaochi/test/tree/codex/zwkjy-clone
 
 - Node.js + Express 提供前端、业务 API 和管理后台。
 - `data/runtime.db` 保存默认租户/项目业务状态和不可变修订。
-- `data/security.db` 保存账号、密码摘要、角色、权限、会话、安全审计和计算规则版本。
+- `data/security.db` 保存账号、密码摘要、角色、权限、会话、安全审计、计算规则版本，以及审批流程定义、实例修订和事件链。
 - `data/attachments.db` 保存附件租户、项目、资料节点、校验和、上传人和删除状态等元数据。
 - `data/attachments/` 保存随机对象名的真实附件字节；下载和 ZIP 打包前会重新校验 SHA-256。
 - 清单计量导入的 CSV/XLSX 原文件也存入上述附件库，业务库只保存逐行校验结果、来源 SHA-256 和生成计量单的关联信息。
@@ -239,13 +239,14 @@ curl -fsS http://127.0.0.1:3100/api/health
 2. 项目切换后数据互相隔离。
 3. 代表性清单、材料到场、手动计量和支付证书表单可保存并重开。
 4. 计算规则必须填写变更原因，历史版本可查看和重新启用。
-5. 用户/RBAC、审计、备份恢复、数据交换和国际设置页面正常。
+5. 用户/RBAC、审计、备份恢复、数据交换、国际设置和审批流程配置页面正常。
 6. 工程资料可上传允许类型的真实文件；列表、单文件下载和资料 ZIP 字节一致，只读用户不能上传或删除。
 7. 清单计量导入可下载模板并真实上传 CSV/XLSX；错误行可下载报告，重复上传/导入不重复生成计量单，源文件下载字节和 SHA-256 一致。
 8. 主计量支付报表可下载真实 XLSX、PDF、DOCX 和三格式 ZIP；XLSX/DOCX 必须能作为 OOXML 打开，PDF 必须以 `%PDF-` 开头，不能用 CSV/HTML 改扩展名代替。
 9. 报表生成和下载成功/失败记录进入安全审计；只读用户只能导出已授权项目。
 10. 重启服务后业务数据、账号、规则版本、审计和附件仍存在。
 11. 执行第 12/13/14 期 fixture 回归，结果与基准一致。
+12. 在流程工作台新建草稿并依次提交、审核、退回；旧修订号必须返回 HTTP `409`，退回未填写意见必须失败，事件链操作者必须是当前登录账号。
 
 ## 完整恢复
 
@@ -271,6 +272,7 @@ APP_RUNTIME_DB_PATH     旧 JSON 路径
 APP_SQLITE_DB_PATH      默认业务 SQLite 路径
 APP_SECURITY_DB_PATH    账号、权限和审计 SQLite 路径
 APP_RULE_DB_PATH        规则版本库路径，默认复用 security.db
+APP_WORKFLOW_DB_PATH    审批定义、实例和事件库路径，默认复用 security.db
 APP_BACKUP_DIR          应用内项目备份目录
 APP_ATTACHMENT_DB_PATH  附件元数据 SQLite 路径，默认 data/attachments.db
 APP_ATTACHMENT_DIR      附件对象目录，默认 data/attachments
