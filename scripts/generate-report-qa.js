@@ -38,6 +38,17 @@ async function main() {
     else assert.equal(buffer.subarray(0, 2).toString("ascii"), "PK");
     fs.writeFileSync(path.join(outputDir, `payment-report.${extension}`), buffer);
   }
+  for (const [url, name] of [
+    ["/payment/export_jl_report_pdf?periodId=2", "jl-payment-report.pdf"],
+    ["/payment/export_jl_form_pdf?formCode=JL104&periodId=2", "jl104-payment-certificate.pdf"]
+  ]) {
+    const response = await fetch(`${baseUrl}${url}`, { headers: { Cookie: cookie } });
+    assert.equal(response.status, 200);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    assert.equal(buffer.subarray(0, 5).toString("latin1"), "%PDF-");
+    assert.match(buffer.toString("latin1"), /\/FontFile(?:2|3)/);
+    fs.writeFileSync(path.join(outputDir, name), buffer);
+  }
   process.stdout.write(`${JSON.stringify({ ok: true, outputDir })}\n`);
 }
 

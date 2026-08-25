@@ -108,6 +108,25 @@ test("creates a portable PDF with an embedded CJK font and paginated tables", as
   assert.equal((empty.toString("latin1").match(/\/Type \/Page\b/g) || []).length, 1, "a short report should not gain a blank footer page");
 });
 
+test("creates portable paginated JL text reports with section headings", async () => {
+  const lines = [
+    "期次：第14期",
+    "导出范围：JL101-JL116。",
+    "",
+    "【JL104支付证书】",
+    ...Array.from({ length: 85 }, (_, index) => `${index + 1}. item=本期支付；amount=${(index + 1) * 1000}；formula=清单计量+材料调差-保留金`)
+  ];
+  const buffer = await reportExport.createTextPdf("JL计量支付报表PDF导出", lines, { generatedAt });
+  const source = buffer.toString("latin1");
+  assert.equal(buffer.subarray(0, 5).toString("ascii"), "%PDF-");
+  assert.match(source, /\/FontFile(?:2|3)/);
+  assert.ok((source.match(/\/Type \/Page\b/g) || []).length >= 2);
+  assert.ok(!source.includes("/STSong-Light"));
+
+  const empty = await reportExport.createTextPdf("", null, { generatedAt });
+  assert.equal((empty.toString("latin1").match(/\/Type \/Page\b/g) || []).length, 1);
+});
+
 test("builds PDF lines from the same normalized values", () => {
   const result = reportExport.pdfLines(rows, { title: "验收报表", generatedAt });
   assert.equal(result.title, "验收报表");

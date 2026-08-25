@@ -2277,14 +2277,16 @@ async function verifyJlPaymentReportPageLoop() {
   assert.strictEqual(exportPdf.response.status, 200, "JL payment PDF export should load");
   assert.ok((exportPdf.response.headers.get("content-type") || "").includes("application/pdf"), "JL payment PDF export should use application/pdf content type");
   assert.strictEqual(exportPdf.buffer.slice(0, 5).toString("latin1"), "%PDF-", "JL payment PDF export should return a real PDF file");
-  assert.ok(exportPdf.buffer.includes(Buffer.from("/STSong-Light")), "JL payment PDF export should include a CJK-capable PDF font resource");
+  assert.match(exportPdf.buffer.toString("latin1"), /\/FontFile(?:2|3)/, "JL payment PDF export should embed a portable CJK font");
+  assert.ok(!exportPdf.buffer.includes(Buffer.from("/STSong-Light")), "JL payment PDF export should not rely on a system CJK font");
 
   for (const code of ["JL101", "JL108-1", "JL114", "JL116"]) {
     const formPdf = await requestBuffer(`/payment/export_jl_form_pdf?formCode=${encodeURIComponent(code)}&periodId=2`);
     assert.strictEqual(formPdf.response.status, 200, `${code} per-form PDF export should load`);
     assert.ok((formPdf.response.headers.get("content-type") || "").includes("application/pdf"), `${code} per-form PDF should use application/pdf content type`);
     assert.strictEqual(formPdf.buffer.slice(0, 5).toString("latin1"), "%PDF-", `${code} per-form export should return a real PDF file`);
-    assert.ok(formPdf.buffer.includes(Buffer.from("/STSong-Light")), `${code} per-form PDF should include a CJK-capable PDF font resource`);
+    assert.match(formPdf.buffer.toString("latin1"), /\/FontFile(?:2|3)/, `${code} per-form PDF should embed a portable CJK font`);
+    assert.ok(!formPdf.buffer.includes(Buffer.from("/STSong-Light")), `${code} per-form PDF should not rely on a system CJK font`);
   }
   const badFormPdf = await requestJson("/payment/export_jl_form_pdf?formCode=JL999&periodId=2");
   assert.strictEqual(badFormPdf.response.status, 400, "unknown JL per-form PDF export should reject the request");

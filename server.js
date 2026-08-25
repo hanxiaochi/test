@@ -703,115 +703,6 @@ function csvBody(rows) {
   return "\uFEFF" + [columns.join(","), ...data.map((row) => columns.map((key) => escape(row[key])).join(","))].join("\n");
 }
 
-function pdfHexText(value) {
-  const text = `\uFEFF${String(value ?? "")}`;
-  const bytes = [];
-  for (let index = 0; index < text.length; index += 1) {
-    const code = text.charCodeAt(index);
-    bytes.push((code >> 8) & 0xff, code & 0xff);
-  }
-  return `<${Buffer.from(bytes).toString("hex").toUpperCase()}>`;
-}
-
-function wrapPdfLine(value, maxUnits = 58) {
-  const text = String(value ?? "").replace(/\s+/g, " ").trim();
-  if (!text) return [""];
-  const lines = [];
-  let current = "";
-  let units = 0;
-  Array.from(text).forEach((char) => {
-    const nextUnits = 1;
-    if (current && units + nextUnits > maxUnits) {
-      lines.push(current);
-      current = char;
-      units = nextUnits;
-    } else {
-      current += char;
-      units += nextUnits;
-    }
-  });
-  if (current) lines.push(current);
-  return lines;
-}
-
-function buildSimplePdf(title, sourceLines) {
-  const pageWidth = 595;
-  const pageHeight = 842;
-  const margin = 42;
-  const lineHeight = 14;
-  const lines = [
-    { text: title, size: 15 },
-    { text: `生成时间：${new Date().toLocaleString("zh-CN", { hour12: false })}`, size: 9 },
-    { text: "", size: 9 },
-    ...sourceLines.flatMap((line) => wrapPdfLine(line, line.startsWith("【") ? 54 : 58).map((text) => ({
-      text,
-      size: line.startsWith("【") ? 11 : 8.5
-    })))
-  ];
-  const pages = [];
-  let page = [];
-  let y = pageHeight - margin;
-  lines.forEach((line) => {
-    const itemHeight = line.text ? lineHeight : lineHeight / 2;
-    if (y - itemHeight < margin && page.length) {
-      pages.push(page);
-      page = [];
-      y = pageHeight - margin;
-    }
-    page.push(line);
-    y -= itemHeight;
-  });
-  if (page.length) pages.push(page);
-
-  const objects = [];
-  const addObject = (body) => {
-    objects.push(body);
-    return objects.length;
-  };
-  const catalogId = addObject("<< /Type /Catalog /Pages 2 0 R >>");
-  const pagesId = addObject("");
-  const fontId = addObject("<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> /FontDescriptor << /Type /FontDescriptor /FontName /STSong-Light /Flags 6 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 880 /StemV 80 >> >>] >>");
-  void catalogId;
-  const pageIds = [];
-
-  pages.forEach((pageLines, pageIndex) => {
-    let cursorY = pageHeight - margin;
-    const commands = [
-      "q",
-      "0.2 w",
-      `BT /F1 8 Tf 1 0 0 1 ${pageWidth - margin - 80} ${margin - 14} Tm ${pdfHexText(`第 ${pageIndex + 1} / ${pages.length} 页`)} Tj ET`
-    ];
-    pageLines.forEach((line) => {
-      if (!line.text) {
-        cursorY -= lineHeight / 2;
-        return;
-      }
-      commands.push(`BT /F1 ${line.size} Tf 1 0 0 1 ${margin} ${cursorY} Tm ${pdfHexText(line.text)} Tj ET`);
-      cursorY -= lineHeight;
-    });
-    commands.push("Q");
-    const content = commands.join("\n");
-    const contentId = addObject(`<< /Length ${Buffer.byteLength(content, "utf8")} >>\nstream\n${content}\nendstream`);
-    const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
-    pageIds.push(pageId);
-  });
-  objects[pagesId - 1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`;
-
-  const chunks = ["%PDF-1.4\n%\xE2\xE3\xCF\xD3\n"];
-  const offsets = [0];
-  objects.forEach((body, index) => {
-    offsets.push(Buffer.byteLength(chunks.join(""), "binary"));
-    chunks.push(`${index + 1} 0 obj\n${body}\nendobj\n`);
-  });
-  const xrefOffset = Buffer.byteLength(chunks.join(""), "binary");
-  chunks.push(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`);
-  for (let index = 1; index < offsets.length; index += 1) {
-    chunks.push(`${String(offsets[index]).padStart(10, "0")} 00000 n \n`);
-  }
-  chunks.push(`trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
-  return Buffer.from(chunks.join(""), "binary");
-}
-
 function ensureExportDir() {
   const dir = exportDir;
   fs.mkdirSync(dir, { recursive: true });
@@ -8639,7 +8530,7 @@ function jlPaymentFormPdfLinks(periodId, sectionId) {
   }).join("");
 }
 
-function jlPaymentPdfBuffer(req, options = {}) {
+async function jlPaymentPdfBuffer(req, options = {}) {
   const allRows = jlPaymentExportRows(req);
   const form = jlPaymentFormPdfDefinition(options.formCode ?? req.query.formCode ?? req.body.formCode);
   const rows = form ? allRows.filter((row) => form.tables.includes(row.table)) : allRows;
@@ -8696,23 +8587,23 @@ function jlPaymentPdfBuffer(req, options = {}) {
       .join("；");
     lines.push(`${index + 1}. ${body || "空行"}`);
   });
-  return buildSimplePdf(form ? `${form.code} ${form.name}PDF导出` : "JL计量支付报表PDF导出", lines);
+  return paymentReportExport.createTextPdf(form ? `${form.code} ${form.name}PDF导出` : "JL计量支付报表PDF导出", lines);
 }
 
-function jlPaymentExportPdf(req, res) {
-  const buffer = jlPaymentPdfBuffer(req);
+async function jlPaymentExportPdf(req, res) {
+  const buffer = await jlPaymentPdfBuffer(req);
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", 'attachment; filename="jl-payment-report.pdf"');
   res.send(buffer);
 }
 
-function jlPaymentExportFormPdf(req, res) {
+async function jlPaymentExportFormPdf(req, res) {
   const form = jlPaymentFormPdfDefinition(req.query.formCode || req.body.formCode);
   if (!form) {
     res.status(400).json({ code: 0, msg: "未知JL表号", data: { formCode: req.query.formCode || req.body.formCode } });
     return;
   }
-  const buffer = jlPaymentPdfBuffer(req, { formCode: form.code });
+  const buffer = await jlPaymentPdfBuffer(req, { formCode: form.code });
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `attachment; filename="${form.code.toLowerCase().replace(/[^a-z0-9-]/g, "-")}.pdf"`);
   res.send(buffer);
@@ -13935,8 +13826,8 @@ app.get("/system/calculation_rules_page", (req, res) => html(res, calculationRul
 app.all("/payment/jl_report_page", (req, res) => html(res, jlPaymentReportPageHtml(req)));
 app.all("/payment/jl_print_page", (req, res) => html(res, jlPaymentPrintableHtml(req)));
 app.all("/payment/export_jl_report", (req, res) => csv(res, "jl-payment-report.csv", jlPaymentExportRows(req)));
-app.all("/payment/export_jl_report_pdf", (req, res) => jlPaymentExportPdf(req, res));
-app.all("/payment/export_jl_form_pdf", (req, res) => jlPaymentExportFormPdf(req, res));
+app.all("/payment/export_jl_report_pdf", (req, res, next) => Promise.resolve(jlPaymentExportPdf(req, res)).catch(next));
+app.all("/payment/export_jl_form_pdf", (req, res, next) => Promise.resolve(jlPaymentExportFormPdf(req, res)).catch(next));
 app.get("/sbr/sbr_com/:id", (req, res) => html(res, contentForId(req.params.id)));
 app.all("/sbr/sbr_com", (req, res) => html(res, contentForId(req.body.leftId || req.query.leftId || "")));
 
