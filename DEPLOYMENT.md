@@ -235,6 +235,10 @@ APP_SECURITY_DB_PATH    账号、权限和审计 SQLite 路径
 APP_RULE_DB_PATH        规则版本库路径，默认复用 security.db
 APP_BACKUP_DIR          应用内项目备份目录
 APP_SHUTDOWN_TIMEOUT_MS 优雅停机等待毫秒数，默认 5000
+APP_LOGIN_MAX_ATTEMPTS  同一IP、租户和账号在窗口内的失败上限，默认 10
+APP_LOGIN_WINDOW_MS     登录失败计数窗口毫秒数，默认 900000
+APP_LOGIN_MAX_ENTRIES   内存中登录限流身份上限，默认 10000
+APP_TRUST_PROXY         仅在可信反向代理后配置；单层 Nginx 可设 true
 ```
 
-修改路径后必须同步调整 systemd 权限、全量备份范围和监控规则。
+修改路径后必须同步调整 systemd 权限、全量备份范围和监控规则。不要在应用直接暴露公网时启用 `APP_TRUST_PROXY`，否则攻击者可能伪造来源地址绕过登录限流。

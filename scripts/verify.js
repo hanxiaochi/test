@@ -67,6 +67,10 @@ async function verifyHealth() {
   assert.ok(["json", "sqlite"].includes(json.data.storageMode), "health endpoint should identify the active storage mode");
   assert.strictEqual(json.data.runtimeFile, undefined, "public health endpoint must not expose database paths");
   assert.strictEqual(json.data.serverFile, undefined, "public health endpoint must not expose server paths");
+  assert.strictEqual(response.headers.get("x-content-type-options"), "nosniff", "responses should prevent MIME sniffing");
+  assert.strictEqual(response.headers.get("x-frame-options"), "SAMEORIGIN", "same-origin embedded application pages should remain usable");
+  assert.strictEqual(response.headers.get("content-security-policy"), "frame-ancestors 'self'", "responses should reject cross-origin framing");
+  assert.strictEqual(response.headers.get("x-powered-by"), null, "responses must not disclose the Express implementation");
 }
 
 async function verifyUnauthenticatedAccess() {
@@ -108,6 +112,38 @@ async function verifyLoginFlow() {
   assert.ok(authCookieHeader.startsWith("app_session="), "login should issue an opaque server-side session cookie");
   assert.strictEqual(json.code, 1, "ys1 / 000000 should authenticate successfully");
   assert.strictEqual(json.data.userAccount, "ys1", "login response should return the authenticated account");
+}
+
+async function verifyLoginRateLimit() {
+  if (String(process.env.APP_VERIFY_LOGIN_RATE_LIMIT || "").toLowerCase() !== "true") return;
+  const maxAttempts = Number(process.env.APP_LOGIN_MAX_ATTEMPTS);
+  assert.ok(Number.isInteger(maxAttempts) && maxAttempts > 0 && maxAttempts <= 20, "isolated login-rate test requires a bounded threshold");
+  const account = `rate_limit_${Date.now()}`;
+  const deniedBody = new URLSearchParams({ user_account: account, password: "wrong-password", remember_me: "false" });
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const denied = await requestJson("/dologin", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: deniedBody.toString()
+    });
+    assert.strictEqual(denied.response.status, 200, "failed logins should retain the generic response until the threshold is reached");
+    assert.strictEqual(denied.json.code, 0, "failed rate-limit setup logins should be denied");
+  }
+  const blocked = await requestJson("/dologin", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: deniedBody.toString()
+  });
+  assert.strictEqual(blocked.response.status, 429, "login attempts beyond the configured threshold should be rate limited");
+  assert.ok(Number(blocked.response.headers.get("retry-after")) >= 1, "rate-limited logins should expose a retry delay");
+  assert.strictEqual(blocked.json.code, 0, "rate-limited logins should use the failure envelope");
+
+  const isolated = await requestJson("/dologin", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ user_account: `${account}_other`, password: "wrong-password" }).toString()
+  });
+  assert.strictEqual(isolated.response.status, 200, "one account's failures must not block another identity");
 }
 
 async function verifyAuthorizationFlow() {
@@ -3632,6 +3668,7 @@ async function main() {
   const started = Date.now();
   await verifyHealth();
   await verifyUnauthenticatedAccess();
+  await verifyLoginRateLimit();
   await verifyLoginFlow();
   await verifyAuthorizationFlow();
   await verifyConcurrentBusinessWriteConflict();

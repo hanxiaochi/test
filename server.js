@@ -12,6 +12,7 @@ const tabularService = require("./lib/import-export/tabular-service");
 const fidicCore = require("./lib/international/fidic-core");
 const internationalSettingsService = require("./lib/international/project-settings");
 const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
+const { LoginRateLimiter, securityHeaders } = require("./lib/security/http-security");
 const engine = require("./costEngine");
 
 (engine.db.projects || []).forEach((project) => {
@@ -28,6 +29,11 @@ const dataDir = path.join(root, "data");
 const exportDir = process.env.APP_EXPORT_DIR || path.join(dataDir, "exports");
 const backupDir = path.resolve(process.env.APP_BACKUP_DIR || path.join(dataDir, "backups"));
 const port = process.env.PORT || 3100;
+const loginRateLimiter = new LoginRateLimiter({
+  maxAttempts: process.env.APP_LOGIN_MAX_ATTEMPTS,
+  windowMs: process.env.APP_LOGIN_WINDOW_MS,
+  maxEntries: process.env.APP_LOGIN_MAX_ENTRIES
+});
 fs.mkdirSync(backupDir, { recursive: true });
 const ruleStore = new RuleStore(process.env.APP_RULE_DB_PATH || authService.securityFile);
 const initializedRuleTenants = new Set();
@@ -40,8 +46,11 @@ if (storedRuleVersion) {
 initializedRuleTenants.add("default::1");
 
 app.disable("etag");
+app.disable("x-powered-by");
+if (process.env.APP_TRUST_PROXY) app.set("trust proxy", process.env.APP_TRUST_PROXY === "true" ? 1 : process.env.APP_TRUST_PROXY);
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use(express.json({ limit: process.env.APP_BODY_LIMIT || "64mb" }));
+app.use(securityHeaders);
 app.use((req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Pragma", "no-cache");
@@ -13475,6 +13484,17 @@ app.get("/index.html", (req, res) => html(res, readText(path.join(root, "index.h
 app.get("/main", (req, res) => html(res, dashboardHtml("综合工作台")));
 
 app.post("/dologin", (req, res) => {
+  const identity = {
+    ip: req.ip,
+    tenantId: req.body.tenant_id || "default",
+    account: req.body.user_account
+  };
+  const rateLimit = loginRateLimiter.status(identity);
+  if (!rateLimit.allowed) {
+    res.setHeader("Retry-After", String(rateLimit.retryAfterSeconds));
+    res.status(429).json({ code: 0, msg: "登录尝试过于频繁，请稍后重试", data: null });
+    return;
+  }
   const login = authService.store.authenticate({
     tenantId: req.body.tenant_id || "default",
     account: req.body.user_account,
@@ -13484,6 +13504,7 @@ app.post("/dologin", (req, res) => {
     userAgent: req.headers["user-agent"]
   });
   if (login) {
+    loginRateLimiter.recordSuccess(identity);
     return businessContext.runForTenant(login.user.tenantId, () => {
     const maxAge = Math.max(0, Math.floor((Date.parse(login.expiresAt) - Date.now()) / 1000));
     const secure = String(process.env.APP_COOKIE_SECURE || "").toLowerCase() === "true" ? "; Secure" : "";
@@ -13503,6 +13524,7 @@ app.post("/dologin", (req, res) => {
     });
     });
   }
+  loginRateLimiter.recordFailure(identity);
   json(res, { code: 0, msg: "用户不存在或密码错误" });
 });
 

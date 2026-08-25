@@ -78,6 +78,8 @@ async function main() {
     APP_SQLITE_DB_PATH: sqliteFile,
     APP_STORAGE: process.argv.includes("--storage=sqlite") ? "sqlite" : "json",
     APP_ENABLE_IPC_SHUTDOWN: "true",
+    APP_LOGIN_MAX_ATTEMPTS: "3",
+    APP_VERIFY_LOGIN_RATE_LIMIT: "true",
     PORT: String(port)
   };
   const output = [];

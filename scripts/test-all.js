@@ -11,6 +11,7 @@ const commands = [
   ["run", "test:security"],
   ["run", "test:security-store"],
   ["run", "test:auth-config"],
+  ["run", "test:http-security"],
   ["run", "test:runtime"],
   ["run", "test:rules"],
   ["run", "test:storage"],
