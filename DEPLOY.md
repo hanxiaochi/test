@@ -174,6 +174,26 @@ npm run verify
 
 ## 用 systemd 常驻运行
 
+先创建专用低权限用户、可写数据目录和仅 root 可读的环境文件：
+
+```bash
+useradd --system --home-dir /opt/zwkjy-clone --shell /usr/sbin/nologin zwkjy 2>/dev/null || true
+install -d -o zwkjy -g zwkjy -m 0750 /opt/zwkjy-clone/data
+chown -R zwkjy:zwkjy /opt/zwkjy-clone/data
+install -d -o root -g root -m 0700 /etc/zwkjy-clone
+cat >/etc/zwkjy-clone/app.env <<'EOF'
+NODE_ENV=production
+PORT=3100
+APP_STORAGE=sqlite
+APP_BOOTSTRAP_PASSWORD=请替换为至少10位且含字母数字特殊字符的初始密码
+APP_COOKIE_SECURE=true
+APP_TRUST_PROXY=true
+EOF
+chmod 0600 /etc/zwkjy-clone/app.env
+```
+
+初始密码只在管理员账号尚不存在时使用；已有账号不会因重启被重置。不要把真实密码写入服务文件或提交到 Git。
+
 创建服务文件：
 
 ```bash
@@ -185,13 +205,18 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/zwkjy-clone
-Environment=NODE_ENV=production
-Environment=PORT=3100
-Environment=APP_STORAGE=sqlite
+EnvironmentFile=/etc/zwkjy-clone/app.env
 ExecStart=/usr/bin/node /opt/zwkjy-clone/server.js
 Restart=always
 RestartSec=3
-User=root
+User=zwkjy
+Group=zwkjy
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/zwkjy-clone/data
 
 [Install]
 WantedBy=multi-user.target
@@ -220,13 +245,16 @@ journalctl -u zwkjy-clone -f
 http://服务器IP:3100/
 ```
 
-默认账号：
+生产环境首次初始化账号：
 
 ```text
-ys1 / 000000
+账号：ys1
+密码：/etc/zwkjy-clone/app.env 中配置的 APP_BOOTSTRAP_PASSWORD
 ```
 
-## 用 Nginx 反向代理到 80 端口
+当 `APP_COOKIE_SECURE=true` 时，浏览器只会通过 HTTPS 携带登录 Cookie，因此上面的 HTTP 地址只适合健康检查。临时内网验收可把环境文件中的值改成 `false` 并重启服务；正式上线前必须恢复为 `true`，使用域名和 HTTPS，且不要开放公网 `3100`。
+
+## 用 Nginx 反向代理
 
 创建 Nginx 配置：
 
@@ -260,10 +288,10 @@ nginx -t
 systemctl reload nginx
 ```
 
-访问：
+下面的 80 端口配置只用于域名解析和证书签发前的连通性检查。完成 HTTPS 配置后再进行登录验收：
 
 ```text
-http://服务器IP/
+https://你的域名/
 ```
 
 ## 更新部署

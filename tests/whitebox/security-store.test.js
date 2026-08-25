@@ -34,6 +34,16 @@ test("bootstrap is idempotent and never resets an existing password", () => with
   assert.equal(store.authenticate({ account: "ys1", password: "changed-by-restart" }), null);
 }));
 
+test("production bootstrap requires a strong password only for a new account", () => withStore((store) => {
+  assert.throws(() => store.bootstrap({ account: "ys1", password: "000000", requireStrongPassword: true }), /Production bootstrap password is invalid/);
+  assert.equal(store.db.prepare("SELECT COUNT(*) AS count FROM users").get().count, 0);
+  const created = store.bootstrap({ account: "ys1", password: "Bootstrap-Admin-42!", requireStrongPassword: true });
+  assert.equal(created.created, true);
+  const existing = store.bootstrap({ account: "ys1", password: "ignored-weak", requireStrongPassword: true });
+  assert.equal(existing.created, false);
+  assert.ok(store.authenticate({ account: "ys1", password: "Bootstrap-Admin-42!" }));
+}));
+
 test("login stores a hashed session, returns RBAC grants, and logout revokes it", () => withStore((store) => {
   store.bootstrap({ account: "ys1", password: "000000" });
   assert.equal(store.authenticate({ account: "missing", password: "wrong", ipAddress: "127.0.0.1" }), null);

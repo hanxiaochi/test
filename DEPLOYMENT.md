@@ -115,6 +115,20 @@ scp G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone\data\
 ## systemd 服务
 
 ```bash
+useradd --system --home-dir /opt/zwkjy-clone --shell /usr/sbin/nologin zwkjy 2>/dev/null || true
+install -d -o zwkjy -g zwkjy -m 0750 /opt/zwkjy-clone/data
+chown -R zwkjy:zwkjy /opt/zwkjy-clone/data
+install -d -o root -g root -m 0700 /etc/zwkjy-clone
+cat >/etc/zwkjy-clone/app.env <<'EOF'
+NODE_ENV=production
+PORT=3100
+APP_STORAGE=sqlite
+APP_BOOTSTRAP_PASSWORD=请替换为至少10位且含字母数字特殊字符的初始密码
+APP_COOKIE_SECURE=true
+APP_TRUST_PROXY=true
+EOF
+chmod 0600 /etc/zwkjy-clone/app.env
+
 cat >/etc/systemd/system/zwkjy-clone.service <<'EOF'
 [Unit]
 Description=Engineering Payment Platform
@@ -123,13 +137,18 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/zwkjy-clone
-Environment=NODE_ENV=production
-Environment=PORT=3100
-Environment=APP_STORAGE=sqlite
+EnvironmentFile=/etc/zwkjy-clone/app.env
 ExecStart=/usr/bin/node /opt/zwkjy-clone/server.js
 Restart=always
 RestartSec=3
-User=root
+User=zwkjy
+Group=zwkjy
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/zwkjy-clone/data
 
 [Install]
 WantedBy=multi-user.target
@@ -141,7 +160,7 @@ systemctl status zwkjy-clone --no-pager
 curl -fsS http://127.0.0.1:3100/api/health
 ```
 
-生产环境后续应改为专用低权限系统用户，并确保该用户只对项目 `data/`、日志和必要临时目录有写权限。
+上面的初始密码只在目标账号尚不存在时使用；已有账号不会因重启被重置。环境文件仅允许 root 读取，应用进程使用专用 `zwkjy` 账号运行，并且只能写入项目 `data/` 和 systemd 提供的私有临时目录。不要把真实密码提交到 Git。
 
 ## Nginx
 
@@ -168,7 +187,7 @@ nginx -t
 systemctl reload nginx
 ```
 
-公网开放 `80`；若直接访问 Node 服务才开放 `3100`。正式商用必须配置 HTTPS、域名、防火墙和最小权限运行用户。
+80 端口配置只用于域名解析和证书签发前的连通性检查。`APP_COOKIE_SECURE=true` 时浏览器登录必须使用 HTTPS；正式商用必须配置域名和 TLS 证书，只向公网开放 `80/443`，不要开放 `3100`。临时内网 HTTP 验收可将该变量改为 `false` 并重启，但上线前必须恢复。
 
 ## 更新部署
 
@@ -239,6 +258,9 @@ APP_LOGIN_MAX_ATTEMPTS  同一IP、租户和账号在窗口内的失败上限，
 APP_LOGIN_WINDOW_MS     登录失败计数窗口毫秒数，默认 900000
 APP_LOGIN_MAX_ENTRIES   内存中登录限流身份上限，默认 10000
 APP_TRUST_PROXY         仅在可信反向代理后配置；单层 Nginx 可设 true
+APP_COOKIE_SECURE       HTTPS 生产环境必须设 true，为会话 Cookie 添加 Secure
+APP_BOOTSTRAP_ACCOUNT   首次初始化管理员账号，默认 ys1
+APP_BOOTSTRAP_PASSWORD  首次初始化管理员密码；生产环境必须满足强密码策略
 ```
 
 修改路径后必须同步调整 systemd 权限、全量备份范围和监控规则。不要在应用直接暴露公网时启用 `APP_TRUST_PROXY`，否则攻击者可能伪造来源地址绕过登录限流。
@@ -248,3 +270,5 @@ APP_TRUST_PROXY         仅在可信反向代理后配置；单层 Nginx 可设 
 服务会校验浏览器写请求的 `Origin`、`Referer` 和 `Sec-Fetch-Site`，拒绝跨站提交。Nginx 必须保留原始 `Host`（推荐 `proxy_set_header Host $host`）；命令行和服务器间 API 客户端未发送浏览器来源头时不受影响。
 
 用户可从右上角账号菜单主动修改密码。管理员可在账号权限管理中设置临时强密码；重置会撤销目标用户全部会话，并强制其下次登录再次修改密码，临时密码不会出现在审计详情中。
+
+当 `NODE_ENV=production` 且目标管理员尚不存在时，弱初始密码会导致服务拒绝启动；这可防止全新公网实例意外使用默认 `000000`。已有数据库中的账号和密码不会被启动配置覆盖。
