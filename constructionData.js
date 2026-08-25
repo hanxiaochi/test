@@ -1,7 +1,4 @@
-const fs = require("fs");
-const path = require("path");
-
-const runtimeFile = path.join(__dirname, "data", "runtime-db.json");
+const appStore = require("./lib/app-store");
 
 const db = {
   client: {
@@ -122,10 +119,7 @@ const db = {
 };
 
 try {
-  if (fs.existsSync(runtimeFile)) {
-    const saved = JSON.parse(fs.readFileSync(runtimeFile, "utf8"));
-    Object.assign(db, saved);
-  }
+  Object.assign(db, appStore.load(db));
 } catch {
   // Keep bundled demo data if the local runtime store is unavailable.
 }

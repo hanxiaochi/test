@@ -1,12 +1,36 @@
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const express = require("express");
+const appStore = require("./lib/app-store");
+const authCore = require("./lib/security/auth-core");
+const authService = require("./lib/security/auth-service");
+const { RuleStore } = require("./lib/rules/rule-store");
+const backupService = require("./lib/backup/backup-service");
 const engine = require("./costEngine");
+
+(engine.db.projects || []).forEach((project) => {
+  authService.store.ensureProject({
+    tenantId: "default",
+    projectId: project.projectId || project.id,
+    name: project.projectName || project.shortName || `项目 ${project.projectId || project.id}`
+  });
+});
 
 const app = express();
 const root = __dirname;
 const dataDir = path.join(root, "data");
+const exportDir = process.env.APP_EXPORT_DIR || path.join(dataDir, "exports");
+const backupDir = path.resolve(process.env.APP_BACKUP_DIR || path.join(dataDir, "backups"));
 const port = process.env.PORT || 3100;
+fs.mkdirSync(backupDir, { recursive: true });
+const ruleStore = new RuleStore(process.env.APP_RULE_DB_PATH || authService.securityFile);
+const storedRuleVersion = ruleStore.getActive("default", "*");
+if (storedRuleVersion) {
+  engine.db.calculationRules = storedRuleVersion.rules;
+} else {
+  ruleStore.createVersion({ tenantId: "default", projectId: "*", rules: engine.calculationRules(), changeReason: "初始化现有计算规则" });
+}
 
 app.disable("etag");
 app.use(express.urlencoded({ extended: true }));
@@ -15,6 +39,136 @@ app.use((req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
+  next();
+});
+
+const publicPathRules = [
+  /^\/$/,
+  /^\/login\.html$/,
+  /^\/dologin$/,
+  /^\/api\/debug\/runtime$/,
+  /^\/(?:assets|js|css|img|common)\//,
+  /^\/favicon\.ico$/
+];
+
+function requiredPermission(req) {
+  if (/^\/(?:admin|api\/admin)(?:\/|$)/.test(req.path)) return "admin:access";
+  const legacyMutation = /\/(?:save|delete|del|update|create|add|edit|upload|import|move|init|agree|return|withdraw|archive|adjust|up_order)(?:_|\/|$)/i.test(req.path);
+  if (!["GET", "HEAD", "OPTIONS"].includes(req.method) || legacyMutation) return "data:write";
+  return "data:read";
+}
+
+function businessStateChecksum() {
+  return crypto.createHash("sha256").update(JSON.stringify(engine.db), "utf8").digest("hex");
+}
+
+function backupFileName(prefix = "runtime") {
+  return `${prefix}-${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomBytes(4).toString("hex")}.json`;
+}
+
+function createManagedBackup(user, prefix = "runtime") {
+  const fileName = backupFileName(prefix);
+  const target = path.join(backupDir, fileName);
+  const temporary = `${target}.tmp`;
+  const bytes = backupService.createBackup({ state: engine.db, createdBy: user.account, tenantId: user.tenantId, applicationVersion: require("./package.json").version });
+  fs.writeFileSync(temporary, bytes);
+  fs.renameSync(temporary, target);
+  return { fileName, bytes: bytes.length, checksum: backupService.validateBackup(bytes, { tenantId: user.tenantId }).checksum };
+}
+
+function managedBackupPath(fileName) {
+  const safeName = path.basename(String(fileName || ""));
+  if (!safeName || safeName !== String(fileName) || !safeName.endsWith(".json")) throw new Error("Invalid backup file name");
+  const target = path.resolve(backupDir, safeName);
+  if (path.dirname(target) !== backupDir || !fs.existsSync(target)) throw new Error("Backup file does not exist");
+  return target;
+}
+
+function requirePermission(permission) {
+  return (req, res, next) => {
+    if (req.currentSession && authCore.hasPermission(req.currentSession.user.permissions, permission)) {
+      next();
+      return;
+    }
+    res.status(403).json({ code: 0, msg: "无权执行该操作", data: null, requiredPermission: permission });
+  };
+}
+
+app.use((req, res, next) => {
+  const cookies = authCore.parseCookies(req.headers.cookie);
+  const session = authService.store.getSession(cookies.app_session);
+  req.authToken = cookies.app_session || "";
+  req.currentSession = session;
+  req.authUser = session && session.user;
+  if (publicPathRules.some((rule) => rule.test(req.path))) {
+    next();
+    return;
+  }
+  if (!session) {
+    const wantsJson = req.path.startsWith("/api/") || req.path === "/user/curr_user_info" || req.xhr || String(req.headers.accept || "").includes("application/json");
+    if (!wantsJson && req.accepts("html")) {
+      res.status(401).type("html").send(readText(path.join(root, "login.html")));
+      return;
+    }
+    res.status(401).json({ code: 0, msg: "登录已失效，请重新登录", data: null });
+    return;
+  }
+  const required = requiredPermission(req);
+  if (!authCore.hasPermission(session.user.permissions, required)) {
+    res.status(403).json({ code: 0, msg: "无权执行该操作", data: null, requiredPermission: required });
+    return;
+  }
+  const accessibleProjects = authService.store.accessibleProjects(session.user.id, session.user.tenantId);
+  const requestedProjectId = String(req.headers["x-project-id"] || req.query.projectId || req.body.projectId || "").trim();
+  const effectiveProjectId = requestedProjectId && requestedProjectId !== "0"
+    ? requestedProjectId
+    : String((accessibleProjects[0] || {}).projectId || "");
+  if (requestedProjectId && requestedProjectId !== "0" && !authService.store.canAccessProject(session.user.id, session.user.tenantId, requestedProjectId)) {
+    res.status(403).json({ code: 0, msg: "无权访问该项目", data: null, requiredProjectId: requestedProjectId });
+    return;
+  }
+  const requestedSectionId = Number(req.query.sectionId || req.body.sectionId || 0);
+  const requestedSection = requestedSectionId
+    ? (engine.db.sections || []).find((section) => Number(section.sectionId || section.id) === requestedSectionId)
+    : null;
+  if (requestedSection && effectiveProjectId && String(requestedSection.projectId || "") !== effectiveProjectId) {
+    res.status(403).json({ code: 0, msg: "合同段不属于当前授权项目", data: null, requiredProjectId: String(requestedSection.projectId || "") });
+    return;
+  }
+  req.businessContext = {
+    tenantId: session.user.tenantId,
+    projectId: effectiveProjectId,
+    accessibleProjectIds: accessibleProjects.map((project) => project.projectId)
+  };
+  if (required === "data:write" || (!["GET", "HEAD", "OPTIONS"].includes(req.method) && required === "admin:access")) {
+    const beforeChecksum = businessStateChecksum();
+    res.once("finish", () => {
+      try {
+        const afterChecksum = businessStateChecksum();
+        authService.store.audit({
+          tenantId: session.user.tenantId,
+          userId: session.user.id,
+          action: "http.mutation",
+          result: res.statusCode >= 200 && res.statusCode < 400 ? "success" : "failure",
+          targetType: "endpoint",
+          targetId: `${req.method} ${req.path}`,
+          ipAddress: req.ip,
+          userAgent: req.headers["user-agent"],
+          details: {
+            method: req.method,
+            path: req.path,
+            statusCode: res.statusCode,
+            projectId: effectiveProjectId,
+            beforeChecksum,
+            afterChecksum,
+            changed: beforeChecksum !== afterChecksum
+          }
+        });
+      } catch (error) {
+        console.error("business audit failed", error.message);
+      }
+    });
+  }
   next();
 });
 
@@ -35,7 +189,7 @@ function readJson(file, fallback) {
 }
 
 function authCookie(req) {
-  return (req.headers.cookie || "").includes("app_local_auth=1");
+  return Boolean(req.currentSession);
 }
 
 function html(res, value) {
@@ -421,7 +575,7 @@ function buildSimplePdf(title, sourceLines) {
 }
 
 function ensureExportDir() {
-  const dir = path.join(dataDir, "exports");
+  const dir = exportDir;
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -863,8 +1017,7 @@ function downloadDocumentZip(req, res) {
 }
 
 function persist() {
-  const file = path.join(dataDir, "runtime-db.json");
-  fs.writeFileSync(file, JSON.stringify(engine.db, null, 2), "utf8");
+  appStore.save(engine.db, { action: "http-mutation" });
 }
 
 function mutate(res, fn) {
@@ -1028,6 +1181,25 @@ leftMenus.set("9000", [
       }
     ],
     sysIdentityResources: ""
+  },
+  {
+    appImageUrl: "",
+    appPageUrl: "",
+    controllerDes: "",
+    flagFlow: 1,
+    isShow: 1,
+    menuIcon: "layui-icon layui-icon-user",
+    parentId: 9000,
+    refreshType: 1,
+    resourceCode: "990002",
+    resourceDes: "账号、角色与安全审计",
+    resourceId: 9010,
+    resourceLevel: 0,
+    resourceName: "账号权限管理",
+    resourceNo: "model",
+    resourceUrl: "admin/users_page",
+    sysBusinessResources: [],
+    sysIdentityResources: ""
   }
 ]);
 
@@ -1095,7 +1267,9 @@ function formatRuleMap(value) {
   return Object.entries(value).map(([key, number]) => `${key}=${number}`).join("; ");
 }
 
-function saveCalculationRules(body = {}) {
+function saveCalculationRules(body = {}, metadata = {}) {
+  const changeReason = String(body.changeReason || metadata.changeReason || "").trim();
+  if (!changeReason) throw new Error("请填写规则变更原因");
   const current = engine.calculationRules();
   const next = {
     moneyDigits: numberFromBody(body.moneyDigits, current.moneyDigits, 0, 6),
@@ -1132,11 +1306,20 @@ function saveCalculationRules(body = {}) {
     jl108RawMaterialConversionFactors: body.jl108RawMaterialConversionFactors ?? current.jl108RawMaterialConversionFactors,
     jl116MaterialWeights: body.jl116MaterialWeights ?? current.jl116MaterialWeights
   };
-  engine.db.calculationRules = next;
+  const version = ruleStore.createVersion({
+    tenantId: metadata.tenantId || "default",
+    projectId: metadata.projectId || "*",
+    rules: next,
+    changeReason,
+    createdBy: metadata.userId,
+    activate: true
+  });
+  engine.db.calculationRules = version.rules;
   return {
     changed: 1,
     rules: engine.calculationRules(),
-    summary: engine.contractSummary()
+    summary: engine.contractSummary(),
+    version
   };
 }
 
@@ -1147,6 +1330,18 @@ function checked(value) {
 function calculationRulesPageHtml() {
   const rules = engine.calculationRules();
   const summary = engine.contractSummary();
+  const activeVersion = ruleStore.getActive("default", "*");
+  const history = ruleStore.history("default", "*", 100);
+  const versionRows = history.map((item) => `
+    <tr>
+      <td>V${item.version}</td>
+      <td>${item.status === "active" ? "当前生效" : item.status === "draft" ? "草稿" : "已停用"}</td>
+      <td>${htmlEscape(item.changeReason)}</td>
+      <td>${item.createdBy === null ? "系统" : `用户 #${item.createdBy}`}</td>
+      <td>${htmlEscape(item.createdAt)}</td>
+      <td title="${htmlEscape(item.checksum)}"><code>${htmlEscape(item.checksum.slice(0, 12))}</code></td>
+      <td>${item.status === "active" ? "-" : `<button type="button" class="layui-btn layui-btn-xs activate-rule-version" data-id="${item.id}" data-version="${item.version}">重新启用</button>`}</td>
+    </tr>`).join("");
   const rows = [
     ["合同金额", moneyText(summary.contractSumMoney)],
     ["最终金额", moneyText(summary.finalMoney)],
@@ -1181,6 +1376,11 @@ function calculationRulesPageHtml() {
         .calc-admin-formula { margin:12px 0; padding:10px 12px; background:#f8fafc; border:1px solid #dbe4f0; color:#0369a1; }
         .calc-admin-actions { display:flex; gap:8px; align-items:center; margin-top:14px; }
         .calc-admin-summary table { margin:0; }
+        .calc-admin-version { margin-top:14px; }
+        .calc-admin-version-meta { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-bottom:10px; color:#475569; }
+        .calc-admin-version-meta code { overflow-wrap:anywhere; }
+        .calc-admin-history { grid-column:1 / -1; overflow-x:auto; }
+        .calc-admin-history table { min-width:900px; }
         @media (max-width: 900px) { .calc-admin-shell { grid-template-columns:1fr; } .calc-admin-grid, .calc-admin-checks { grid-template-columns:1fr; } .calc-admin-field-wide { grid-column:auto; } }
       </style>
       <div class="calc-admin-shell">
@@ -1223,6 +1423,7 @@ function calculationRulesPageHtml() {
               <div class="calc-admin-field"><label>索赔金额</label><input type="number" step="0.01" name="claimsMoney" value="${rules.claimsMoney}"></div>
               <div class="calc-admin-field"><label>违约罚金</label><input type="number" step="0.01" name="penaltyMoney" value="${rules.penaltyMoney}"></div>
               <div class="calc-admin-field"><label>迟付款利息</label><input type="number" step="0.01" name="interestMoney" value="${rules.interestMoney}"></div>
+              <div class="calc-admin-field calc-admin-field-wide"><label>规则变更原因（必填）</label><textarea name="changeReason" required maxlength="500" placeholder="说明本次调整依据、影响范围和对应审批记录"></textarea></div>
             </div>
             <div class="calc-admin-checks">
               <label><input type="checkbox" name="includeBillMeasure" ${checked(rules.includeBillMeasure)}>清单计量进入应付</label>
@@ -1243,6 +1444,22 @@ function calculationRulesPageHtml() {
         <div class="calc-admin-panel calc-admin-summary">
           <h3 style="margin:0 0 10px;font-size:16px;">当前汇总影响</h3>
           <table class="layui-table" lay-size="sm"><tbody>${rows}</tbody></table>
+          <div class="calc-admin-version">
+            <h3 style="margin:14px 0 10px;font-size:16px;">当前规则版本</h3>
+            <div class="calc-admin-version-meta">
+              <span>版本：<strong>${activeVersion ? `V${activeVersion.version}` : "未初始化"}</strong></span>
+              <span>创建人：${activeVersion && activeVersion.createdBy !== null ? `用户 #${activeVersion.createdBy}` : "系统"}</span>
+              <span>创建时间：${activeVersion ? htmlEscape(activeVersion.createdAt) : "-"}</span>
+              <span>校验值：<code>${activeVersion ? htmlEscape(activeVersion.checksum) : "-"}</code></span>
+            </div>
+          </div>
+        </div>
+        <div class="calc-admin-panel calc-admin-history">
+          <h3 style="margin:0 0 10px;font-size:16px;">规则版本历史</h3>
+          <table class="layui-table" lay-size="sm">
+            <thead><tr><th>版本</th><th>状态</th><th>变更原因</th><th>创建人</th><th>创建时间</th><th>校验值</th><th>操作</th></tr></thead>
+            <tbody>${versionRows || '<tr><td colspan="7">暂无版本记录</td></tr>'}</tbody>
+          </table>
         </div>
       </div>
       <script>
@@ -1252,16 +1469,38 @@ function calculationRulesPageHtml() {
           var msg = document.getElementById('calc-rules-msg');
           btn.addEventListener('click', function(){
             var data = {};
-            Array.prototype.forEach.call(form.querySelectorAll('input, textarea'), function(input){
+            Array.prototype.forEach.call(form.querySelectorAll('input, textarea, select'), function(input){
+              if (!input.name) return;
               data[input.name] = input.type === 'checkbox' ? input.checked : input.value;
             });
+            if (!String(data.changeReason || '').trim()) {
+              msg.textContent = '请填写规则变更原因';
+              form.querySelector('[name="changeReason"]').focus();
+              return;
+            }
+            btn.disabled = true;
             fetch('/api/admin/calculation_rules', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) })
-              .then(function(res){ return res.json(); })
+              .then(function(res){ return res.json().then(function(body){ return { ok:res.ok, body:body }; }); })
               .then(function(result){
-                msg.textContent = result && result.code === 1 ? '已保存，正在刷新...' : '保存失败';
-                setTimeout(function(){ (window.appReloadCurrentContent?window.appReloadCurrentContent():location.reload()); }, 500);
+                if (!result.ok || !result.body || result.body.code !== 1) throw new Error(result.body && result.body.msg || '保存失败');
+                msg.textContent = '已保存为 V' + result.body.data.version.version + '，正在刷新...';
+                setTimeout(function(){ location.reload(); }, 500);
               })
-              .catch(function(){ msg.textContent = '保存失败'; });
+              .catch(function(error){ btn.disabled = false; msg.textContent = error.message || '保存失败'; });
+          });
+          Array.prototype.forEach.call(document.querySelectorAll('.activate-rule-version'), function(button){
+            button.addEventListener('click', function(){
+              var version = button.getAttribute('data-version');
+              if (!window.confirm('确认重新启用规则 V' + version + '？')) return;
+              button.disabled = true;
+              fetch('/api/admin/calculation_rules/' + encodeURIComponent(button.getAttribute('data-id')) + '/activate', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' })
+                .then(function(res){ return res.json().then(function(body){ return { ok:res.ok, body:body }; }); })
+                .then(function(result){
+                  if (!result.ok || !result.body || result.body.code !== 1) throw new Error(result.body && result.body.msg || '启用失败');
+                  location.reload();
+                })
+                .catch(function(error){ button.disabled = false; msg.textContent = error.message || '启用失败'; });
+            });
           });
         })();
       </script>
@@ -1447,7 +1686,8 @@ function adminDashboardHtml() {
     ["造价联动校核", "/costBase/reconciliation_page", "合同、计量、支付、审核链条校核"],
     ["BOQ校验", "/costBase/boq_validation_page", "清单数量、单价、金额一致性检查"],
     ["JL计量支付报表", "/payment/jl_report_page", "按JL114/JL113/JL105/JL104核对支付证书"],
-    ["计算规则后台", "/admin/calculation_rules_page", "修改应付构成、小数位和审核比例"]
+    ["计算规则后台", "/admin/calculation_rules_page", "修改应付构成、小数位和审核比例"],
+    ["账号权限管理", "/admin/users_page", "管理用户、角色、状态和安全审计"]
   ].map(([name, href, desc]) => `
     <tr>
       <td>${htmlEscape(name)}</td>
@@ -1465,6 +1705,7 @@ function adminDashboardHtml() {
           </div>
           <div class="core-tools">
             <a class="layui-btn layui-btn-sm" href="/admin/calculation_rules_page">计算规则后台</a>
+            <a class="layui-btn layui-btn-sm" href="/admin/users_page">账号权限</a>
             <a class="layui-btn layui-btn-sm" href="/payment/jl_report_page">JL报表核对</a>
             <a class="layui-btn layui-btn-sm layui-btn-primary" href="/costBase/calculator_page">造价计算器</a>
           </div>
@@ -1492,6 +1733,118 @@ function adminDashboardHtml() {
       </div>
       ${coreInteractionScript('[data-core-page="admin-dashboard"]')}
     </div>`;
+}
+
+function userManagementHtml(req = {}) {
+  const tenantId = (req.authUser && req.authUser.tenantId) || "default";
+  const users = authService.store.listUsers(tenantId);
+  const roles = authService.store.listRoles(tenantId);
+  const projects = authService.store.listProjects(tenantId);
+  const audits = authService.store.auditRows(30, tenantId);
+  const roleOptions = (selected = []) => roles.map((role) => `<option value="${htmlEscape(role.code)}" ${selected.includes(role.code) ? "selected" : ""}>${htmlEscape(role.name)}</option>`).join("");
+  const projectOptions = (selected = []) => projects.filter((project) => project.status === "active").map((project) => `<option value="${htmlEscape(project.projectId)}" ${selected.includes(project.projectId) ? "selected" : ""}>${htmlEscape(project.name)} (${htmlEscape(project.projectId)})</option>`).join("");
+  const userRows = users.map((user) => {
+    const selectedRoles = user.roles.map((role) => role.code);
+    const selectedProjects = user.projects.map((project) => project.projectId);
+    const nextStatus = user.status === "active" ? "disabled" : "active";
+    return `<tr>
+      <td>${htmlEscape(user.account)}</td>
+      <td>${htmlEscape(user.displayName)}</td>
+      <td>${htmlEscape(user.roles.map((role) => role.name).join("、"))}</td>
+      <td>${htmlEscape(user.projects.map((project) => project.name).join("、") || "未分配")}</td>
+      <td>${user.status === "active" ? "启用" : "禁用"}</td>
+      <td>${user.mustChangePassword ? "是" : "否"}</td>
+      <td>
+        <select data-user-role="${user.id}">${roleOptions(selectedRoles)}</select>
+        <button type="button" class="layui-btn layui-btn-xs" data-save-role="${user.id}">保存角色</button>
+        <select multiple size="2" data-user-project="${user.id}" style="min-width:180px;vertical-align:middle;">${projectOptions(selectedProjects)}</select>
+        <button type="button" class="layui-btn layui-btn-xs" data-save-project="${user.id}">保存项目</button>
+        <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" data-user-status="${user.id}" data-status="${nextStatus}">${nextStatus === "disabled" ? "禁用" : "启用"}</button>
+      </td>
+    </tr>`;
+  }).join("");
+  const auditRows = audits.map((row) => `<tr>
+    <td>${htmlEscape(row.created_at)}</td><td>${htmlEscape(row.action)}</td><td>${htmlEscape(row.result)}</td>
+    <td>${htmlEscape(row.user_id || "")}</td><td>${htmlEscape(row.target_type)}</td><td>${htmlEscape(row.target_id)}</td><td>${htmlEscape(row.ip_address)}</td>
+  </tr>`).join("");
+  return `<div class="core-page" data-core-page="user-management">
+    ${corePageStyle("#0f766e")}
+    <div class="core-shell">
+      <div class="core-head">
+        <div><h2>账号权限管理</h2><p>维护用户、内置角色、账号状态与登录安全审计。</p></div>
+        <div class="core-tools"><a class="layui-btn layui-btn-sm layui-btn-primary" href="/admin/dashboard_page">返回后台</a></div>
+      </div>
+      <div class="core-grid">
+        <div class="core-panel">
+          <h3>用户列表</h3>
+          <table class="layui-table" lay-size="sm">
+            <thead><tr><th>账号</th><th>姓名</th><th>角色</th><th>授权项目</th><th>状态</th><th>首次改密</th><th>操作</th></tr></thead>
+            <tbody>${userRows || `<tr><td colspan="7" class="core-empty">暂无用户</td></tr>`}</tbody>
+          </table>
+        </div>
+        <div class="core-panel">
+          <h3>新增用户</h3>
+          <form id="create-user-form" class="core-form">
+            <label>登录账号<input name="account" autocomplete="off" required></label>
+            <label>显示姓名<input name="displayName" required></label>
+            <label>初始密码<input type="password" name="password" autocomplete="new-password" placeholder="至少10位，含字母、数字和特殊字符" required></label>
+            <label>角色<select name="roleCode">${roleOptions(["viewer"])}</select></label>
+            <label>授权项目<select name="projectIds" multiple size="3">${projectOptions(projects.filter((project) => project.status === "active").map((project) => project.projectId))}</select></label>
+            <label><input type="checkbox" name="mustChangePassword" checked> 首次登录必须修改密码</label>
+            <button type="button" class="layui-btn layui-btn-sm" id="create-user-button">创建用户</button>
+          </form>
+          <div class="core-note" style="margin-top:12px;">只读用户只能查看；业务编辑者可维护业务数据；系统管理员可管理账号和计算规则。</div>
+        </div>
+        <div class="core-panel">
+          <h3>项目目录</h3>
+          <form id="create-project-form" class="core-form">
+            <label>项目编码<input name="projectKey" required placeholder="例如 HT-2026-01"></label>
+            <label>项目名称<input name="name" required></label>
+            <button type="button" class="layui-btn layui-btn-sm" id="create-project-button">新增项目</button>
+          </form>
+          <table class="layui-table" lay-size="sm">
+            <thead><tr><th>编码</th><th>名称</th><th>状态</th></tr></thead>
+            <tbody>${projects.map((project) => `<tr><td>${htmlEscape(project.projectId)}</td><td>${htmlEscape(project.name)}</td><td>${project.status === "active" ? "启用" : "禁用"}</td></tr>`).join("")}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class="core-panel" style="margin-top:12px;">
+        <h3>安全审计</h3>
+        <table class="layui-table" lay-size="sm">
+          <thead><tr><th>时间</th><th>动作</th><th>结果</th><th>用户ID</th><th>对象</th><th>对象ID</th><th>IP</th></tr></thead>
+          <tbody>${auditRows || `<tr><td colspan="7" class="core-empty">暂无安全审计</td></tr>`}</tbody>
+        </table>
+      </div>
+    </div>
+    <script>(function(){
+      var root=document.querySelector('[data-core-page="user-management"]'); if(!root)return;
+      function notify(text){ if(window.layer){layer.msg(text)} }
+      function refresh(){ setTimeout(function(){ if(window.appReloadCurrentContent){window.appReloadCurrentContent()}else{location.reload()} },350); }
+      function post(url,data){ return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(data)}).then(function(r){return r.json().then(function(j){if(!r.ok||j.code!==1)throw new Error(j.msg||'操作失败');return j})}); }
+      root.querySelector('#create-user-button').addEventListener('click',function(){
+        var form=root.querySelector('#create-user-form'); var data=Object.fromEntries(new FormData(form).entries());
+        data.roleCodes=[data.roleCode]; data.mustChangePassword=form.querySelector('[name="mustChangePassword"]').checked;
+        data.projectIds=Array.prototype.map.call(form.querySelector('[name="projectIds"]').selectedOptions,function(option){return option.value});
+        post('/api/admin/users',data).then(function(){notify('用户已创建');refresh()}).catch(function(e){notify(e.message)});
+      });
+      root.querySelector('#create-project-button').addEventListener('click',function(){
+        var data=Object.fromEntries(new FormData(root.querySelector('#create-project-form')).entries());
+        post('/api/admin/projects',data).then(function(){notify('项目已创建');refresh()}).catch(function(e){notify(e.message)});
+      });
+      Array.prototype.forEach.call(root.querySelectorAll('[data-save-role]'),function(btn){btn.addEventListener('click',function(){
+        var id=btn.getAttribute('data-save-role'); var code=root.querySelector('[data-user-role="'+id+'"]').value;
+        post('/api/admin/users/'+id+'/roles',{roleCodes:[code]}).then(function(){notify('角色已更新，原会话已撤销');refresh()}).catch(function(e){notify(e.message)});
+      })});
+      Array.prototype.forEach.call(root.querySelectorAll('[data-save-project]'),function(btn){btn.addEventListener('click',function(){
+        var id=btn.getAttribute('data-save-project'); var select=root.querySelector('[data-user-project="'+id+'"]');
+        var projectIds=Array.prototype.map.call(select.selectedOptions,function(option){return option.value});
+        post('/api/admin/users/'+id+'/projects',{projectIds:projectIds}).then(function(){notify('项目授权已更新，原会话已撤销');refresh()}).catch(function(e){notify(e.message)});
+      })});
+      Array.prototype.forEach.call(root.querySelectorAll('[data-user-status]'),function(btn){btn.addEventListener('click',function(){
+        post('/api/admin/users/'+btn.getAttribute('data-user-status')+'/status',{status:btn.getAttribute('data-status')}).then(function(){notify('账号状态已更新');refresh()}).catch(function(e){notify(e.message)});
+      })});
+    })();</script>
+  </div>`;
 }
 
 function sysGatherManagementPageHtml(req) {
@@ -1976,6 +2329,7 @@ function contentForId(id) {
   if (String(id) === "9001" || String(id) === "9003") return adminDashboardHtml();
   if (String(id) === "9002") return calculationRulesPageHtml();
   if (String(id) === "9004") return jlPaymentReportPageHtml({ query: {}, body: {}, params: {} });
+  if (String(id) === "9010") return userManagementHtml();
   if (String(id) === "6998") return reportManagerDashboardHtml({ query: {}, body: {}, params: {} });
   const file = path.join(dataDir, "content", `page_content_${id}.html`);
   const htmlText = readText(file, "");
@@ -12707,16 +13061,30 @@ app.get("/index.html", (req, res) => html(res, readText(path.join(root, "index.h
 app.get("/main", (req, res) => html(res, dashboardHtml("综合工作台")));
 
 app.post("/dologin", (req, res) => {
-  if (req.body.user_account === "ys1" && req.body.password === "000000") {
-    res.setHeader("Set-Cookie", "app_local_auth=1; Path=/; HttpOnly; SameSite=Lax");
+  const login = authService.store.authenticate({
+    tenantId: req.body.tenant_id || "default",
+    account: req.body.user_account,
+    password: req.body.password,
+    remember: String(req.body.remember_me) === "true",
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"]
+  });
+  if (login) {
+    const maxAge = Math.max(0, Math.floor((Date.parse(login.expiresAt) - Date.now()) / 1000));
+    const secure = String(process.env.APP_COOKIE_SECURE || "").toLowerCase() === "true" ? "; Secure" : "";
+    res.setHeader("Set-Cookie", `app_session=${encodeURIComponent(login.token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`);
     operationOk(res, {
-      userId: 563,
-      userAccount: "ys1",
-      userName: "ys1",
+      userId: login.user.id,
+      userAccount: login.user.account,
+      userName: login.user.displayName,
       userStatus: 1,
       avatarPath: "",
       sysUserDept: { deptName: engine.db.client.deptName },
-      sysRoleType: { roleTypeName: engine.db.client.roleTypeName, roleTypeCode: "SBSJ" }
+      sysRoleType: {
+        roleTypeName: login.user.roles.map((role) => role.name).join(","),
+        roleTypeCode: login.user.roles.map((role) => role.code).join(",")
+      },
+      mustChangePassword: login.user.mustChangePassword
     });
     return;
   }
@@ -12724,18 +13092,22 @@ app.post("/dologin", (req, res) => {
 });
 
 app.get("/loginout", (req, res) => {
-  res.setHeader("Set-Cookie", "app_local_auth=; Path=/; Max-Age=0");
+  authService.store.logout(req.authToken, { ipAddress: req.ip, userAgent: req.headers["user-agent"] });
+  res.setHeader("Set-Cookie", "app_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
   operationOk(res);
 });
 
 app.get("/user/curr_user_info", (req, res) => {
+  const user = req.authUser;
   operationOk(res, {
-    userId: 563,
-    userAccount: "ys1",
-    userName: "ys1",
+    userId: user.id,
+    userAccount: user.account,
+    userName: user.displayName,
     avatarPath: "",
     deptName: engine.db.client.deptName,
-    roleTypeName: engine.db.client.roleTypeName
+    roleTypeName: user.roles.map((role) => role.name).join(","),
+    permissions: user.permissions,
+    mustChangePassword: user.mustChangePassword
   });
 });
 
@@ -12767,6 +13139,7 @@ app.get("/sbr/header_content", (req, res) => html(res, dashboardHtml("模块首�
 app.get("/admin/dashboard_page", (req, res) => html(res, adminDashboardHtml()));
 app.get("/system/dashboard_page", (req, res) => html(res, adminDashboardHtml()));
 app.get("/admin/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml()));
+app.get("/admin/users_page", requirePermission("admin:users"), (req, res) => html(res, userManagementHtml(req)));
 app.get("/system/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml()));
 app.all("/payment/jl_report_page", (req, res) => html(res, jlPaymentReportPageHtml(req)));
 app.all("/payment/jl_print_page", (req, res) => html(res, jlPaymentPrintableHtml(req)));
@@ -12799,9 +13172,171 @@ app.all("/workPosition/getValue", (req, res) => {
 app.get("/api/cost/summary", (req, res) => operationOk(res, engine.dashboard()));
 app.get("/api/admin/calculation_rules", (req, res) => operationOk(res, {
   rules: engine.calculationRules(),
-  summary: engine.contractSummary()
+  summary: engine.contractSummary(),
+  activeVersion: ruleStore.getActive(req.authUser.tenantId, String(req.query.projectId || "*")),
+  history: ruleStore.history(req.authUser.tenantId, String(req.query.projectId || "*"), 100)
 }));
-app.post("/api/admin/calculation_rules", (req, res) => mutate(res, () => saveCalculationRules(req.body)));
+app.post("/api/admin/calculation_rules", (req, res) => {
+  try {
+    const result = saveCalculationRules(req.body, {
+      tenantId: req.authUser.tenantId,
+      projectId: String(req.body.projectId || "*"),
+      userId: req.authUser.id
+    });
+    appStore.save(engine.db, { actor: req.authUser.account, action: `rule-create:${result.version.id}` });
+    authService.store.audit({
+      tenantId: req.authUser.tenantId,
+      userId: req.authUser.id,
+      action: "calculation_rule.create",
+      result: "success",
+      targetType: "calculation_rule",
+      targetId: String(result.version.id),
+      details: { version: result.version.version, projectId: result.version.projectId, changeReason: result.version.changeReason }
+    });
+    operationOk(res, result);
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/calculation_rules/:id/activate", requirePermission("admin:access"), (req, res) => {
+  try {
+    const version = ruleStore.activate({ id: req.params.id, tenantId: req.authUser.tenantId });
+    engine.db.calculationRules = version.rules;
+    appStore.save(engine.db, { actor: req.authUser.account, action: `rule-activate:${version.id}` });
+    authService.store.audit({
+      tenantId: req.authUser.tenantId,
+      userId: req.authUser.id,
+      action: "calculation_rule.activate",
+      result: "success",
+      targetType: "calculation_rule",
+      targetId: String(version.id),
+      details: { version: version.version, projectId: version.projectId }
+    });
+    operationOk(res, { version, rules: engine.calculationRules(), summary: engine.contractSummary() });
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.get("/api/admin/users", requirePermission("admin:users"), (req, res) => {
+  operationOk(res, authService.store.listUsers(req.authUser.tenantId));
+});
+app.get("/api/admin/roles", requirePermission("admin:users"), (req, res) => {
+  operationOk(res, authService.store.listRoles(req.authUser.tenantId));
+});
+app.get("/api/admin/projects", requirePermission("admin:users"), (req, res) => {
+  operationOk(res, authService.store.listProjects(req.authUser.tenantId));
+});
+app.post("/api/admin/projects", requirePermission("admin:users"), (req, res) => {
+  try {
+    const project = authService.store.ensureProject({
+      tenantId: req.authUser.tenantId,
+      projectId: req.body.projectKey,
+      name: req.body.name,
+      status: req.body.status
+    });
+    authService.store.audit({
+      tenantId: req.authUser.tenantId,
+      userId: req.authUser.id,
+      action: "project.upsert",
+      result: "success",
+      targetType: "project",
+      targetId: project.projectId,
+      details: { name: project.name, status: project.status }
+    });
+    operationOk(res, project);
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/users", requirePermission("admin:users"), (req, res) => {
+  try {
+    operationOk(res, authService.store.createUser({
+      tenantId: req.authUser.tenantId,
+      account: req.body.account,
+      displayName: req.body.displayName,
+      password: req.body.password,
+      mustChangePassword: req.body.mustChangePassword !== false,
+      roleCodes: req.body.roleCodes,
+      projectIds: req.body.projectIds
+    }));
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/users/:id/projects", requirePermission("admin:users"), (req, res) => {
+  try {
+    operationOk(res, authService.store.setUserProjects({
+      tenantId: req.authUser.tenantId,
+      userId: req.params.id,
+      projectIds: req.body.projectIds,
+      actorUserId: req.authUser.id
+    }));
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/users/:id/status", requirePermission("admin:users"), (req, res) => {
+  try {
+    operationOk(res, authService.store.setUserStatus({
+      tenantId: req.authUser.tenantId,
+      userId: req.params.id,
+      status: req.body.status,
+      actorUserId: req.authUser.id
+    }));
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/users/:id/roles", requirePermission("admin:users"), (req, res) => {
+  try {
+    operationOk(res, authService.store.setUserRoles({
+      tenantId: req.authUser.tenantId,
+      userId: req.params.id,
+      roleCodes: req.body.roleCodes,
+      actorUserId: req.authUser.id
+    }));
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.get("/api/admin/security_audit", requirePermission("admin:users"), (req, res) => {
+  operationOk(res, authService.store.auditRows(req.query.limit, req.authUser.tenantId));
+});
+app.get("/api/admin/backups", requirePermission("admin:access"), (req, res) => {
+  const rows = fs.readdirSync(backupDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => {
+      const stat = fs.statSync(path.join(backupDir, entry.name));
+      return { fileName: entry.name, bytes: stat.size, createdAt: stat.mtime.toISOString() };
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  operationOk(res, rows);
+});
+app.post("/api/admin/backups", requirePermission("admin:access"), (req, res) => {
+  try {
+    operationOk(res, createManagedBackup(req.authUser));
+  } catch (error) {
+    res.status(500).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/backups/:fileName/restore", requirePermission("admin:access"), (req, res) => {
+  const before = JSON.parse(JSON.stringify(engine.db));
+  try {
+    const source = managedBackupPath(req.params.fileName);
+    const backup = backupService.validateBackup(fs.readFileSync(source), { tenantId: req.authUser.tenantId });
+    const safetyBackup = createManagedBackup(req.authUser, "pre-restore");
+    Object.keys(engine.db).forEach((key) => delete engine.db[key]);
+    Object.assign(engine.db, backup.state);
+    const saved = appStore.save(engine.db, { actor: req.authUser.account, action: `backup-restore:${req.params.fileName}`, checkpoint: true });
+    const version = ruleStore.createVersion({ tenantId: req.authUser.tenantId, projectId: "*", rules: engine.calculationRules(), changeReason: `从备份 ${req.params.fileName} 恢复`, createdBy: req.authUser.id });
+    operationOk(res, { restored: req.params.fileName, safetyBackup, storage: saved, ruleVersion: version.version });
+  } catch (error) {
+    Object.keys(engine.db).forEach((key) => delete engine.db[key]);
+    Object.assign(engine.db, before);
+    try { appStore.save(engine.db, { actor: req.authUser.account, action: "backup-restore-rollback", checkpoint: true }); } catch {}
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
 app.get("/api/cost/bills", (req, res) => table(res, req, engine.billRows()));
 app.get("/api/cost/measures", (req, res) => table(res, req, engine.measureRows()));
 app.get("/api/cost/ledger", (req, res) => table(res, req, engine.billLedgerRows()));
@@ -12841,11 +13376,13 @@ app.get("/api/cost/5d_model", (req, res) => operationOk(res, fiveDCostModelData(
 app.get("/api/cost/boq_validation", (req, res) => operationOk(res, boqValidationData()));
 app.get("/api/cost/unit_price_analysis", (req, res) => operationOk(res, unitPriceAnalysisData()));
 app.get("/api/debug/runtime", (req, res) => {
+  const storage = appStore.status();
   operationOk(res, {
     serverFile: __filename,
     dataDir,
-    runtimeFile: path.join(dataDir, "runtime-db.json"),
-    runtimeExists: fs.existsSync(path.join(dataDir, "runtime-db.json"))
+    runtimeFile: storage.file,
+    runtimeExists: storage.exists,
+    storage
   });
 });
 app.post("/api/cost/calculate", (req, res) => {
@@ -13678,6 +14215,22 @@ app.use((req, res) => {
   html(res, modalFormHtml("本地页面", req.path));
 });
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`APP local clone running at http://localhost:${port}`);
 });
+
+function shutdown() {
+  server.close(() => {
+    try {
+      authService.store.close();
+      ruleStore.close();
+      appStore.close();
+    } finally {
+      process.exit(0);
+    }
+  });
+  setTimeout(() => process.exit(1), 5000).unref();
+}
+
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);

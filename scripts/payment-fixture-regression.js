@@ -1,13 +1,14 @@
 const fs = require("fs");
 const http = require("http");
 const net = require("net");
+const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 
 const root = path.resolve(__dirname, "..");
-const runtimeFile = path.join(root, "data", "runtime-db.json");
 const fixtureFile = path.join(root, "test-data", "payment-regression-12-14.json");
 const reportDir = path.join(root, "tmp", "payment-fixture-regression");
+let sessionCookie = "";
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -292,7 +293,7 @@ function requestJson(port, pathname) {
       hostname: "127.0.0.1",
       port,
       path: pathname,
-      headers: { Accept: "application/json" }
+      headers: { Accept: "application/json", ...(sessionCookie ? { Cookie: sessionCookie } : {}) }
     }, (res) => {
       let body = "";
       res.setEncoding("utf8");
@@ -315,6 +316,41 @@ function requestJson(port, pathname) {
     req.setTimeout(5000, () => {
       req.destroy(new Error(`${pathname} timed out`));
     });
+  });
+}
+
+function login(port) {
+  return new Promise((resolve, reject) => {
+    const body = new URLSearchParams({ user_account: "ys1", password: "000000", remember_me: "false" }).toString();
+    const req = http.request({
+      hostname: "127.0.0.1",
+      port,
+      path: "/dologin",
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": Buffer.byteLength(body)
+      }
+    }, (res) => {
+      let responseBody = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => { responseBody += chunk; });
+      res.on("end", () => {
+        try {
+          const payload = JSON.parse(responseBody);
+          const setCookie = res.headers["set-cookie"] || [];
+          if (res.statusCode !== 200 || payload.code !== 1 || !setCookie.length) throw new Error(payload.msg || "login failed");
+          sessionCookie = setCookie[0].split(";")[0];
+          resolve();
+        } catch (error) {
+          reject(new Error(`test login failed: ${error.message}`));
+        }
+      });
+    });
+    req.on("error", reject);
+    req.setTimeout(5000, () => req.destroy(new Error("test login timed out")));
+    req.end(body);
   });
 }
 
@@ -433,19 +469,27 @@ function writeReports(data, checks, port) {
 }
 
 async function main() {
-  const originalExists = fs.existsSync(runtimeFile);
-  const originalContent = originalExists ? fs.readFileSync(runtimeFile, "utf8") : "";
   const data = JSON.parse(fs.readFileSync(fixtureFile, "utf8"));
   const baseDb = require(path.join(root, "constructionData"));
   const fixture = buildFixture(baseDb, data);
   const port = await freePort(Number(process.env.PAYMENT_FIXTURE_PORT || 3320));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zwkjy-payment-fixture-"));
+  const runtimeFile = path.join(tempRoot, "runtime-db.json");
   let server = null;
 
   try {
     fs.writeFileSync(runtimeFile, JSON.stringify(fixture, null, 2), "utf8");
     server = spawn(process.execPath, ["server.js"], {
       cwd: root,
-      env: { ...process.env, PORT: String(port) },
+      env: {
+        ...process.env,
+        PORT: String(port),
+        APP_RUNTIME_DB_PATH: runtimeFile,
+        APP_SECURITY_DB_PATH: path.join(tempRoot, "security.db"),
+        APP_RULE_DB_PATH: path.join(tempRoot, "rules.db"),
+        APP_SQLITE_DB_PATH: path.join(tempRoot, "runtime.db"),
+        APP_EXPORT_DIR: path.join(tempRoot, "exports")
+      },
       stdio: ["ignore", "pipe", "pipe"]
     });
     let serverOutput = "";
@@ -456,6 +500,7 @@ async function main() {
       serverOutput += chunk.toString();
     });
     await waitForServer(port, server);
+    await login(port);
     const checks = await runApiRegression(port, data);
     const result = writeReports(data, checks, port);
     if (!result.ok) {
@@ -473,10 +518,9 @@ async function main() {
       server.kill();
       await new Promise((resolve) => server.once("exit", resolve));
     }
-    if (originalExists) {
-      fs.writeFileSync(runtimeFile, originalContent, "utf8");
-    } else if (fs.existsSync(runtimeFile)) {
-      fs.unlinkSync(runtimeFile);
+    const resolved = path.resolve(tempRoot);
+    if (path.dirname(resolved) === path.resolve(os.tmpdir()) && path.basename(resolved).startsWith("zwkjy-payment-fixture-")) {
+      fs.rmSync(resolved, { recursive: true, force: true });
     }
   }
 }

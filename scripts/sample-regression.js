@@ -1,12 +1,13 @@
 const fs = require("fs");
 const http = require("http");
 const net = require("net");
+const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 
 const root = path.resolve(__dirname, "..");
-const runtimeFile = path.join(root, "data", "runtime-db.json");
 const reportDir = path.join(root, "tmp", "sample-regression");
+let sessionCookie = "";
 const sampleRoot = process.env.SAMPLE_REGRESSION_ROOT
   ? path.resolve(process.env.SAMPLE_REGRESSION_ROOT)
   : reportDir;
@@ -536,7 +537,7 @@ function requestJson(port, pathname) {
       hostname: "127.0.0.1",
       port,
       path: pathname,
-      headers: { Accept: "application/json" }
+      headers: { Accept: "application/json", ...(sessionCookie ? { Cookie: sessionCookie } : {}) }
     }, (res) => {
       let body = "";
       res.setEncoding("utf8");
@@ -562,9 +563,44 @@ function requestJson(port, pathname) {
   });
 }
 
+function login(port) {
+  return new Promise((resolve, reject) => {
+    const body = new URLSearchParams({ user_account: "ys1", password: "000000", remember_me: "false" }).toString();
+    const req = http.request({
+      hostname: "127.0.0.1",
+      port,
+      path: "/dologin",
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": Buffer.byteLength(body)
+      }
+    }, (res) => {
+      let responseBody = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => { responseBody += chunk; });
+      res.on("end", () => {
+        try {
+          const payload = JSON.parse(responseBody);
+          const setCookie = res.headers["set-cookie"] || [];
+          if (res.statusCode !== 200 || payload.code !== 1 || !setCookie.length) throw new Error(payload.msg || "login failed");
+          sessionCookie = setCookie[0].split(";")[0];
+          resolve();
+        } catch (error) {
+          reject(new Error(`test login failed: ${error.message}`));
+        }
+      });
+    });
+    req.on("error", reject);
+    req.setTimeout(5000, () => req.destroy(new Error("test login timed out")));
+    req.end(body);
+  });
+}
+
 function requestText(port, pathname) {
   return new Promise((resolve, reject) => {
-    const req = http.get({ hostname: "127.0.0.1", port, path: pathname }, (res) => {
+    const req = http.get({ hostname: "127.0.0.1", port, path: pathname, headers: sessionCookie ? { Cookie: sessionCookie } : {} }, (res) => {
       const chunks = [];
       res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
       res.on("end", () => {
@@ -721,7 +757,7 @@ function writeReports(extracted, fixture, regression, port) {
     "1. Extracted source totals from JL113, JL108, JL110, JL111, and expected JL104 fields with pdfplumber.",
     "2. Built a temporary runtime database with periods 12, 13, and 14. Period 12 is only the previous cumulative base needed by periods 13 and 14.",
     "3. Started server.js on an isolated local port and called the same payment APIs used by the website.",
-    "4. Restored data/runtime-db.json after the regression run.",
+    "4. Used isolated runtime, security, and rule databases without modifying production data.",
     "",
     "## Checks",
     "",
@@ -734,18 +770,26 @@ function writeReports(extracted, fixture, regression, port) {
 }
 
 async function main() {
-  const originalExists = fs.existsSync(runtimeFile);
-  const originalContent = originalExists ? fs.readFileSync(runtimeFile, "utf8") : "";
   const extracted = extractSamples();
   const baseDb = require(path.join(root, "constructionData"));
   const fixture = buildFixture(baseDb, extracted);
   const port = await freePort(Number(process.env.SAMPLE_REGRESSION_PORT || 3310));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zwkjy-sample-regression-"));
+  const runtimeFile = path.join(tempRoot, "runtime-db.json");
   let server = null;
   try {
     fs.writeFileSync(runtimeFile, JSON.stringify(fixture, null, 2), "utf8");
     server = spawn(process.execPath, ["server.js"], {
       cwd: root,
-      env: { ...process.env, PORT: String(port) },
+      env: {
+        ...process.env,
+        PORT: String(port),
+        APP_RUNTIME_DB_PATH: runtimeFile,
+        APP_SECURITY_DB_PATH: path.join(tempRoot, "security.db"),
+        APP_RULE_DB_PATH: path.join(tempRoot, "rules.db"),
+        APP_SQLITE_DB_PATH: path.join(tempRoot, "runtime.db"),
+        APP_EXPORT_DIR: path.join(tempRoot, "exports")
+      },
       stdio: ["ignore", "pipe", "pipe"]
     });
     let serverOutput = "";
@@ -756,6 +800,7 @@ async function main() {
       serverOutput += chunk.toString();
     });
     await waitForServer(port, server);
+    await login(port);
     const regression = await runApiRegression(port, extracted);
     const report = writeReports(extracted, fixture, regression, port);
     if (!report.result.ok) {
@@ -773,10 +818,9 @@ async function main() {
       server.kill();
       await new Promise((resolve) => server.once("exit", resolve));
     }
-    if (originalExists) {
-      fs.writeFileSync(runtimeFile, originalContent, "utf8");
-    } else if (fs.existsSync(runtimeFile)) {
-      fs.unlinkSync(runtimeFile);
+    const resolved = path.resolve(tempRoot);
+    if (path.dirname(resolved) === path.resolve(os.tmpdir()) && path.basename(resolved).startsWith("zwkjy-sample-regression-")) {
+      fs.rmSync(resolved, { recursive: true, force: true });
     }
   }
 }

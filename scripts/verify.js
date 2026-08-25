@@ -7,6 +7,13 @@ const engine = require("../costEngine");
 const ROOT = path.resolve(__dirname, "..");
 const BASE_URL = process.env.APP_BASE_URL || "http://localhost:3100";
 const CONTRACTS_PATH = path.resolve(ROOT, "..", "..", "work", "page_contracts.json");
+let authCookieHeader = "";
+
+function authenticatedOptions(options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (authCookieHeader && !headers.Cookie) headers.Cookie = authCookieHeader;
+  return { ...options, headers };
+}
 
 function round(value, digits = 2) {
   return Number(Number(value || 0).toFixed(digits));
@@ -17,20 +24,20 @@ function moneyTextForVerify(value) {
 }
 
 async function requestText(url, options = {}) {
-  const response = await fetch(`${BASE_URL}${url}`, options);
+  const response = await fetch(`${BASE_URL}${url}`, authenticatedOptions(options));
   const text = await response.text();
   return { response, text };
 }
 
 async function requestBuffer(url, options = {}) {
-  const response = await fetch(`${BASE_URL}${url}`, options);
+  const response = await fetch(`${BASE_URL}${url}`, authenticatedOptions(options));
   const buffer = Buffer.from(await response.arrayBuffer());
   return { response, buffer };
 }
 
 async function requestJson(url, options = {}) {
   const { response, text } = await requestText(url, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: { Accept: "application/json", "Content-Type": "application/json", ...(options.headers || {}) },
     ...options
   });
   try {
@@ -58,6 +65,12 @@ async function verifyHealth() {
   assert.ok(json.data && json.data.runtimeExists, "runtime DB should exist");
 }
 
+async function verifyUnauthenticatedAccess() {
+  const protectedApi = await requestJson("/user/curr_user_info");
+  assert.strictEqual(protectedApi.response.status, 401, "protected APIs should reject unauthenticated requests");
+  assert.strictEqual(protectedApi.json.code, 0, "unauthenticated API response should use a failure envelope");
+}
+
 async function verifyLoginFlow() {
   const loginPage = await requestText("/login.html");
   assert.ok(loginPage.text.includes('name="user_account"') && loginPage.text.includes('name="password"'), "login page should expose account and password fields");
@@ -67,14 +80,95 @@ async function verifyLoginFlow() {
     password: "000000",
     remember_me: "false"
   });
+  const deniedBody = new URLSearchParams({ user_account: "ys1", password: "wrong-password", remember_me: "false" });
+  const denied = await requestJson("/dologin", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: deniedBody.toString()
+  });
+  assert.strictEqual(denied.json.code, 0, "wrong passwords should be rejected");
+  assert.ok(!denied.response.headers.get("set-cookie"), "failed login should not issue a session cookie");
   const { response, json } = await requestJson("/dologin", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString()
   });
   assert.ok(response.headers.get("set-cookie"), "login should set an auth cookie");
+  authCookieHeader = response.headers.get("set-cookie").split(";")[0];
+  assert.ok(authCookieHeader.startsWith("app_session="), "login should issue an opaque server-side session cookie");
   assert.strictEqual(json.code, 1, "ys1 / 000000 should authenticate successfully");
   assert.strictEqual(json.data.userAccount, "ys1", "login response should return the authenticated account");
+}
+
+async function verifyAuthorizationFlow() {
+  const adminCookie = authCookieHeader;
+  const project = await postJson("/api/admin/projects", {
+    projectKey: "regression-project-2",
+    name: "回归隔离项目"
+  });
+  assert.strictEqual(project.response.status, 200, "admin should create a tenant-scoped project directory entry");
+  const created = await postJson("/api/admin/users", {
+    account: "regression_viewer",
+    displayName: "回归只读用户",
+    password: "Viewer-Pass-42!",
+    mustChangePassword: false,
+    roleCodes: ["viewer"],
+    projectIds: ["1"]
+  });
+  assert.strictEqual(created.response.status, 200, "admin should create a viewer account");
+  assert.deepStrictEqual(created.json.data.permissions, ["data:read"], "viewer should receive read-only permission");
+
+  authCookieHeader = "";
+  const viewerBody = new URLSearchParams({
+    user_account: "regression_viewer",
+    password: "Viewer-Pass-42!",
+    remember_me: "false"
+  });
+  const viewerLogin = await requestJson("/dologin", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: viewerBody.toString()
+  });
+  authCookieHeader = viewerLogin.response.headers.get("set-cookie").split(";")[0];
+  assert.strictEqual(viewerLogin.json.code, 1, "viewer should authenticate");
+
+  const readable = await requestJson("/api/cost/summary");
+  assert.strictEqual(readable.response.status, 200, "viewer should read business data");
+  const crossProjectDenied = await requestJson("/api/cost/summary?projectId=regression-project-2");
+  assert.strictEqual(crossProjectDenied.response.status, 403, "viewer should not cross a project assignment boundary");
+  assert.strictEqual(crossProjectDenied.json.requiredProjectId, "regression-project-2", "project denial should identify the rejected project scope");
+  const writeDenied = await postJson("/bill_measure/save", { measureNo: "FORBIDDEN-WRITE" });
+  assert.strictEqual(writeDenied.response.status, 403, "viewer should not mutate business data");
+  assert.strictEqual(writeDenied.json.requiredPermission, "data:write", "write denial should name the required grant");
+  const adminDenied = await requestJson("/api/admin/users");
+  assert.strictEqual(adminDenied.response.status, 403, "viewer should not access user administration");
+
+  authCookieHeader = adminCookie;
+  const users = await requestJson("/api/admin/users");
+  assert.ok(users.json.data.some((user) => user.account === "regression_viewer"), "admin user list should include the created viewer");
+  const roles = await requestJson("/api/admin/roles");
+  assert.deepStrictEqual(roles.json.data.map((role) => role.code), ["admin", "editor", "viewer"], "admin should list the three built-in roles");
+  const projects = await requestJson("/api/admin/projects");
+  assert.ok(projects.json.data.some((row) => row.projectId === "1") && projects.json.data.some((row) => row.projectId === "regression-project-2"), "admin should list tenant-scoped projects");
+  const page = await requestText("/admin/users_page");
+  assert.ok(page.text.includes("账号权限管理") && page.text.includes("create-user-form") && page.text.includes("安全审计"), "user administration page should expose user, role, and audit controls");
+  assert.ok(page.text.includes("项目目录") && page.text.includes("create-project-form") && page.text.includes("保存项目"), "user administration page should expose project directory and assignment controls");
+  const audit = await requestJson("/api/admin/security_audit?limit=50");
+  assert.ok(audit.json.data.some((row) => row.action === "login" && row.result === "denied"), "security audit should retain failed login attempts");
+  const mutationAudit = audit.json.data.find((row) => row.action === "http.mutation" && row.target_id === "POST /api/admin/projects");
+  assert.ok(mutationAudit, "business audit should record authenticated mutation endpoints");
+  const mutationDetails = JSON.parse(mutationAudit.details_json);
+  assert.strictEqual(mutationDetails.beforeChecksum.length, 64, "business audit should record a before-state SHA-256 checksum");
+  assert.strictEqual(mutationDetails.afterChecksum.length, 64, "business audit should record an after-state SHA-256 checksum");
+  assert.strictEqual(mutationDetails.projectId, "1", "business audit should record the effective project scope");
+  const backupCreated = await postJson("/api/admin/backups", {});
+  assert.strictEqual(backupCreated.json.code, 1, "admin should create a managed runtime backup");
+  assert.strictEqual(backupCreated.json.data.checksum.length, 64, "managed backup should expose a SHA-256 checksum");
+  const backups = await requestJson("/api/admin/backups");
+  assert.ok(backups.json.data.some((row) => row.fileName === backupCreated.json.data.fileName), "managed backup should appear in the backup catalog");
+  const restoredBackup = await postJson(`/api/admin/backups/${encodeURIComponent(backupCreated.json.data.fileName)}/restore`, {});
+  assert.strictEqual(restoredBackup.json.code, 1, "validated managed backup should restore successfully");
+  assert.ok(restoredBackup.json.data.safetyBackup.fileName.startsWith("pre-restore-"), "restore should create a safety backup first");
 }
 
 async function verifyContractUrls() {
@@ -209,7 +303,7 @@ async function verifyAssets() {
   }
   const bad = [];
   for (const asset of assets) {
-    const response = await fetch(`${BASE_URL}/${asset}`);
+    const response = await fetch(`${BASE_URL}/${asset}`, authenticatedOptions());
     const sample = Buffer.from(await response.arrayBuffer()).slice(0, 120).toString("utf8");
     if (response.status >= 400) {
       bad.push({ asset, status: response.status, sample: sample.slice(0, 80) });
@@ -660,9 +754,15 @@ async function verifyCalculationRulesAdminLoop() {
   assert.ok(page.text.includes("JL108覆盖期数") && page.text.includes("JL108覆盖方式"), "calculation rules admin page should expose JL108 multi-period coverage rules");
   assert.ok(page.text.includes("JL116非调因子X"), "calculation rules admin page should expose JL116 price adjustment formula factor");
   assert.ok(page.text.includes("JL108-1原材料折算系数") && page.text.includes("JL116材料权重系数"), "calculation rules admin page should expose JL108/JL116 configurable factor maps");
+  assert.ok(page.text.includes("规则变更原因（必填）") && page.text.includes("规则版本历史"), "calculation rules admin page should expose mandatory reason and immutable history");
+  assert.ok(page.text.includes("当前规则版本") && page.text.includes("校验值"), "calculation rules admin page should expose active version metadata");
 
   const original = before.json.data.rules;
+  const originalVersion = before.json.data.activeVersion;
   const originalPayable = before.json.data.summary.payableMoney;
+  const missingReason = await postJson("/api/admin/calculation_rules", { ...original, changeReason: "" });
+  assert.strictEqual(missingReason.response.status, 400, "calculation rules save should reject a missing change reason");
+  assert.ok(missingReason.json.msg.includes("变更原因"), "missing change reason should return an actionable error");
   const toggledRules = {
     ...original,
     includeRetention: !original.includeRetention,
@@ -672,7 +772,8 @@ async function verifyCalculationRulesAdminLoop() {
     jlPriceAdjustmentCoverageMode: "previous",
     jl116NonAdjustableFactor: 0.4,
     jl108RawMaterialConversionFactors: "CL-001=1.05; 钢筋 HRB400=1.05",
-    jl116MaterialWeights: "CL-001=0.35; CL-002=0.30"
+    jl116MaterialWeights: "CL-001=0.35; CL-002=0.30",
+    changeReason: "自动回归验证规则版本"
   };
   try {
     const toggled = await postJson("/api/admin/calculation_rules", toggledRules);
@@ -687,8 +788,23 @@ async function verifyCalculationRulesAdminLoop() {
     assert.strictEqual(toggled.json.data.rules.jl116MaterialWeights["CL-001"], 0.35, "JL116 material weight map should parse and persist");
     assert.notStrictEqual(toggled.json.data.summary.payableMoney, originalPayable, "retention toggle should affect JL104 payable money");
     assert.ok(toggled.json.data.summary.payableFormula, "saved rules should update formula text");
+    assert.strictEqual(toggled.json.data.version.version, originalVersion.version + 1, "saving rules should create the next immutable version");
+    assert.strictEqual(toggled.json.data.version.changeReason, toggledRules.changeReason, "rule version should record its reason");
+    assert.ok(Number.isInteger(toggled.json.data.version.createdBy), "rule version should record its authenticated creator");
+    const historyAfterSave = await requestJson("/api/admin/calculation_rules");
+    assert.strictEqual(historyAfterSave.json.data.history.filter((row) => row.status === "active").length, 1, "only one rule version should be active");
+    assert.strictEqual(historyAfterSave.json.data.history[0].checksum.length, 64, "rule history should expose a SHA-256 checksum");
+    const restored = await postJson(`/api/admin/calculation_rules/${originalVersion.id}/activate`, {});
+    assert.strictEqual(restored.json.code, 1, "an earlier rule version should be reactivatable");
+    assert.strictEqual(restored.json.data.version.id, originalVersion.id, "reactivation should select the requested immutable version");
+    const afterActivation = await requestJson("/api/admin/calculation_rules");
+    assert.strictEqual(afterActivation.json.data.activeVersion.id, originalVersion.id, "reactivated version should become active");
+    assert.strictEqual(afterActivation.json.data.history.filter((row) => row.status === "active").length, 1, "reactivation should preserve the one-active-version invariant");
   } finally {
-    await postJson("/api/admin/calculation_rules", original);
+    const current = await requestJson("/api/admin/calculation_rules");
+    if (current.json.data.activeVersion.id !== originalVersion.id) {
+      await postJson(`/api/admin/calculation_rules/${originalVersion.id}/activate`, {});
+    }
   }
 }
 
@@ -2493,7 +2609,8 @@ async function verifyGatherPeriodCalculationLoop() {
     await postJson("/api/admin/calculation_rules", {
       ...originalCoverageRules,
       jlPriceAdjustmentCoverageMode: "previous",
-      jlPriceAdjustmentCoveragePeriods: 1
+      jlPriceAdjustmentCoveragePeriods: 1,
+      changeReason: "自动回归验证跨期调差覆盖"
     });
     const coveredAdjustment = await requestJson(`/api/payment/jl_price_adjustment?periodId=${nextGatherId}&sectionId=101`);
     assert.strictEqual(coveredAdjustment.json.code, 1, "previous-period JL108 coverage API should succeed");
@@ -2503,7 +2620,7 @@ async function verifyGatherPeriodCalculationLoop() {
     const coveredCertificate = await requestJson(`/api/payment/certificate?periodId=${nextGatherId}&sectionId=101`);
     assert.strictEqual(round(coveredCertificate.json.data.priceAdjustment), 560, "JL104 price adjustment should use the same JL108 coverage window");
   } finally {
-    await postJson("/api/admin/calculation_rules", originalCoverageRules);
+    await postJson("/api/admin/calculation_rules", { ...originalCoverageRules, changeReason: "自动回归恢复跨期调差规则" });
   }
 
   const dashboard = await requestText(`/dataGather/gather_dashboard_page?gatherId=${gatherId}`);
@@ -3194,7 +3311,8 @@ async function verifyOriginalMenuUrlAliasesLoop() {
     ["/projectInformationNode/page/0", "资料"],
     ["/projectInformationParam/page", "资料"],
     ["/admin/dashboard_page", "后台管理"],
-    ["/admin/calculation_rules_page", "计算规则管理后台"]
+    ["/admin/calculation_rules_page", "计算规则管理后台"],
+    ["/admin/users_page", "账号权限管理"]
   ];
   for (const [url, expected] of pages) {
     const page = await requestText(url);
@@ -3217,7 +3335,8 @@ async function verifyOriginalMenuUrlAliasesLoop() {
     ["568", "试验资料"],
     ["9001", "后台管理"],
     ["9002", "计算规则管理后台"],
-    ["9004", "JL计量支付报表核对"]
+    ["9004", "JL计量支付报表核对"],
+    ["9010", "账号权限管理"]
   ];
   for (const [id, expected] of menuIds) {
     const page = await requestText(`/sbr/sbr_com/${id}`);
@@ -3234,12 +3353,15 @@ async function verifyOriginalMenuUrlAliasesLoop() {
   assert.ok(systemMenuText.includes("后台首页") && systemMenuText.includes("admin/dashboard_page"), "backend menu should expose backend dashboard");
   assert.ok(systemMenuText.includes("计算规则后台") && systemMenuText.includes("admin/calculation_rules_page"), "backend menu should expose calculation rules admin");
   assert.ok(systemMenuText.includes("JL计量支付报表") && systemMenuText.includes("payment/jl_report_page"), "backend menu should expose JL payment report");
+  assert.ok(systemMenuText.includes("账号权限管理") && systemMenuText.includes("admin/users_page"), "backend menu should expose user and role administration");
 }
 
 async function main() {
   const started = Date.now();
   await verifyHealth();
+  await verifyUnauthenticatedAccess();
   await verifyLoginFlow();
+  await verifyAuthorizationFlow();
   const contractUrls = await verifyContractUrls();
   const actionUrls = await verifyCachedPageActions();
   await verifyOriginalFormPageCoverage();
