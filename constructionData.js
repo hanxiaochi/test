@@ -1,4 +1,5 @@
 const appStore = require("./lib/app-store");
+const businessContext = require("./lib/business-state-context");
 
 const db = {
   client: {
@@ -236,4 +237,9 @@ function normalizeDemoText() {
 
 normalizeDemoText();
 
-module.exports = db;
+businessContext.configure({
+  defaultState: db,
+  loadTenant: (tenantId, projectId, template) => appStore.loadScope(tenantId, projectId, template)
+});
+
+module.exports = businessContext.proxy();

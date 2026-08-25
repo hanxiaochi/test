@@ -1,6 +1,10 @@
 "use strict";
 
+const fs = require("fs");
 const { spawnSync } = require("child_process");
+
+const npmCli = process.env.npm_execpath;
+if (!npmCli || !fs.existsSync(npmCli)) throw new Error("npm CLI entrypoint is unavailable");
 
 const commands = [
   ["run", "test:whitebox"],
@@ -9,6 +13,9 @@ const commands = [
   ["run", "test:rules"],
   ["run", "test:storage"],
   ["run", "test:backup"],
+  ["run", "test:business-context"],
+  ["run", "test:tenant-store"],
+  ["run", "test:tabular"],
   ["run", "test:payment-fixtures"],
   ["run", "sample:regression"],
   ["run", "verify"],
@@ -16,6 +23,7 @@ const commands = [
 ];
 
 for (const args of commands) {
-  const result = spawnSync("npm.cmd", args, { stdio: "inherit", shell: true });
+  const result = spawnSync(process.execPath, [npmCli, ...args], { stdio: "inherit" });
+  if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status || 1);
 }

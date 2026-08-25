@@ -53,6 +53,7 @@ test("project rules override tenant defaults and otherwise inherit", () => withS
   const project = store.createVersion({ projectId: "project-a", rules: { moneyDigits: 0 } });
   assert.equal(store.getActive("default", "project-a").id, project.id);
   assert.equal(store.getActive("default", "project-b").id, global.id);
+  assert.throws(() => store.activate({ id: project.id, tenantId: "default", projectId: "project-b" }), /does not exist/);
   assert.deepEqual(store.history("default", "project-a", 0).map((row) => row.version), [1]);
   const otherTenant = store.createVersion({ tenantId: "other", rules: { moneyDigits: 4 } });
   assert.throws(() => store.activate({ id: otherTenant.id, tenantId: "default" }), /does not exist/);

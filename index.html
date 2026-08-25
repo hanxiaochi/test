@@ -74,6 +74,9 @@
 			<!-- 加载头部导航 -->
 			<ul class="layui-nav layui-layout-left zw-header-menu-pc"></ul>
 			<ul class="layui-nav layui-layout-right zw-header-set-pc">
+				<li class="layui-nav-item" style="padding:0 10px;">
+					<select id="app-project-switch" aria-label="当前项目" style="height:32px;min-width:180px;border:1px solid rgba(255,255,255,.35);background:#fff;color:#172033;padding:0 8px;"></select>
+				</li>
 				<li class="layui-nav-item">
 	                <a href="javascript:;" data-refresh="刷新"><i class="layui-icon layui-icon-refresh-3"></i></a>
 	            </li>
@@ -203,6 +206,16 @@
 		  appInit.init({});//初始化 页面导航
 		  appInit.listen();//监听hash地址变化
 		  zwOnline.loadCurrUserInfo();//加载登录用户的信息以及打开webSocket
+		  fetch('/api/session/projects',{headers:{'Accept':'application/json'}}).then(function(response){return response.json()}).then(function(result){
+			  if(!result||result.code!==1)return;
+			  var select=document.getElementById('app-project-switch');
+			  (result.data.projects||[]).forEach(function(project){
+				  var option=document.createElement('option'); option.value=project.projectId; option.textContent=project.name; option.selected=String(project.projectId)===String(result.data.currentProjectId); select.appendChild(option);
+			  });
+			  select.addEventListener('change',function(){
+				  fetch('/api/session/project',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({projectId:select.value})}).then(function(response){return response.json().then(function(body){if(!response.ok||body.code!==1)throw new Error(body.msg||'项目切换失败');return body})}).then(function(){window.location.reload()}).catch(function(error){if(window.layer){layer.msg(error.message)}});
+			  });
+		  });
 		  $('body').on('mouseover','.layui-table-body .layui-table-cell',function (){
 			 	$(this).parent().attr("title",$(this).text());
 		  });

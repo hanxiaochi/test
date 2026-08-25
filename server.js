@@ -3,10 +3,12 @@ const path = require("path");
 const crypto = require("crypto");
 const express = require("express");
 const appStore = require("./lib/app-store");
+const businessContext = require("./lib/business-state-context");
 const authCore = require("./lib/security/auth-core");
 const authService = require("./lib/security/auth-service");
 const { RuleStore } = require("./lib/rules/rule-store");
 const backupService = require("./lib/backup/backup-service");
+const tabularService = require("./lib/import-export/tabular-service");
 const engine = require("./costEngine");
 
 (engine.db.projects || []).forEach((project) => {
@@ -25,16 +27,18 @@ const backupDir = path.resolve(process.env.APP_BACKUP_DIR || path.join(dataDir, 
 const port = process.env.PORT || 3100;
 fs.mkdirSync(backupDir, { recursive: true });
 const ruleStore = new RuleStore(process.env.APP_RULE_DB_PATH || authService.securityFile);
+const initializedRuleTenants = new Set();
 const storedRuleVersion = ruleStore.getActive("default", "*");
 if (storedRuleVersion) {
   engine.db.calculationRules = storedRuleVersion.rules;
 } else {
   ruleStore.createVersion({ tenantId: "default", projectId: "*", rules: engine.calculationRules(), changeReason: "初始化现有计算规则" });
 }
+initializedRuleTenants.add("default::1");
 
 app.disable("etag");
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+app.use(express.json({ limit: process.env.APP_BODY_LIMIT || "64mb" }));
 app.use((req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Pragma", "no-cache");
@@ -66,22 +70,168 @@ function backupFileName(prefix = "runtime") {
   return `${prefix}-${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomBytes(4).toString("hex")}.json`;
 }
 
-function createManagedBackup(user, prefix = "runtime") {
-  const fileName = backupFileName(prefix);
-  const target = path.join(backupDir, fileName);
-  const temporary = `${target}.tmp`;
-  const bytes = backupService.createBackup({ state: engine.db, createdBy: user.account, tenantId: user.tenantId, applicationVersion: require("./package.json").version });
-  fs.writeFileSync(temporary, bytes);
-  fs.renameSync(temporary, target);
-  return { fileName, bytes: bytes.length, checksum: backupService.validateBackup(bytes, { tenantId: user.tenantId }).checksum };
+function tenantBackupDir(tenantId, projectId) {
+  const tenantKey = crypto.createHash("sha256").update(String(tenantId || "default"), "utf8").digest("hex").slice(0, 24);
+  const projectKey = crypto.createHash("sha256").update(String(projectId || "1"), "utf8").digest("hex").slice(0, 24);
+  const directory = path.join(backupDir, tenantKey, projectKey);
+  fs.mkdirSync(directory, { recursive: true });
+  return directory;
 }
 
-function managedBackupPath(fileName) {
+function createManagedBackup(user, prefix = "runtime") {
+  const projectId = businessContext.current().projectId || "1";
+  const fileName = backupFileName(prefix);
+  const target = path.join(tenantBackupDir(user.tenantId, projectId), fileName);
+  const temporary = `${target}.tmp`;
+  const bytes = backupService.createBackup({ state: engine.db, createdBy: user.account, tenantId: user.tenantId, projectId, applicationVersion: require("./package.json").version });
+  fs.writeFileSync(temporary, bytes);
+  fs.renameSync(temporary, target);
+  return { fileName, bytes: bytes.length, checksum: backupService.validateBackup(bytes, { tenantId: user.tenantId, projectId }).checksum, projectId };
+}
+
+function managedBackupPath(fileName, tenantId, projectId) {
   const safeName = path.basename(String(fileName || ""));
   if (!safeName || safeName !== String(fileName) || !safeName.endsWith(".json")) throw new Error("Invalid backup file name");
-  const target = path.resolve(backupDir, safeName);
-  if (path.dirname(target) !== backupDir || !fs.existsSync(target)) throw new Error("Backup file does not exist");
+  const directory = tenantBackupDir(tenantId, projectId);
+  const target = path.resolve(directory, safeName);
+  if (path.dirname(target) !== directory || !fs.existsSync(target)) throw new Error("Backup file does not exist");
   return target;
+}
+
+function managedBackupRows(user, projectId) {
+  const directory = tenantBackupDir(user.tenantId, projectId);
+  return fs.readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => {
+      const stat = fs.statSync(path.join(directory, entry.name));
+      return { fileName: entry.name, bytes: stat.size, createdAt: stat.mtime.toISOString() };
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+const dataExchangeModules = {
+  bills: {
+    name: "工程量清单", storageKey: "bills", idField: "billId", key: "billNo",
+    fields: [
+      { name: "billNo", label: "清单编号", required: true }, { name: "billName", label: "清单名称", required: true },
+      { name: "sectionId", label: "合同段ID", type: "integer", required: true }, { name: "chapter", label: "章节" },
+      { name: "measureUnit", label: "单位" }, { name: "contractNum", label: "合同数量", type: "number", defaultValue: 0 },
+      { name: "correctedNum", label: "修正数量", type: "number", defaultValue: 0 }, { name: "price", label: "单价", type: "number", defaultValue: 0 }
+    ]
+  },
+  materials: {
+    name: "材料目录", storageKey: "materials", idField: "materialId", key: "materialNo",
+    fields: [
+      { name: "materialNo", label: "材料编号", required: true }, { name: "materialName", label: "材料名称", required: true },
+      { name: "spec", label: "规格" }, { name: "unit", label: "单位" },
+      { name: "basePrice", label: "基期价", type: "number", defaultValue: 0 }, { name: "currentPrice", label: "现行价", type: "number", defaultValue: 0 }
+    ]
+  },
+  measures: {
+    name: "清单计量", storageKey: "measures", idField: "measureId", key: "measureNo",
+    fields: [
+      { name: "measureNo", label: "计量单号", required: true }, { name: "sectionId", label: "合同段ID", type: "integer", required: true },
+      { name: "periodId", label: "工期ID", type: "integer", required: true }, { name: "measureDate", label: "计量日期" },
+      { name: "states", label: "状态" }, { name: "drawNo", label: "图号" }, { name: "pegNo", label: "桩号" }, { name: "position", label: "部位" }
+    ]
+  },
+  manualMeasures: {
+    name: "手动计量", storageKey: "manualMeasures", idField: "manualId", key: "measureNo",
+    fields: [
+      { name: "measureNo", label: "计量单号", required: true }, { name: "sectionId", label: "合同段ID", type: "integer", required: true },
+      { name: "billNo", label: "清单编号", required: true }, { name: "billName", label: "清单名称", required: true },
+      { name: "measureUnit", label: "单位" }, { name: "measureNum", label: "数量", type: "number", defaultValue: 0 },
+      { name: "price", label: "单价", type: "number", defaultValue: 0 }, { name: "measureDate", label: "计量日期" }, { name: "states", label: "状态" }
+    ]
+  },
+  variations: {
+    name: "工程变更", storageKey: "variations", idField: "varyId", key: "varyNo",
+    fields: [
+      { name: "varyNo", label: "变更编号", required: true }, { name: "sectionId", label: "合同段ID", type: "integer", required: true },
+      { name: "billNo", label: "清单编号" }, { name: "billName", label: "清单名称" }, { name: "measureUnit", label: "单位" },
+      { name: "beforeNum", label: "变更前数量", type: "number", defaultValue: 0 }, { name: "afterNum", label: "变更后数量", type: "number", defaultValue: 0 },
+      { name: "beforePrice", label: "变更前单价", type: "number", defaultValue: 0 }, { name: "afterPrice", label: "变更后单价", type: "number", defaultValue: 0 },
+      { name: "varyReason", label: "变更原因" }, { name: "states", label: "状态" }
+    ]
+  }
+};
+
+function dataExchangeModule(code) {
+  const module = dataExchangeModules[String(code || "")];
+  if (!module) throw new Error("Unsupported data exchange module");
+  return module;
+}
+
+function dataExchangeSchema(code) {
+  const module = dataExchangeModule(code);
+  return {
+    code: String(code),
+    name: module.name,
+    key: module.key,
+    formats: ["csv", "json"],
+    modes: ["append", "upsert"],
+    fields: module.fields.map((field) => ({
+      name: field.name,
+      label: field.label,
+      type: field.type || "string",
+      required: Boolean(field.required)
+    }))
+  };
+}
+
+function dataExchangeAudit(req, action, result, details = {}) {
+  authService.store.audit({
+    tenantId: req.authUser.tenantId,
+    userId: req.authUser.id,
+    action,
+    result,
+    targetType: "data_exchange",
+    targetId: String(req.params.module || ""),
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+    details: { projectId: req.businessContext.projectId, ...details }
+  });
+}
+
+function dataExchangeValidation(req) {
+  const module = dataExchangeModule(req.params.module);
+  const format = String(req.body.format || "csv").toLowerCase();
+  const mode = String(req.body.mode || "append").toLowerCase();
+  const existingRows = Array.isArray(engine.db[module.storageKey]) ? engine.db[module.storageKey] : [];
+  const prepared = tabularService.prepareImport({
+    content: String(req.body.content || ""),
+    format,
+    mode,
+    schema: module,
+    existingRows
+  });
+  return { module, format, mode, existingRows, prepared };
+}
+
+function applyDataExchangeImport(req) {
+  const validation = dataExchangeValidation(req);
+  if (!validation.prepared.ok) return validation;
+  const { module, prepared } = validation;
+  let nextId = validation.existingRows.reduce((maximum, row) => Math.max(maximum, Number(row[module.idField] || row.id || 0)), 0);
+  const existingKeys = new Set(validation.existingRows.map((row) => String(row[module.key] ?? "")));
+  const nextRows = prepared.nextRows.map((row) => {
+    if (existingKeys.has(String(row[module.key] ?? ""))) return row;
+    nextId += 1;
+    return { ...row, id: nextId, [module.idField]: nextId };
+  });
+  const previousRows = engine.db[module.storageKey];
+  engine.db[module.storageKey] = nextRows;
+  try {
+    const storage = appStore.save(engine.db, {
+      actor: req.authUser.account,
+      action: `data-exchange:${req.params.module}:${validation.mode}`,
+      checkpoint: true
+    });
+    return { ...validation, prepared: { ...prepared, nextRows: undefined }, storage };
+  } catch (error) {
+    engine.db[module.storageKey] = previousRows;
+    throw error;
+  }
 }
 
 function requirePermission(permission) {
@@ -119,25 +269,38 @@ app.use((req, res, next) => {
     return;
   }
   const accessibleProjects = authService.store.accessibleProjects(session.user.id, session.user.tenantId);
-  const requestedProjectId = String(req.headers["x-project-id"] || req.query.projectId || req.body.projectId || "").trim();
+  const explicitProjectId = String(req.headers["x-project-id"] || req.query.projectId || req.body.projectId || "").trim();
+  const cookieProjectId = String(cookies.app_project || "").trim();
+  const requestedProjectId = explicitProjectId || cookieProjectId;
   const effectiveProjectId = requestedProjectId && requestedProjectId !== "0"
     ? requestedProjectId
-    : String((accessibleProjects[0] || {}).projectId || "");
-  if (requestedProjectId && requestedProjectId !== "0" && !authService.store.canAccessProject(session.user.id, session.user.tenantId, requestedProjectId)) {
+    : String((accessibleProjects[0] || {}).projectId || "1");
+  if (explicitProjectId && explicitProjectId !== "0" && !authService.store.canAccessProject(session.user.id, session.user.tenantId, explicitProjectId)) {
     res.status(403).json({ code: 0, msg: "无权访问该项目", data: null, requiredProjectId: requestedProjectId });
     return;
+  }
+  const authorizedEffectiveProjectId = authService.store.canAccessProject(session.user.id, session.user.tenantId, effectiveProjectId)
+    ? effectiveProjectId
+    : String((accessibleProjects[0] || {}).projectId || "1");
+  return businessContext.runForScope(session.user.tenantId, authorizedEffectiveProjectId, () => {
+  const ruleScopeKey = `${session.user.tenantId}::${authorizedEffectiveProjectId}`;
+  if (!initializedRuleTenants.has(ruleScopeKey)) {
+    const tenantRules = ruleStore.getActive(session.user.tenantId, authorizedEffectiveProjectId);
+    if (tenantRules) engine.db.calculationRules = tenantRules.rules;
+    else ruleStore.createVersion({ tenantId: session.user.tenantId, projectId: "*", rules: engine.calculationRules(), changeReason: "初始化租户计算规则", createdBy: session.user.id });
+    initializedRuleTenants.add(ruleScopeKey);
   }
   const requestedSectionId = Number(req.query.sectionId || req.body.sectionId || 0);
   const requestedSection = requestedSectionId
     ? (engine.db.sections || []).find((section) => Number(section.sectionId || section.id) === requestedSectionId)
     : null;
-  if (requestedSection && effectiveProjectId && String(requestedSection.projectId || "") !== effectiveProjectId) {
+  if (requestedSection && authorizedEffectiveProjectId && String(requestedSection.projectId || "") !== authorizedEffectiveProjectId) {
     res.status(403).json({ code: 0, msg: "合同段不属于当前授权项目", data: null, requiredProjectId: String(requestedSection.projectId || "") });
     return;
   }
   req.businessContext = {
     tenantId: session.user.tenantId,
-    projectId: effectiveProjectId,
+    projectId: authorizedEffectiveProjectId,
     accessibleProjectIds: accessibleProjects.map((project) => project.projectId)
   };
   if (required === "data:write" || (!["GET", "HEAD", "OPTIONS"].includes(req.method) && required === "admin:access")) {
@@ -158,7 +321,7 @@ app.use((req, res, next) => {
             method: req.method,
             path: req.path,
             statusCode: res.statusCode,
-            projectId: effectiveProjectId,
+            projectId: authorizedEffectiveProjectId,
             beforeChecksum,
             afterChecksum,
             changed: beforeChecksum !== afterChecksum
@@ -170,6 +333,7 @@ app.use((req, res, next) => {
     });
   }
   next();
+  });
 });
 
 function readText(file, fallback = "") {
@@ -385,14 +549,8 @@ function cleanWorkflowText(value, fallback = "") {
 
 function cleanBusinessText(value, fallback = "") {
   const text = String(value ?? "").replace(/\?{2,}/g, "").trim();
-  if (!text || /[鍙鏄宸寰瀹绗缂娓璁閫鏉鍚]/.test(text)) return fallback;
-  return text;
-}
-
-function cleanBusinessText(value, fallback = "") {
-  const text = String(value ?? "").replace(/\?{2,}/g, "").trim();
   if (!text) return fallback;
-  if (/[\u934\u93c\u5bb8\u5be\u7c2\u7ca\u7f2\u5a5\u95c\u93d\u935\u5e0]/.test(text)) return fallback;
+  if (/[\uFFFD\uE000-\uF8FF]/u.test(text)) return fallback;
   return text;
 }
 
@@ -1200,6 +1358,44 @@ leftMenus.set("9000", [
     resourceUrl: "admin/users_page",
     sysBusinessResources: [],
     sysIdentityResources: ""
+  },
+  {
+    appImageUrl: "",
+    appPageUrl: "",
+    controllerDes: "",
+    flagFlow: 1,
+    isShow: 1,
+    menuIcon: "layui-icon layui-icon-file-b",
+    parentId: 9000,
+    refreshType: 1,
+    resourceCode: "990003",
+    resourceDes: "项目数据备份、导入与恢复",
+    resourceId: 9020,
+    resourceLevel: 0,
+    resourceName: "备份恢复管理",
+    resourceNo: "model",
+    resourceUrl: "admin/backups_page",
+    sysBusinessResources: [],
+    sysIdentityResources: ""
+  },
+  {
+    appImageUrl: "",
+    appPageUrl: "",
+    controllerDes: "",
+    flagFlow: 1,
+    isShow: 1,
+    menuIcon: "layui-icon layui-icon-upload-drag",
+    parentId: 9000,
+    refreshType: 1,
+    resourceCode: "990004",
+    resourceDes: "核心业务数据批量校验、导入与导出",
+    resourceId: 9030,
+    resourceLevel: 0,
+    resourceName: "数据导入导出",
+    resourceNo: "model",
+    resourceUrl: "admin/data_exchange_page",
+    sysBusinessResources: [],
+    sysIdentityResources: ""
   }
 ]);
 
@@ -1327,11 +1523,14 @@ function checked(value) {
   return value ? "checked" : "";
 }
 
-function calculationRulesPageHtml() {
+function calculationRulesPageHtml(req = {}) {
+  const activeContext = businessContext.current();
+  const tenantId = (req.authUser && req.authUser.tenantId) || activeContext.tenantId;
+  const projectId = (req.businessContext && req.businessContext.projectId) || activeContext.projectId;
   const rules = engine.calculationRules();
   const summary = engine.contractSummary();
-  const activeVersion = ruleStore.getActive("default", "*");
-  const history = ruleStore.history("default", "*", 100);
+  const activeVersion = ruleStore.getActive(tenantId, projectId);
+  const history = ruleStore.history(tenantId, projectId, 100);
   const versionRows = history.map((item) => `
     <tr>
       <td>V${item.version}</td>
@@ -1687,7 +1886,9 @@ function adminDashboardHtml() {
     ["BOQ校验", "/costBase/boq_validation_page", "清单数量、单价、金额一致性检查"],
     ["JL计量支付报表", "/payment/jl_report_page", "按JL114/JL113/JL105/JL104核对支付证书"],
     ["计算规则后台", "/admin/calculation_rules_page", "修改应付构成、小数位和审核比例"],
-    ["账号权限管理", "/admin/users_page", "管理用户、角色、状态和安全审计"]
+    ["账号权限管理", "/admin/users_page", "管理用户、角色、状态和安全审计"],
+    ["备份恢复管理", "/admin/backups_page", "按当前项目导出、导入和恢复校验备份"],
+    ["数据导入导出", "/admin/data_exchange_page", "批量校验、追加、更新并导出核心业务数据"]
   ].map(([name, href, desc]) => `
     <tr>
       <td>${htmlEscape(name)}</td>
@@ -1736,7 +1937,7 @@ function adminDashboardHtml() {
 }
 
 function userManagementHtml(req = {}) {
-  const tenantId = (req.authUser && req.authUser.tenantId) || "default";
+  const tenantId = (req.authUser && req.authUser.tenantId) || businessContext.current().tenantId;
   const users = authService.store.listUsers(tenantId);
   const roles = authService.store.listRoles(tenantId);
   const projects = authService.store.listProjects(tenantId);
@@ -1843,6 +2044,117 @@ function userManagementHtml(req = {}) {
       Array.prototype.forEach.call(root.querySelectorAll('[data-user-status]'),function(btn){btn.addEventListener('click',function(){
         post('/api/admin/users/'+btn.getAttribute('data-user-status')+'/status',{status:btn.getAttribute('data-status')}).then(function(){notify('账号状态已更新');refresh()}).catch(function(e){notify(e.message)});
       })});
+    })();</script>
+  </div>`;
+}
+
+function backupManagementHtml(req) {
+  const projectId = req.businessContext.projectId;
+  const rows = managedBackupRows(req.authUser, projectId);
+  const body = rows.map((row) => `<tr>
+    <td>${htmlEscape(row.fileName)}</td>
+    <td>${htmlEscape(row.createdAt)}</td>
+    <td>${(row.bytes / 1024).toFixed(1)} KB</td>
+    <td class="core-actions">
+      <a href="/api/admin/backups/${encodeURIComponent(row.fileName)}/download">下载</a>
+      <button type="button" class="layui-btn layui-btn-xs layui-btn-warm" data-restore-backup="${htmlEscape(row.fileName)}">恢复</button>
+    </td>
+  </tr>`).join("");
+  return `<div class="core-page" data-core-page="backup-management">
+    ${corePageStyle("#0f766e")}
+    <div class="core-shell">
+      <div class="core-head">
+        <div><h2>备份恢复管理</h2><p>当前项目：${htmlEscape(projectId)}</p></div>
+        <div class="core-tools"><a class="layui-btn layui-btn-sm layui-btn-primary" href="/admin/dashboard_page">返回后台</a></div>
+      </div>
+      <div class="core-grid">
+        <div class="core-panel">
+          <h3>创建与导入</h3>
+          <div class="core-tools">
+            <button type="button" class="layui-btn layui-btn-sm" id="create-managed-backup">创建当前项目备份</button>
+            <label class="layui-btn layui-btn-sm layui-btn-primary" for="import-managed-backup">导入备份文件</label>
+            <input id="import-managed-backup" type="file" accept="application/json,.json" style="display:none;">
+          </div>
+          <div id="backup-message" class="core-note" style="margin-top:12px;">恢复操作会先自动创建恢复前安全快照，并校验租户、项目和文件完整性。</div>
+        </div>
+        <div class="core-panel">
+          <h3>存储策略</h3>
+          <div class="core-note">每个租户和项目使用独立备份目录；导入文件不会覆盖已有备份；恢复会同步创建不可变计算规则版本并写入业务审计。</div>
+        </div>
+      </div>
+      <div class="core-panel" style="margin-top:12px;overflow:auto;">
+        <h3>备份目录</h3>
+        <table class="layui-table" lay-size="sm"><thead><tr><th>文件</th><th>创建时间</th><th>大小</th><th>操作</th></tr></thead><tbody>${body || '<tr><td colspan="4" class="core-empty">暂无备份</td></tr>'}</tbody></table>
+      </div>
+    </div>
+    <script>(function(){
+      var root=document.querySelector('[data-core-page="backup-management"]'); if(!root)return;
+      var message=root.querySelector('#backup-message');
+      function post(url,data){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(data||{})}).then(function(response){return response.json().then(function(body){if(!response.ok||body.code!==1)throw new Error(body.msg||'操作失败');return body})})}
+      function done(text){message.textContent=text;setTimeout(function(){location.reload()},500)}
+      root.querySelector('#create-managed-backup').addEventListener('click',function(){post('/api/admin/backups',{}).then(function(result){done('备份已创建：'+result.data.fileName)}).catch(function(error){message.textContent=error.message})});
+      root.querySelector('#import-managed-backup').addEventListener('change',function(event){var file=event.target.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){post('/api/admin/backups/import',{originalName:file.name,content:String(reader.result||'')}).then(function(result){done('备份已导入：'+result.data.fileName)}).catch(function(error){message.textContent=error.message})};reader.onerror=function(){message.textContent='读取文件失败'};reader.readAsText(file,'utf-8')});
+      Array.prototype.forEach.call(root.querySelectorAll('[data-restore-backup]'),function(button){button.addEventListener('click',function(){var file=button.getAttribute('data-restore-backup');if(!window.confirm('确认恢复备份 '+file+'？当前数据会先自动备份。'))return;button.disabled=true;post('/api/admin/backups/'+encodeURIComponent(file)+'/restore',{}).then(function(){done('恢复完成，正在刷新')}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
+    })();</script>
+  </div>`;
+}
+
+function dataExchangeManagementHtml(req) {
+  const moduleOptions = Object.entries(dataExchangeModules)
+    .map(([code, module]) => `<option value="${htmlEscape(code)}">${htmlEscape(module.name)}</option>`)
+    .join("");
+  return `<div class="core-page" data-core-page="data-exchange">
+    ${corePageStyle("#1d4ed8")}
+    <div class="core-shell">
+      <div class="core-head">
+        <div><h2>数据导入导出</h2><p>当前项目：${htmlEscape(req.businessContext.projectId)}</p></div>
+        <div class="core-tools"><a class="layui-btn layui-btn-sm layui-btn-primary" href="/admin/dashboard_page">返回后台</a></div>
+      </div>
+      <div class="core-grid">
+        <div class="core-panel">
+          <h3>数据范围</h3>
+          <div class="layui-form-item"><label class="layui-form-label">业务模块</label><div class="layui-input-block"><select id="exchange-module" class="layui-select">${moduleOptions}</select></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">文件格式</label><div class="layui-input-block"><select id="exchange-format" class="layui-select"><option value="csv">CSV</option><option value="json">JSON</option></select></div></div>
+          <div class="layui-form-item"><label class="layui-form-label">导入方式</label><div class="layui-input-block"><select id="exchange-mode" class="layui-select"><option value="append">仅追加</option><option value="upsert">按唯一键更新或追加</option></select></div></div>
+          <div class="core-tools">
+            <button type="button" class="layui-btn layui-btn-sm" id="exchange-export">导出当前数据</button>
+            <label class="layui-btn layui-btn-sm layui-btn-primary" for="exchange-file">选择导入文件</label>
+            <input id="exchange-file" type="file" accept=".csv,.json,text/csv,application/json" style="display:none;">
+          </div>
+        </div>
+        <div class="core-panel">
+          <h3>校验与提交</h3>
+          <div id="exchange-schema" class="core-note">正在读取字段定义...</div>
+          <div id="exchange-summary" class="core-note" style="margin-top:10px;">选择文件后先执行整批校验，校验失败不会写入任何数据。</div>
+          <div class="core-tools" style="margin-top:12px;">
+            <button type="button" class="layui-btn layui-btn-sm" id="exchange-validate" disabled>校验文件</button>
+            <button type="button" class="layui-btn layui-btn-sm layui-btn-normal" id="exchange-import" disabled>确认导入</button>
+          </div>
+        </div>
+      </div>
+      <div class="core-panel" style="margin-top:12px;overflow:auto;">
+        <h3>逐行校验结果</h3>
+        <table class="layui-table" lay-size="sm"><thead><tr><th>行号</th><th>字段</th><th>错误代码</th><th>说明</th></tr></thead><tbody id="exchange-errors"><tr><td colspan="4" class="core-empty">尚未执行校验</td></tr></tbody></table>
+      </div>
+    </div>
+    <script>(function(){
+      var root=document.querySelector('[data-core-page="data-exchange"]');if(!root)return;
+      var moduleEl=root.querySelector('#exchange-module'),formatEl=root.querySelector('#exchange-format'),modeEl=root.querySelector('#exchange-mode');
+      var fileEl=root.querySelector('#exchange-file'),validateButton=root.querySelector('#exchange-validate'),importButton=root.querySelector('#exchange-import');
+      var schemaEl=root.querySelector('#exchange-schema'),summaryEl=root.querySelector('#exchange-summary'),errorsEl=root.querySelector('#exchange-errors');
+      var fileContent='',validatedSignature='';
+      function escapeHtml(value){var node=document.createElement('div');node.textContent=String(value==null?'':value);return node.innerHTML}
+      function signature(){return [moduleEl.value,formatEl.value,modeEl.value,fileContent].join('\n')}
+      function request(url,options){return fetch(url,options||{}).then(function(response){return response.json().then(function(body){if(!response.ok||body.code!==1)throw new Error(body.msg||'操作失败');return body.data})})}
+      function refreshSchema(){validatedSignature='';importButton.disabled=true;request('/api/admin/data_exchange/'+encodeURIComponent(moduleEl.value)+'/schema').then(function(schema){schemaEl.textContent='唯一键：'+schema.key+'；字段：'+schema.fields.map(function(field){return field.name+(field.required?'*':'')}).join('、')}).catch(function(error){schemaEl.textContent=error.message})}
+      function renderResult(result){var errors=result.errors||[];summaryEl.textContent=result.ok?('校验通过：共 '+result.total+' 行，预计新增 '+result.inserted+' 行、更新 '+result.updated+' 行。'):('校验失败：共 '+result.total+' 行，发现 '+errors.length+' 个问题。');errorsEl.innerHTML=errors.length?errors.map(function(error){return '<tr><td>'+escapeHtml(error.row)+'</td><td>'+escapeHtml(error.field)+'</td><td>'+escapeHtml(error.code)+'</td><td>'+escapeHtml(error.message)+'</td></tr>'}).join(''):'<tr><td colspan="4" class="core-empty">没有发现错误</td></tr>';return result}
+      function submit(path){return request('/api/admin/data_exchange/'+encodeURIComponent(moduleEl.value)+'/'+path,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({format:formatEl.value,mode:modeEl.value,content:fileContent})})}
+      [moduleEl,formatEl,modeEl].forEach(function(element){element.addEventListener('change',refreshSchema)});
+      fileEl.addEventListener('change',function(event){var file=event.target.files[0];if(!file)return;formatEl.value=/\.json$/i.test(file.name)?'json':'csv';var reader=new FileReader();reader.onload=function(){fileContent=String(reader.result||'');validatedSignature='';validateButton.disabled=false;importButton.disabled=true;summaryEl.textContent='已读取 '+file.name+'，请先校验。';refreshSchema()};reader.onerror=function(){summaryEl.textContent='读取文件失败'};reader.readAsText(file,'utf-8')});
+      validateButton.addEventListener('click',function(){validateButton.disabled=true;submit('validate').then(function(result){renderResult(result);validatedSignature=result.ok?signature():'';importButton.disabled=!result.ok}).catch(function(error){summaryEl.textContent=error.message}).finally(function(){validateButton.disabled=false})});
+      importButton.addEventListener('click',function(){if(validatedSignature!==signature()){summaryEl.textContent='文件或选项已变化，请重新校验。';importButton.disabled=true;return}importButton.disabled=true;submit('import').then(function(result){renderResult(result);summaryEl.textContent='导入完成：新增 '+result.inserted+' 行，更新 '+result.updated+' 行。';validatedSignature=''}).catch(function(error){summaryEl.textContent=error.message;importButton.disabled=false})});
+      root.querySelector('#exchange-export').addEventListener('click',function(){location.href='/api/admin/data_exchange/'+encodeURIComponent(moduleEl.value)+'/export?format='+encodeURIComponent(formatEl.value)});
+      refreshSchema();
     })();</script>
   </div>`;
 }
@@ -2330,6 +2642,8 @@ function contentForId(id) {
   if (String(id) === "9002") return calculationRulesPageHtml();
   if (String(id) === "9004") return jlPaymentReportPageHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "9010") return userManagementHtml();
+  if (String(id) === "9020") return backupManagementHtml({ businessContext: businessContext.current(), authUser: { tenantId: businessContext.current().tenantId } });
+  if (String(id) === "9030") return dataExchangeManagementHtml({ businessContext: businessContext.current() });
   if (String(id) === "6998") return reportManagerDashboardHtml({ query: {}, body: {}, params: {} });
   const file = path.join(dataDir, "content", `page_content_${id}.html`);
   const htmlText = readText(file, "");
@@ -13070,6 +13384,7 @@ app.post("/dologin", (req, res) => {
     userAgent: req.headers["user-agent"]
   });
   if (login) {
+    return businessContext.runForTenant(login.user.tenantId, () => {
     const maxAge = Math.max(0, Math.floor((Date.parse(login.expiresAt) - Date.now()) / 1000));
     const secure = String(process.env.APP_COOKIE_SECURE || "").toLowerCase() === "true" ? "; Secure" : "";
     res.setHeader("Set-Cookie", `app_session=${encodeURIComponent(login.token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`);
@@ -13086,14 +13401,14 @@ app.post("/dologin", (req, res) => {
       },
       mustChangePassword: login.user.mustChangePassword
     });
-    return;
+    });
   }
   json(res, { code: 0, msg: "用户不存在或密码错误" });
 });
 
 app.get("/loginout", (req, res) => {
   authService.store.logout(req.authToken, { ipAddress: req.ip, userAgent: req.headers["user-agent"] });
-  res.setHeader("Set-Cookie", "app_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+  res.setHeader("Set-Cookie", ["app_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0", "app_project=; Path=/; SameSite=Lax; Max-Age=0"]);
   operationOk(res);
 });
 
@@ -13107,8 +13422,27 @@ app.get("/user/curr_user_info", (req, res) => {
     deptName: engine.db.client.deptName,
     roleTypeName: user.roles.map((role) => role.name).join(","),
     permissions: user.permissions,
-    mustChangePassword: user.mustChangePassword
+    mustChangePassword: user.mustChangePassword,
+    projects: authService.store.accessibleProjects(user.id, user.tenantId),
+    currentProjectId: req.businessContext.projectId
   });
+});
+
+app.get("/api/session/projects", (req, res) => {
+  operationOk(res, {
+    projects: authService.store.accessibleProjects(req.authUser.id, req.authUser.tenantId),
+    currentProjectId: req.businessContext.projectId
+  });
+});
+
+app.post("/api/session/project", (req, res) => {
+  const projectId = String(req.body.projectId || "");
+  if (!authService.store.canAccessProject(req.authUser.id, req.authUser.tenantId, projectId)) {
+    res.status(403).json({ code: 0, msg: "无权访问该项目", data: null, requiredProjectId: projectId });
+    return;
+  }
+  res.setHeader("Set-Cookie", `app_project=${encodeURIComponent(projectId)}; Path=/; SameSite=Lax; Max-Age=2592000`);
+  operationOk(res, { currentProjectId: projectId });
 });
 
 app.get("/menu/header_menu", (req, res) => {
@@ -13138,9 +13472,11 @@ app.get("/main", (req, res) => html(res, dashboardHtml("工作台")));
 app.get("/sbr/header_content", (req, res) => html(res, dashboardHtml("模块首页")));
 app.get("/admin/dashboard_page", (req, res) => html(res, adminDashboardHtml()));
 app.get("/system/dashboard_page", (req, res) => html(res, adminDashboardHtml()));
-app.get("/admin/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml()));
+app.get("/admin/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml(req)));
 app.get("/admin/users_page", requirePermission("admin:users"), (req, res) => html(res, userManagementHtml(req)));
-app.get("/system/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml()));
+app.get("/admin/backups_page", requirePermission("admin:access"), (req, res) => html(res, backupManagementHtml(req)));
+app.get("/admin/data_exchange_page", requirePermission("admin:access"), (req, res) => html(res, dataExchangeManagementHtml(req)));
+app.get("/system/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml(req)));
 app.all("/payment/jl_report_page", (req, res) => html(res, jlPaymentReportPageHtml(req)));
 app.all("/payment/jl_print_page", (req, res) => html(res, jlPaymentPrintableHtml(req)));
 app.all("/payment/export_jl_report", (req, res) => csv(res, "jl-payment-report.csv", jlPaymentExportRows(req)));
@@ -13173,14 +13509,14 @@ app.get("/api/cost/summary", (req, res) => operationOk(res, engine.dashboard()))
 app.get("/api/admin/calculation_rules", (req, res) => operationOk(res, {
   rules: engine.calculationRules(),
   summary: engine.contractSummary(),
-  activeVersion: ruleStore.getActive(req.authUser.tenantId, String(req.query.projectId || "*")),
-  history: ruleStore.history(req.authUser.tenantId, String(req.query.projectId || "*"), 100)
+  activeVersion: ruleStore.getActive(req.authUser.tenantId, String(req.query.projectId || req.businessContext.projectId)),
+  history: ruleStore.history(req.authUser.tenantId, String(req.query.projectId || req.businessContext.projectId), 100)
 }));
 app.post("/api/admin/calculation_rules", (req, res) => {
   try {
     const result = saveCalculationRules(req.body, {
       tenantId: req.authUser.tenantId,
-      projectId: String(req.body.projectId || "*"),
+      projectId: String(req.body.projectId || req.businessContext.projectId),
       userId: req.authUser.id
     });
     appStore.save(engine.db, { actor: req.authUser.account, action: `rule-create:${result.version.id}` });
@@ -13200,7 +13536,7 @@ app.post("/api/admin/calculation_rules", (req, res) => {
 });
 app.post("/api/admin/calculation_rules/:id/activate", requirePermission("admin:access"), (req, res) => {
   try {
-    const version = ruleStore.activate({ id: req.params.id, tenantId: req.authUser.tenantId });
+    const version = ruleStore.activate({ id: req.params.id, tenantId: req.authUser.tenantId, projectId: req.businessContext.projectId });
     engine.db.calculationRules = version.rules;
     appStore.save(engine.db, { actor: req.authUser.account, action: `rule-activate:${version.id}` });
     authService.store.audit({
@@ -13302,15 +13638,59 @@ app.post("/api/admin/users/:id/roles", requirePermission("admin:users"), (req, r
 app.get("/api/admin/security_audit", requirePermission("admin:users"), (req, res) => {
   operationOk(res, authService.store.auditRows(req.query.limit, req.authUser.tenantId));
 });
+app.get("/api/admin/data_exchange", requirePermission("admin:access"), (req, res) => {
+  operationOk(res, Object.keys(dataExchangeModules).map(dataExchangeSchema));
+});
+app.get("/api/admin/data_exchange/:module/schema", requirePermission("admin:access"), (req, res) => {
+  try {
+    operationOk(res, dataExchangeSchema(req.params.module));
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.get("/api/admin/data_exchange/:module/export", requirePermission("admin:access"), (req, res) => {
+  try {
+    const module = dataExchangeModule(req.params.module);
+    const format = String(req.query.format || "csv").toLowerCase();
+    const body = tabularService.exportRows(engine.db[module.storageKey] || [], module, format);
+    const extension = format === "json" ? "json" : "csv";
+    res.type(format === "json" ? "application/json" : "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="${req.params.module}-${req.businessContext.projectId}.${extension}"`);
+    dataExchangeAudit(req, "data_exchange.export", "success", { format, rows: (engine.db[module.storageKey] || []).length });
+    res.send(body);
+  } catch (error) {
+    dataExchangeAudit(req, "data_exchange.export", "failure", { message: error.message });
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/data_exchange/:module/validate", requirePermission("admin:access"), (req, res) => {
+  try {
+    const { prepared, format, mode } = dataExchangeValidation(req);
+    dataExchangeAudit(req, "data_exchange.validate", prepared.ok ? "success" : "failure", { format, mode, total: prepared.total, errors: prepared.errors.length });
+    operationOk(res, { ...prepared, nextRows: undefined });
+  } catch (error) {
+    dataExchangeAudit(req, "data_exchange.validate", "failure", { message: error.message });
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/data_exchange/:module/import", requirePermission("admin:access"), (req, res) => {
+  try {
+    const result = applyDataExchangeImport(req);
+    const { prepared, format, mode } = result;
+    if (!prepared.ok) {
+      dataExchangeAudit(req, "data_exchange.import", "failure", { format, mode, total: prepared.total, errors: prepared.errors.length });
+      operationOk(res, { ...prepared, nextRows: undefined });
+      return;
+    }
+    dataExchangeAudit(req, "data_exchange.import", "success", { format, mode, total: prepared.total, inserted: prepared.inserted, updated: prepared.updated });
+    operationOk(res, { ...prepared, nextRows: undefined, storage: result.storage });
+  } catch (error) {
+    dataExchangeAudit(req, "data_exchange.import", "failure", { message: error.message });
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
 app.get("/api/admin/backups", requirePermission("admin:access"), (req, res) => {
-  const rows = fs.readdirSync(backupDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-    .map((entry) => {
-      const stat = fs.statSync(path.join(backupDir, entry.name));
-      return { fileName: entry.name, bytes: stat.size, createdAt: stat.mtime.toISOString() };
-    })
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  operationOk(res, rows);
+  operationOk(res, managedBackupRows(req.authUser, req.businessContext.projectId));
 });
 app.post("/api/admin/backups", requirePermission("admin:access"), (req, res) => {
   try {
@@ -13319,16 +13699,41 @@ app.post("/api/admin/backups", requirePermission("admin:access"), (req, res) => 
     res.status(500).json({ code: 0, msg: error.message, data: null });
   }
 });
+app.get("/api/admin/backups/:fileName/download", requirePermission("admin:access"), (req, res) => {
+  try {
+    const source = managedBackupPath(req.params.fileName, req.authUser.tenantId, req.businessContext.projectId);
+    backupService.validateBackup(fs.readFileSync(source), { tenantId: req.authUser.tenantId, projectId: req.businessContext.projectId });
+    res.download(source, req.params.fileName);
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/backups/import", requirePermission("admin:access"), (req, res) => {
+  try {
+    const content = String(req.body.content || "");
+    if (!content) throw new Error("Backup content is required");
+    const backup = backupService.validateBackup(content, { tenantId: req.authUser.tenantId, projectId: req.businessContext.projectId });
+    const fileName = backupFileName("imported");
+    const directory = tenantBackupDir(req.authUser.tenantId, req.businessContext.projectId);
+    const target = path.join(directory, fileName);
+    const temporary = `${target}.tmp`;
+    fs.writeFileSync(temporary, content, "utf8");
+    fs.renameSync(temporary, target);
+    operationOk(res, { fileName, bytes: Buffer.byteLength(content), checksum: backup.checksum, originalName: path.basename(String(req.body.originalName || "")) });
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
 app.post("/api/admin/backups/:fileName/restore", requirePermission("admin:access"), (req, res) => {
   const before = JSON.parse(JSON.stringify(engine.db));
   try {
-    const source = managedBackupPath(req.params.fileName);
-    const backup = backupService.validateBackup(fs.readFileSync(source), { tenantId: req.authUser.tenantId });
+    const source = managedBackupPath(req.params.fileName, req.authUser.tenantId, req.businessContext.projectId);
+    const backup = backupService.validateBackup(fs.readFileSync(source), { tenantId: req.authUser.tenantId, projectId: req.businessContext.projectId });
     const safetyBackup = createManagedBackup(req.authUser, "pre-restore");
     Object.keys(engine.db).forEach((key) => delete engine.db[key]);
     Object.assign(engine.db, backup.state);
     const saved = appStore.save(engine.db, { actor: req.authUser.account, action: `backup-restore:${req.params.fileName}`, checkpoint: true });
-    const version = ruleStore.createVersion({ tenantId: req.authUser.tenantId, projectId: "*", rules: engine.calculationRules(), changeReason: `从备份 ${req.params.fileName} 恢复`, createdBy: req.authUser.id });
+    const version = ruleStore.createVersion({ tenantId: req.authUser.tenantId, projectId: req.businessContext.projectId, rules: engine.calculationRules(), changeReason: `从备份 ${req.params.fileName} 恢复`, createdBy: req.authUser.id });
     operationOk(res, { restored: req.params.fileName, safetyBackup, storage: saved, ruleVersion: version.version });
   } catch (error) {
     Object.keys(engine.db).forEach((key) => delete engine.db[key]);

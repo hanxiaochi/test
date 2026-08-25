@@ -29,7 +29,12 @@ function directorySize(root) {
   if (!fs.existsSync(root)) return 0;
   return fs.readdirSync(root, { withFileTypes: true }).reduce((total, entry) => {
     const target = path.join(root, entry.name);
-    return total + (entry.isDirectory() ? directorySize(target) : fs.statSync(target).size);
+    try {
+      return total + (entry.isDirectory() ? directorySize(target) : fs.statSync(target).size);
+    } catch (error) {
+      if (error && error.code === "ENOENT") return total;
+      throw error;
+    }
   }, 0);
 }
 

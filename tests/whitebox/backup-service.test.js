@@ -20,6 +20,7 @@ test("invalid, cross-tenant, and tampered backups fail closed", () => {
   assert.throws(() => validateBackup(JSON.stringify({ format: "other" })), /Unsupported/);
   const parsed = JSON.parse(createBackup({ state: { value: 1 }, tenantId: "tenant-a" }).toString("utf8"));
   assert.throws(() => validateBackup(JSON.stringify(parsed), { tenantId: "tenant-b" }), /different tenant/);
+  assert.throws(() => validateBackup(JSON.stringify(parsed), { tenantId: "tenant-a", projectId: "project-b" }), /different project/);
   parsed.state.value = 2;
   assert.throws(() => validateBackup(JSON.stringify(parsed), { tenantId: "tenant-a" }), /checksum mismatch/);
 });

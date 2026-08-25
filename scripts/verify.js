@@ -153,6 +153,8 @@ async function verifyAuthorizationFlow() {
   const page = await requestText("/admin/users_page");
   assert.ok(page.text.includes("账号权限管理") && page.text.includes("create-user-form") && page.text.includes("安全审计"), "user administration page should expose user, role, and audit controls");
   assert.ok(page.text.includes("项目目录") && page.text.includes("create-project-form") && page.text.includes("保存项目"), "user administration page should expose project directory and assignment controls");
+  const shell = await requestText("/index.html");
+  assert.ok(shell.text.includes("app-project-switch") && shell.text.includes("/api/session/project"), "main shell should expose a persistent project switcher");
   const audit = await requestJson("/api/admin/security_audit?limit=50");
   assert.ok(audit.json.data.some((row) => row.action === "login" && row.result === "denied"), "security audit should retain failed login attempts");
   const mutationAudit = audit.json.data.find((row) => row.action === "http.mutation" && row.target_id === "POST /api/admin/projects");
@@ -166,9 +168,159 @@ async function verifyAuthorizationFlow() {
   assert.strictEqual(backupCreated.json.data.checksum.length, 64, "managed backup should expose a SHA-256 checksum");
   const backups = await requestJson("/api/admin/backups");
   assert.ok(backups.json.data.some((row) => row.fileName === backupCreated.json.data.fileName), "managed backup should appear in the backup catalog");
+  const backupPage = await requestText("/admin/backups_page");
+  assert.ok(backupPage.text.includes("备份恢复管理") && backupPage.text.includes("导入备份文件") && backupPage.text.includes("恢复前安全快照"), "backup administration page should expose create, import, download, and safe restore workflow");
+  const downloaded = await requestBuffer(`/api/admin/backups/${encodeURIComponent(backupCreated.json.data.fileName)}/download`);
+  assert.strictEqual(downloaded.response.status, 200, "managed backup should download");
+  const downloadedEnvelope = JSON.parse(downloaded.buffer.toString("utf8"));
+  assert.strictEqual(downloadedEnvelope.projectId, "1", "downloaded backup should identify its project scope");
+  const imported = await postJson("/api/admin/backups/import", { originalName: "external-test.json", content: downloaded.buffer.toString("utf8") });
+  assert.strictEqual(imported.json.code, 1, "validated local backup should import without overwriting an existing file");
+  const crossProjectImport = await postJson("/api/admin/backups/import", { projectId: "regression-project-2", originalName: "wrong-project.json", content: downloaded.buffer.toString("utf8") });
+  assert.strictEqual(crossProjectImport.response.status, 400, "backup import must reject a different project scope");
+  assert.ok(crossProjectImport.json.msg.includes("different project"), "cross-project backup rejection should be explicit");
   const restoredBackup = await postJson(`/api/admin/backups/${encodeURIComponent(backupCreated.json.data.fileName)}/restore`, {});
   assert.strictEqual(restoredBackup.json.code, 1, "validated managed backup should restore successfully");
   assert.ok(restoredBackup.json.data.safetyBackup.fileName.startsWith("pre-restore-"), "restore should create a safety backup first");
+}
+
+async function verifyDataExchangeFlow() {
+  const page = await requestText("/admin/data_exchange_page");
+  assert.strictEqual(page.response.status, 200, "data exchange administration page should load");
+  assert.ok(page.text.includes("数据导入导出") && page.text.includes("逐行校验结果") && page.text.includes("确认导入"), "data exchange page should expose export, validation, and import controls");
+
+  const catalog = await requestJson("/api/admin/data_exchange");
+  assert.deepStrictEqual(catalog.json.data.map((item) => item.code), ["bills", "materials", "measures", "manualMeasures", "variations"], "data exchange catalog should expose the supported business modules");
+  const schema = await requestJson("/api/admin/data_exchange/materials/schema");
+  assert.strictEqual(schema.json.data.key, "materialNo", "material exchange schema should expose its stable unique key");
+  assert.ok(schema.json.data.fields.every((field) => field.name && field.label && field.type), "exchange schemas should expose stable field codes and human labels");
+
+  const roundTripProjectId = "exchange-roundtrip-project";
+  const project = await postJson("/api/admin/projects", { projectKey: roundTripProjectId, name: "导入导出回灌项目" });
+  assert.strictEqual(project.json.code, 1, "admin should create a dedicated round-trip project");
+  const defaultExport = await requestText("/api/admin/data_exchange/materials/export?format=json&projectId=1");
+  const defaultRows = JSON.parse(defaultExport.text);
+  assert.ok(defaultRows.length > 0, "default project should export material rows");
+  const roundTripImport = await postJson("/api/admin/data_exchange/materials/import", {
+    projectId: roundTripProjectId,
+    format: "json",
+    mode: "append",
+    content: defaultExport.text
+  });
+  assert.strictEqual(roundTripImport.json.data.ok, true, "a JSON export should import into an empty authorized project");
+  assert.strictEqual(roundTripImport.json.data.inserted, defaultRows.length, "round-trip import should retain every exported row");
+  const roundTripExport = await requestText(`/api/admin/data_exchange/materials/export?format=json&projectId=${roundTripProjectId}`);
+  assert.deepStrictEqual(JSON.parse(roundTripExport.text), defaultRows, "export-import-export should preserve all schema fields exactly");
+
+  const projectId = "regression-project-2";
+  const beforeInvalid = await requestText(`/api/admin/data_exchange/materials/export?format=json&projectId=${projectId}`);
+  const invalid = await postJson("/api/admin/data_exchange/materials/import", {
+    projectId,
+    format: "json",
+    mode: "append",
+    content: JSON.stringify([{ materialNo: "INVALID", materialName: "", basePrice: "not-a-number" }])
+  });
+  assert.strictEqual(invalid.json.data.ok, false, "malformed rows should fail whole-file validation");
+  assert.ok(invalid.json.data.errors.some((error) => error.field === "materialName") && invalid.json.data.errors.some((error) => error.field === "basePrice"), "validation should report row-level required and numeric failures");
+  const afterInvalid = await requestText(`/api/admin/data_exchange/materials/export?format=json&projectId=${projectId}`);
+  assert.strictEqual(afterInvalid.text, beforeInvalid.text, "failed imports must not mutate project state");
+
+  const marker = `MAT-CSV-${Date.now()}`;
+  const csvBody = `\ufeffmaterialNo,materialName,spec,unit,basePrice,currentPrice\r\n${marker},"测试,带逗号",S-1,t,"1,234.50",1300\r\n`;
+  const appended = await postJson("/api/admin/data_exchange/materials/import", { projectId, format: "csv", mode: "append", content: csvBody });
+  assert.strictEqual(appended.json.data.ok, true, "valid BOM-prefixed CSV should append atomically");
+  assert.strictEqual(appended.json.data.inserted, 1, "CSV append should report one inserted row");
+  const duplicate = await postJson("/api/admin/data_exchange/materials/import", { projectId, format: "csv", mode: "append", content: csvBody });
+  assert.strictEqual(duplicate.json.data.ok, false, "append should reject an existing unique key");
+  assert.ok(duplicate.json.data.errors.some((error) => error.code === "duplicate_existing"), "duplicate append should identify the unique-key conflict");
+
+  const insertedExport = await requestText(`/api/admin/data_exchange/materials/export?format=json&projectId=${projectId}`);
+  const insertedRow = JSON.parse(insertedExport.text).find((row) => row.materialNo === marker);
+  assert.ok(insertedRow, "inserted row should be visible in its project export");
+  const internalRowsBefore = await requestJson(`/secMateria/find_sec_materia_list?page=1&limit=1000&projectId=${projectId}`);
+  const internalBefore = internalRowsBefore.json.data.find((row) => row.materialNo === marker);
+  assert.ok(internalBefore && internalBefore.materialId, "a validated insert should receive an internal ID");
+  const updated = await postJson("/api/admin/data_exchange/materials/import", {
+    projectId,
+    format: "json",
+    mode: "upsert",
+    content: JSON.stringify([{ materialNo: marker, materialName: "更新材料", spec: "S-2", unit: "t", basePrice: 1234.5, currentPrice: 1400 }])
+  });
+  assert.strictEqual(updated.json.data.updated, 1, "upsert should update the matching unique key");
+  const internalRowsAfter = await requestJson(`/secMateria/find_sec_materia_list?page=1&limit=1000&projectId=${projectId}`);
+  const internalAfter = internalRowsAfter.json.data.find((row) => row.materialNo === marker);
+  assert.strictEqual(internalAfter.materialId, internalBefore.materialId, "upsert must preserve the existing internal ID");
+  assert.strictEqual(internalAfter.currentPrice, 1400, "upsert should persist the updated value");
+
+  const quotedCsv = await requestBuffer(`/api/admin/data_exchange/materials/export?format=csv&projectId=${projectId}`);
+  assert.deepStrictEqual([...quotedCsv.buffer.subarray(0, 3)], [0xef, 0xbb, 0xbf], "CSV exports should include a UTF-8 BOM for spreadsheet compatibility");
+  assert.ok(quotedCsv.buffer.toString("utf8").includes(marker), "CSV export should contain the imported unique key");
+  const defaultAfter = await requestText("/api/admin/data_exchange/materials/export?format=json&projectId=1");
+  assert.ok(!JSON.parse(defaultAfter.text).some((row) => row.materialNo === marker), "data exchange writes must remain inside the selected project");
+
+  const audit = await requestJson("/api/admin/security_audit?limit=200");
+  assert.ok(audit.json.data.some((row) => row.action === "data_exchange.import" && row.result === "success"), "successful imports should be explicitly audited");
+  assert.ok(audit.json.data.some((row) => row.action === "data_exchange.import" && row.result === "failure"), "failed imports should be explicitly audited");
+}
+
+async function verifyTenantBusinessIsolation() {
+  const defaultCookie = authCookieHeader;
+  const { SecurityStore } = require("../lib/security/security-store");
+  const security = new SecurityStore(process.env.APP_SECURITY_DB_PATH);
+  try {
+    security.bootstrap({ tenantId: "regression-tenant", tenantName: "回归隔离租户", account: "tenant_admin", displayName: "租户管理员", password: "Tenant-Admin-42!" });
+    security.ensureProject({ tenantId: "regression-tenant", projectId: "1", name: "租户独立项目" });
+    security.ensureProject({ tenantId: "regression-tenant", projectId: "2", name: "租户第二项目" });
+  } finally {
+    security.close();
+  }
+
+  const tenantLoginBody = new URLSearchParams({
+    tenant_id: "regression-tenant",
+    user_account: "tenant_admin",
+    password: "Tenant-Admin-42!",
+    remember_me: "false"
+  });
+  const tenantLogin = await requestJson("/dologin", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: tenantLoginBody.toString()
+  });
+  assert.strictEqual(tenantLogin.json.code, 1, "second tenant should authenticate through the real login contract");
+  authCookieHeader = tenantLogin.response.headers.get("set-cookie").split(";")[0];
+  const tenantSummary = await requestJson("/api/cost/summary");
+  assert.strictEqual(Number(tenantSummary.json.data.contractSumMoney || 0), 0, "new tenant must not inherit the default tenant contract data");
+  const tenantMaterialExport = await requestText("/api/admin/data_exchange/materials/export?format=json");
+  assert.deepStrictEqual(JSON.parse(tenantMaterialExport.text), [], "new tenant must not inherit default-tenant data exchange rows");
+  const tenantProjects = await requestJson("/api/session/projects");
+  assert.deepStrictEqual(tenantProjects.json.data.projects.map((project) => project.projectId), ["1", "2"], "session should expose only the tenant user's accessible projects");
+  assert.strictEqual(tenantProjects.json.data.currentProjectId, "1", "session should start in the first accessible project");
+  const marker = `TENANT-ONLY-${Date.now()}`;
+  const tenantWrite = await postJson("/billModel/save_model", { modelName: marker, modelType: "隔离验证" });
+  assert.strictEqual(tenantWrite.json.code, 1, "tenant should persist its own business mutation");
+  const tenantModels = await requestJson("/billModel/get_bill_model_list?page=1&limit=1000");
+  assert.ok(tenantModels.json.data.some((row) => row.modelName === marker), `tenant should read back its own persisted row: ${JSON.stringify({ write: tenantWrite.json.data, rows: tenantModels.json.data })}`);
+  const projectTwoModelsBefore = await requestJson("/billModel/get_bill_model_list?page=1&limit=1000&projectId=2");
+  assert.ok(!projectTwoModelsBefore.json.data.some((row) => row.modelName === marker), "second project must not inherit the first project's rows");
+  const secondMarker = `PROJECT-2-ONLY-${Date.now()}`;
+  await postJson("/billModel/save_model", { projectId: "2", modelName: secondMarker, modelType: "项目隔离验证" });
+  const projectTwoModelsAfter = await requestJson("/billModel/get_bill_model_list?page=1&limit=1000&projectId=2");
+  assert.ok(projectTwoModelsAfter.json.data.some((row) => row.modelName === secondMarker), "second project should read back its own persisted row");
+  const switched = await postJson("/api/session/project", { projectId: "2" });
+  assert.strictEqual(switched.json.code, 1, "user should switch to an assigned project");
+  const projectCookie = switched.response.headers.get("set-cookie").split(";")[0];
+  authCookieHeader = `${authCookieHeader}; ${projectCookie}`;
+  const cookieScopedModels = await requestJson("/billModel/get_bill_model_list?page=1&limit=1000");
+  assert.ok(cookieScopedModels.json.data.some((row) => row.modelName === secondMarker), "project cookie should scope subsequent requests without query parameters");
+  const projectOneModelsAgain = await requestJson("/billModel/get_bill_model_list?page=1&limit=1000&projectId=1");
+  assert.ok(projectOneModelsAgain.json.data.some((row) => row.modelName === marker), "first project should retain its row after a second-project write");
+  assert.ok(!projectOneModelsAgain.json.data.some((row) => row.modelName === secondMarker), "first project must not observe the second project's row");
+
+  authCookieHeader = defaultCookie;
+  const defaultModels = await requestJson("/billModel/get_bill_model_list?page=1&limit=1000");
+  assert.ok(!defaultModels.json.data.some((row) => row.modelName === marker), "default tenant must not observe another tenant's row");
+  const defaultSummary = await requestJson("/api/cost/summary");
+  assert.ok(Number(defaultSummary.json.data.contractSumMoney) > 0, "default tenant state should remain intact after isolated tenant writes");
 }
 
 async function verifyContractUrls() {
@@ -758,8 +910,9 @@ async function verifyCalculationRulesAdminLoop() {
   assert.ok(page.text.includes("当前规则版本") && page.text.includes("校验值"), "calculation rules admin page should expose active version metadata");
 
   const original = before.json.data.rules;
-  const originalVersion = before.json.data.activeVersion;
+  const previousProjectVersion = before.json.data.history.length ? before.json.data.history[0].version : 0;
   const originalPayable = before.json.data.summary.payableMoney;
+  let restoreVersionId = null;
   const missingReason = await postJson("/api/admin/calculation_rules", { ...original, changeReason: "" });
   assert.strictEqual(missingReason.response.status, 400, "calculation rules save should reject a missing change reason");
   assert.ok(missingReason.json.msg.includes("变更原因"), "missing change reason should return an actionable error");
@@ -788,23 +941,23 @@ async function verifyCalculationRulesAdminLoop() {
     assert.strictEqual(toggled.json.data.rules.jl116MaterialWeights["CL-001"], 0.35, "JL116 material weight map should parse and persist");
     assert.notStrictEqual(toggled.json.data.summary.payableMoney, originalPayable, "retention toggle should affect JL104 payable money");
     assert.ok(toggled.json.data.summary.payableFormula, "saved rules should update formula text");
-    assert.strictEqual(toggled.json.data.version.version, originalVersion.version + 1, "saving rules should create the next immutable version");
+    assert.strictEqual(toggled.json.data.version.version, previousProjectVersion + 1, "saving rules should create the next immutable project version");
     assert.strictEqual(toggled.json.data.version.changeReason, toggledRules.changeReason, "rule version should record its reason");
     assert.ok(Number.isInteger(toggled.json.data.version.createdBy), "rule version should record its authenticated creator");
     const historyAfterSave = await requestJson("/api/admin/calculation_rules");
     assert.strictEqual(historyAfterSave.json.data.history.filter((row) => row.status === "active").length, 1, "only one rule version should be active");
     assert.strictEqual(historyAfterSave.json.data.history[0].checksum.length, 64, "rule history should expose a SHA-256 checksum");
-    const restored = await postJson(`/api/admin/calculation_rules/${originalVersion.id}/activate`, {});
+    const restoreSnapshot = await postJson("/api/admin/calculation_rules", { ...original, changeReason: "自动回归建立恢复版本" });
+    restoreVersionId = restoreSnapshot.json.data.version.id;
+    const restored = await postJson(`/api/admin/calculation_rules/${toggled.json.data.version.id}/activate`, {});
     assert.strictEqual(restored.json.code, 1, "an earlier rule version should be reactivatable");
-    assert.strictEqual(restored.json.data.version.id, originalVersion.id, "reactivation should select the requested immutable version");
+    assert.strictEqual(restored.json.data.version.id, toggled.json.data.version.id, "reactivation should select the requested immutable project version");
     const afterActivation = await requestJson("/api/admin/calculation_rules");
-    assert.strictEqual(afterActivation.json.data.activeVersion.id, originalVersion.id, "reactivated version should become active");
+    assert.strictEqual(afterActivation.json.data.activeVersion.id, toggled.json.data.version.id, "reactivated project version should become active");
     assert.strictEqual(afterActivation.json.data.history.filter((row) => row.status === "active").length, 1, "reactivation should preserve the one-active-version invariant");
   } finally {
-    const current = await requestJson("/api/admin/calculation_rules");
-    if (current.json.data.activeVersion.id !== originalVersion.id) {
-      await postJson(`/api/admin/calculation_rules/${originalVersion.id}/activate`, {});
-    }
+    if (restoreVersionId) await postJson(`/api/admin/calculation_rules/${restoreVersionId}/activate`, {});
+    else await postJson("/api/admin/calculation_rules", { ...original, changeReason: "自动回归异常恢复规则" });
   }
 }
 
@@ -3354,6 +3507,8 @@ async function verifyOriginalMenuUrlAliasesLoop() {
   assert.ok(systemMenuText.includes("计算规则后台") && systemMenuText.includes("admin/calculation_rules_page"), "backend menu should expose calculation rules admin");
   assert.ok(systemMenuText.includes("JL计量支付报表") && systemMenuText.includes("payment/jl_report_page"), "backend menu should expose JL payment report");
   assert.ok(systemMenuText.includes("账号权限管理") && systemMenuText.includes("admin/users_page"), "backend menu should expose user and role administration");
+  assert.ok(systemMenuText.includes("备份恢复管理") && systemMenuText.includes("admin/backups_page"), "backend menu should expose project-scoped backup administration");
+  assert.ok(systemMenuText.includes("数据导入导出") && systemMenuText.includes("admin/data_exchange_page"), "backend menu should expose validated business data exchange");
 }
 
 async function main() {
@@ -3362,6 +3517,8 @@ async function main() {
   await verifyUnauthenticatedAccess();
   await verifyLoginFlow();
   await verifyAuthorizationFlow();
+  await verifyDataExchangeFlow();
+  await verifyTenantBusinessIsolation();
   const contractUrls = await verifyContractUrls();
   const actionUrls = await verifyCachedPageActions();
   await verifyOriginalFormPageCoverage();

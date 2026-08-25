@@ -15,12 +15,20 @@
     "test:rules": "node --test --experimental-test-coverage --test-coverage-include=lib/rules/rule-store.js --test-coverage-lines=90 --test-coverage-functions=90 --test-coverage-branches=80 tests/whitebox/rule-store.test.js",
     "test:storage": "node --test --experimental-test-coverage --test-coverage-include=lib/storage/sqlite-runtime-store.js --test-coverage-lines=90 --test-coverage-functions=90 --test-coverage-branches=80 tests/whitebox/sqlite-runtime-store.test.js",
     "test:backup": "node --test --experimental-test-coverage --test-coverage-include=lib/backup/backup-service.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=85 tests/whitebox/backup-service.test.js",
+    "test:business-context": "node --test --experimental-test-coverage --test-coverage-include=lib/business-state-context.js --test-coverage-lines=95 --test-coverage-functions=95 --test-coverage-branches=85 tests/whitebox/business-state-context.test.js",
+    "test:tenant-store": "node --test tests/whitebox/app-store-tenant.test.js",
+    "test:tabular": "node --test --experimental-test-coverage --test-coverage-include=lib/import-export/tabular-service.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=90 tests/whitebox/tabular-service.test.js",
     "sample:regression": "node scripts/sample-regression.js",
     "test:payment-fixtures": "node scripts/payment-fixture-regression.js",
     "test:all": "node scripts/test-all.js"
   },
   "dependencies": {
+    "csv-parse": "^7.0.2",
+    "csv-stringify": "^6.8.3",
     "express": "^4.19.2"
+  },
+  "overrides": {
+    "body-parser": "1.20.6"
   },
   "engines": {
     "node": ">=22.5.0"
