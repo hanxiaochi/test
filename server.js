@@ -409,11 +409,12 @@ function html(res, value) {
 }
 
 function passwordChangePageHtml(user) {
+  const forced = Boolean(user.mustChangePassword);
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>修改登录密码</title><style>
 *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#eef3f7;color:#172033;font-family:Arial,"Microsoft YaHei",sans-serif}.password-panel{width:calc(100% - 32px);max-width:440px;background:#fff;border:1px solid #d8e0e8;padding:28px;box-shadow:0 12px 28px rgba(23,32,51,.12)}h1{font-size:22px;margin:0 0 8px}p{margin:0 0 22px;color:#5d6876;line-height:1.6}label{display:block;margin:14px 0 6px;font-weight:600}input{width:100%;height:40px;border:1px solid #b9c4d0;padding:0 12px;font-size:14px}button{width:100%;height:42px;margin-top:22px;border:0;background:#0b8ed8;color:#fff;font-size:15px;cursor:pointer}button:disabled{opacity:.6;cursor:wait}.message{min-height:22px;margin-top:12px;color:#c62828;font-size:13px}</style></head>
-<body><main class="password-panel"><h1>修改登录密码</h1><p>账号 ${htmlEscape(user.account)} 首次登录需要设置新密码。修改成功后请重新登录。</p>
+<body><main class="password-panel"><h1>修改登录密码</h1><p>账号 ${htmlEscape(user.account)} ${forced ? "首次登录需要设置新密码" : "正在修改当前登录密码"}。修改成功后请重新登录。</p>
 <form id="password-form"><label for="current-password">当前密码</label><input id="current-password" name="currentPassword" type="password" autocomplete="current-password" required>
 <label for="new-password">新密码</label><input id="new-password" name="newPassword" type="password" autocomplete="new-password" minlength="10" required>
 <label for="confirm-password">确认新密码</label><input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" minlength="10" required>
@@ -2042,6 +2043,10 @@ function userManagementHtml(req = {}) {
         <select multiple size="2" data-user-project="${user.id}" style="min-width:180px;vertical-align:middle;">${projectOptions(selectedProjects)}</select>
         <button type="button" class="layui-btn layui-btn-xs" data-save-project="${user.id}">保存项目</button>
         <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" data-user-status="${user.id}" data-status="${nextStatus}">${nextStatus === "disabled" ? "禁用" : "启用"}</button>
+        <div style="margin-top:6px;display:flex;gap:4px;align-items:center;">
+          <input type="password" data-reset-password-input="${user.id}" autocomplete="new-password" placeholder="临时强密码" style="width:150px;height:28px;padding:0 6px;border:1px solid #c8d1dc;">
+          <button type="button" class="layui-btn layui-btn-xs layui-btn-warm" data-reset-password="${user.id}">重置密码</button>
+        </div>
       </td>
     </tr>`;
   }).join("");
@@ -2124,6 +2129,10 @@ function userManagementHtml(req = {}) {
       })});
       Array.prototype.forEach.call(root.querySelectorAll('[data-user-status]'),function(btn){btn.addEventListener('click',function(){
         post('/api/admin/users/'+btn.getAttribute('data-user-status')+'/status',{status:btn.getAttribute('data-status')}).then(function(){notify('账号状态已更新');refresh()}).catch(function(e){notify(e.message)});
+      })});
+      Array.prototype.forEach.call(root.querySelectorAll('[data-reset-password]'),function(btn){btn.addEventListener('click',function(){
+        var id=btn.getAttribute('data-reset-password');var input=root.querySelector('[data-reset-password-input="'+id+'"]');
+        post('/api/admin/users/'+id+'/password',{password:input.value}).then(function(){input.value='';notify('临时密码已设置，目标用户会话已撤销');refresh()}).catch(function(e){notify(e.message)});
       })});
     })();</script>
   </div>`;
@@ -13797,6 +13806,20 @@ app.post("/api/admin/users/:id/status", requirePermission("admin:users"), (req, 
       userId: req.params.id,
       status: req.body.status,
       actorUserId: req.authUser.id
+    }));
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/users/:id/password", requirePermission("admin:users"), (req, res) => {
+  try {
+    operationOk(res, authService.store.resetUserPassword({
+      tenantId: req.authUser.tenantId,
+      userId: req.params.id,
+      password: req.body.password,
+      actorUserId: req.authUser.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"]
     }));
   } catch (error) {
     res.status(400).json({ code: 0, msg: error.message, data: null });

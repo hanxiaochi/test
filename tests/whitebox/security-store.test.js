@@ -158,6 +158,29 @@ test("administration lists users, changes roles, disables users, and revokes ses
   assert.ok(store.auditRows().some((row) => row.action === "user.status"));
 }));
 
+test("administrator password reset is tenant scoped, revokes sessions, and forces replacement", () => withStore((store) => {
+  const admin = store.bootstrap({ account: "ys1", password: "Admin-Start-42!" });
+  const worker = store.createUser({ account: "worker", password: "Worker-Start-42!", roleCodes: ["viewer"] });
+  const login = store.authenticate({ account: "worker", password: "Worker-Start-42!" });
+  assert.throws(() => store.resetUserPassword({ tenantId: "default", userId: 9999, password: "Worker-Reset-42!" }), /User does not exist/);
+  assert.throws(() => store.resetUserPassword({ tenantId: "default", userId: worker.id, password: "weak" }), /密码/);
+  const reset = store.resetUserPassword({
+    tenantId: "default",
+    userId: worker.id,
+    password: "Worker-Reset-42!",
+    actorUserId: admin.userId,
+    ipAddress: "127.0.0.1",
+    userAgent: "test"
+  });
+  assert.equal(reset.mustChangePassword, true);
+  assert.equal(store.getSession(login.token), null);
+  assert.equal(store.authenticate({ account: "worker", password: "Worker-Start-42!" }), null);
+  assert.equal(store.authenticate({ account: "worker", password: "Worker-Reset-42!" }).user.mustChangePassword, true);
+  const audit = store.auditRows().find((row) => row.action === "user.password.reset");
+  assert.equal(audit.user_id, admin.userId);
+  assert.equal(audit.target_id, String(worker.id));
+}));
+
 test("project assignments are tenant scoped and revoke sessions when changed", () => withStore((store) => {
   store.bootstrap({ tenantId: "default", account: "admin", password: "Admin-Pass-42!" });
   store.ensureProject({ tenantId: "default", projectId: "p-2", name: "二号项目" });

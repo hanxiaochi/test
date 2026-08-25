@@ -213,6 +213,7 @@ async function verifyAuthorizationFlow() {
     body: viewerBody.toString()
   });
   authCookieHeader = viewerLogin.response.headers.get("set-cookie").split(";")[0];
+  const viewerCookie = authCookieHeader;
   assert.strictEqual(viewerLogin.json.code, 1, "viewer should authenticate");
 
   const readable = await requestJson("/api/cost/summary");
@@ -244,8 +245,10 @@ async function verifyAuthorizationFlow() {
   const page = await requestText("/admin/users_page");
   assert.ok(page.text.includes("账号权限管理") && page.text.includes("create-user-form") && page.text.includes("安全审计"), "user administration page should expose user, role, and audit controls");
   assert.ok(page.text.includes("项目目录") && page.text.includes("create-project-form") && page.text.includes("保存项目"), "user administration page should expose project directory and assignment controls");
+  assert.ok(page.text.includes("data-reset-password") && page.text.includes("重置密码"), "user administration page should expose a temporary-password reset workflow");
   const shell = await requestText("/index.html");
   assert.ok(shell.text.includes("app-project-switch") && shell.text.includes("/api/session/project"), "main shell should expose a persistent project switcher");
+  assert.ok(shell.text.includes("/account/password_page") && shell.text.includes("修改密码"), "authenticated shell should expose self-service password change");
   assert.ok(shell.text.includes("data-i18n=\"shell.productName\"") && shell.text.includes("applyProjectLocale") && shell.text.includes("html[dir=\"rtl\"]"), "main shell should apply project translations and RTL layout at runtime");
   const audit = await requestJson("/api/admin/security_audit?limit=50");
   assert.ok(audit.json.data.some((row) => row.action === "login" && row.result === "denied"), "security audit should retain failed login attempts");
@@ -255,6 +258,15 @@ async function verifyAuthorizationFlow() {
   assert.strictEqual(mutationDetails.beforeChecksum.length, 64, "business audit should record a before-state SHA-256 checksum");
   assert.strictEqual(mutationDetails.afterChecksum.length, 64, "business audit should record an after-state SHA-256 checksum");
   assert.strictEqual(mutationDetails.projectId, "1", "business audit should record the effective project scope");
+  const passwordReset = await postJson(`/api/admin/users/${created.json.data.id}/password`, { password: "Viewer-Reset-42!" });
+  assert.strictEqual(passwordReset.json.code, 1, "administrator should set a policy-compliant temporary password");
+  assert.strictEqual(passwordReset.json.data.mustChangePassword, true, "temporary password should force replacement at the next login");
+  authCookieHeader = viewerCookie;
+  const revokedViewer = await requestJson("/user/curr_user_info");
+  assert.strictEqual(revokedViewer.response.status, 401, "administrator password reset should revoke the target user's active session");
+  authCookieHeader = adminCookie;
+  const passwordAudit = await requestJson("/api/admin/security_audit?limit=100");
+  assert.ok(passwordAudit.json.data.some((row) => row.action === "user.password.reset" && row.target_id === String(created.json.data.id)), "administrator password reset should be audited against the target user");
   const backupCreated = await postJson("/api/admin/backups", {});
   assert.strictEqual(backupCreated.json.code, 1, "admin should create a managed runtime backup");
   assert.strictEqual(backupCreated.json.data.checksum.length, 64, "managed backup should expose a SHA-256 checksum");
