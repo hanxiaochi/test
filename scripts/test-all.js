@@ -25,6 +25,7 @@ const commands = [
   ["run", "test:tabular"],
   ["run", "test:fidic"],
   ["run", "test:international-settings"],
+  ["run", "test:international-certificates"],
   ["run", "test:attachments"],
   ["run", "test:attachment-consistency"],
   ["run", "test:measure-import"],

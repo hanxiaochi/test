@@ -270,6 +270,8 @@ async function verifyAuthorizationFlow() {
   const viewerCertificate = await postJson("/api/international/certificate/calculate", { lines: [{ code: "VIEW", category: "work", amount: 100, currency: "CNY" }] });
   assert.strictEqual(viewerCertificate.response.status, 200, "read-only users should calculate a non-mutating international certificate");
   assert.strictEqual(viewerCertificate.json.data.totals.netCertified, "90.00", "viewer certificate should use the current project retention settings");
+  const viewerIssueDenied = await postJson("/api/international/certificates/issue", {});
+  assert.strictEqual(viewerIssueDenied.response.status, 403, "read-only users should not issue an international certificate");
   const crossProjectDenied = await requestJson("/api/cost/summary?projectId=regression-project-2");
   assert.strictEqual(crossProjectDenied.response.status, 403, "viewer should not cross a project assignment boundary");
   assert.strictEqual(crossProjectDenied.json.requiredProjectId, "regression-project-2", "project denial should identify the rejected project scope");
@@ -558,6 +560,7 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(page.response.status, 200, "international contract settings page should load");
   assert.ok(page.text.includes("国际合同设置") && page.text.includes("付款证书试算") && page.text.includes("certificateStandard"), "international settings page should expose project settings and certificate calculation controls");
   assert.ok(page.text.includes("priceAdjustmentRule") && page.text.includes("fidic-price-adjustment"), "international settings page should expose index adjustment rule and current-index inputs");
+  assert.ok(page.text.includes('id="fidic-issue"') && page.text.includes('id="international-certificate-register"'), "international settings page should expose certificate issuance and immutable register controls");
   const catalog = await requestJson("/api/admin/international_settings/catalog");
   assert.strictEqual(catalog.json.data.locales.length, 6, "international catalog should expose six initial locales");
   assert.ok(catalog.json.data.certificateStandards.includes("FIDIC_RED_2017"), "international catalog should expose FIDIC contract profiles");
@@ -593,12 +596,12 @@ async function verifyInternationalContractFlow() {
   assert.deepStrictEqual(projectSettings.json.data.exchangeRates, { "CNY:USD": "0.14" }, "project should read back normalized contract exchange rates");
   const englishPage = await requestText(`/admin/international_settings_page?projectId=${projectId}`);
   assert.ok(englishPage.text.includes("International Contract Settings") && englishPage.text.includes('lang="en-US"') && englishPage.text.includes('dir="ltr"'), "English project should render the international settings page in English and LTR");
+  assert.ok(englishPage.text.includes("Payment certificate register") && englishPage.text.includes("Issue and archive"), "English project should localize certificate register controls");
   const englishSession = await requestJson(`/api/session/projects?projectId=${projectId}`);
   assert.strictEqual(englishSession.json.data.internationalSettings.locale, "en-US", "session context should expose the selected project's locale");
   assert.strictEqual(englishSession.json.data.translations["shell.logout"], "Sign out", "session context should expose shell translations");
 
-  const certificate = await postJson("/api/international/certificate/calculate", {
-    projectId,
+  const certificateInput = {
     previousRetention: 0,
     lines: [
       { code: "WORK-USD", category: "work", amount: "1000", currency: "USD" },
@@ -609,7 +612,8 @@ async function verifyInternationalContractFlow() {
       eligibleAmount: "1000",
       currentIndices: { LABOR: "110", PLANT: "180" }
     }
-  });
+  };
+  const certificate = await postJson("/api/international/certificate/calculate", { projectId, ...certificateInput });
   assert.strictEqual(certificate.json.data.baseCurrency, "USD", "certificate should use the selected project's base currency");
   assert.strictEqual(certificate.json.data.priceAdjustment.factor, "1.015", "certificate should calculate the configured FIDIC-compatible index factor");
   assert.strictEqual(certificate.json.data.priceAdjustment.adjustment, "15.00", "certificate should calculate index adjustment from the eligible amount");
@@ -620,10 +624,50 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(certificate.json.data.settingsVersion, 1, "certificate should identify the immutable project settings version");
   assert.strictEqual(certificate.json.data.settingsSchemaVersion, 2, "certificate should identify the settings checksum schema used for calculation");
   assert.strictEqual(certificate.json.data.settingsChecksum.length, 64, "certificate should expose the settings checksum used for calculation");
+  const issuePayload = {
+    projectId,
+    certificateNo: "IPC-REG-001",
+    periodStart: "2026-07-01",
+    periodEnd: "2026-07-31",
+    applicationReference: "APP-REG-001",
+    remarks: "International certificate regression",
+    idempotencyKey: "ipc-reg-001-request",
+    calculationInput: certificateInput
+  };
+  const issued = await postJson("/api/international/certificates/issue", issuePayload);
+  assert.strictEqual(issued.response.status, 200, "authorized users should issue a calculated international certificate");
+  assert.strictEqual(issued.json.data.replay, false, "first certificate issue should persist a new immutable record");
+  assert.strictEqual(issued.json.data.record.calculationResult.totals.netCertified, "1047.25", "issued record should freeze the exact calculated totals");
+  assert.strictEqual(issued.json.data.record.settingsVersion, 1, "issued record should pin the active settings version");
+  assert.strictEqual(issued.json.data.record.issueChecksum.length, 64, "issued record should expose an immutable issue checksum");
+  const replayed = await postJson("/api/international/certificates/issue", issuePayload);
+  assert.strictEqual(replayed.json.data.replay, true, "an exact idempotent retry should return the original certificate");
+  assert.strictEqual(replayed.json.data.record.id, issued.json.data.record.id, "an idempotent retry must not create a second certificate id");
+  const conflictingReplay = await postJson("/api/international/certificates/issue", { ...issuePayload, remarks: "conflicting retry" });
+  assert.strictEqual(conflictingReplay.response.status, 409, "a conflicting reuse of an idempotency key should fail closed");
+  const duplicateNo = await postJson("/api/international/certificates/issue", { ...issuePayload, idempotencyKey: "ipc-reg-001-second-key" });
+  assert.strictEqual(duplicateNo.response.status, 409, "a duplicate certificate number should fail closed");
+  const register = await requestJson(`/api/international/certificates?projectId=${projectId}`);
+  assert.strictEqual(register.json.data.total, 1, "certificate register should count one record after retries are deduplicated");
+  assert.deepStrictEqual(register.json.data.rows.map((row) => row.id), [issued.json.data.record.id], "certificate register should return a paged lightweight summary");
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(register.json.data.rows[0], "calculationResult"), false, "certificate list should not repeat full calculation snapshots");
+  const certificateDetail = await requestJson(`/api/international/certificates/${issued.json.data.record.id}?projectId=${projectId}`);
+  assert.strictEqual(certificateDetail.json.data.calculationResultChecksum, issued.json.data.record.calculationResultChecksum, "certificate detail should return the verified result snapshot");
+  const missingVoidReason = await postJson(`/api/international/certificates/${issued.json.data.record.id}/void`, { projectId });
+  assert.strictEqual(missingVoidReason.response.status, 400, "certificate voiding should require a reason");
+  const voided = await postJson(`/api/international/certificates/${issued.json.data.record.id}/void`, { projectId, reason: "Regression correction" });
+  assert.strictEqual(voided.json.data.record.status, "voided", "a certificate should be voided without deleting its issue snapshot");
+  assert.strictEqual(voided.json.data.record.issueChecksum, issued.json.data.record.issueChecksum, "voiding must preserve the immutable issue checksum");
+  assert.strictEqual(voided.json.data.record.voidChecksum.length, 64, "voiding should create a separate trace checksum");
+  const duplicateVoid = await postJson(`/api/international/certificates/${issued.json.data.record.id}/void`, { projectId, reason: "Again" });
+  assert.strictEqual(duplicateVoid.response.status, 409, "an already voided certificate should not transition twice");
   const versionHistory = await requestJson(`/api/admin/international_settings/history?projectId=${projectId}`);
   assert.strictEqual(versionHistory.json.data[0].changeReason, "Regression contract settings", "international settings history should preserve change reasons");
   const secondVersion = await postJson("/api/admin/international_settings", { projectId, changeReason: "Regression locale update", locale: "fr-FR" });
   assert.strictEqual(secondVersion.json.data.version.version, 2, "international settings updates should create consecutive versions");
+  const replayAfterSettingsUpdate = await postJson("/api/international/certificates/issue", issuePayload);
+  assert.strictEqual(replayAfterSettingsUpdate.json.data.replay, true, "an idempotent retry after a settings change should return the first frozen certificate");
+  assert.strictEqual(replayAfterSettingsUpdate.json.data.record.settingsVersion, 1, "a retry must not silently recalculate an issued certificate under newer settings");
   const missingActivationReason = await postJson("/api/admin/international_settings/1/activate", { projectId });
   assert.strictEqual(missingActivationReason.response.status, 400, "historical settings activation should require a reason");
   const reactivated = await postJson("/api/admin/international_settings/1/activate", { projectId, changeReason: "Regression rollback" });
@@ -648,17 +692,24 @@ async function verifyInternationalContractFlow() {
   assert.deepStrictEqual(afterInvalidAdjustment.json.data, projectSettings.json.data, "failed index adjustment updates must not mutate project settings");
   const defaultAfter = await requestJson("/api/admin/international_settings?projectId=1");
   assert.deepStrictEqual(defaultAfter.json.data, defaultSettings.json.data, "international settings must remain isolated by project");
+  const defaultCertificates = await requestJson("/api/international/certificates?projectId=1");
+  assert.deepStrictEqual(defaultCertificates.json.data.rows, [], "international certificate records must remain isolated by project");
   const arabicProjectId = "exchange-roundtrip-project";
   const arabicSaved = await postJson("/api/admin/international_settings", { projectId: arabicProjectId, changeReason: "Arabic deployment", locale: "ar-SA" });
   assert.strictEqual(arabicSaved.json.data.settings.direction, "rtl", "Arabic project should persist RTL direction");
   const arabicPage = await requestText(`/admin/international_settings_page?projectId=${arabicProjectId}`);
   assert.ok(arabicPage.text.includes("إعدادات العقود الدولية") && arabicPage.text.includes('lang="ar-SA"') && arabicPage.text.includes('dir="rtl"'), "Arabic project should render localized RTL administration markup");
+  assert.ok(arabicPage.text.includes("سجل شهادات الدفع") && arabicPage.text.includes("إصدار وأرشفة"), "Arabic project should localize certificate register controls");
   assert.ok(arabicPage.text.includes('id="international-settings-history"') && arabicPage.text.includes('data-settings-version="1"'), "international administration page should render project version history");
   const versionedPage = await requestText(`/admin/international_settings_page?projectId=${projectId}`);
   assert.ok(versionedPage.text.includes("activation-reason") && versionedPage.text.includes("activate-settings-version"), "international administration page should expose reasoned historical activation controls");
   const audit = await requestJson("/api/admin/security_audit?limit=200");
   assert.ok(audit.json.data.some((row) => row.action === "international_settings.update" && row.result === "success"), "successful international settings updates should be audited");
   assert.ok(audit.json.data.some((row) => row.action === "international_settings.update" && row.result === "failure"), "failed international settings updates should be audited");
+  assert.ok(audit.json.data.some((row) => row.action === "international_certificate.issue" && row.result === "success"), "successful international certificate issues should be audited");
+  assert.ok(audit.json.data.some((row) => row.action === "international_certificate.issue" && row.result === "failure"), "failed international certificate issues should be audited");
+  assert.ok(audit.json.data.some((row) => row.action === "international_certificate.void" && row.result === "success"), "successful international certificate voids should be audited");
+  assert.ok(audit.json.data.some((row) => row.action === "international_certificate.void" && row.result === "failure"), "failed international certificate voids should be audited");
 }
 
 async function verifyTenantBusinessIsolation() {
