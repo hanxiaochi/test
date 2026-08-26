@@ -388,6 +388,7 @@ async function verifyAuthorizationFlow() {
     body: new URLSearchParams({ user_account: "regression_editor", password: "Editor-Pass-42!", remember_me: "false" }).toString()
   });
   authCookieHeader = editorLogin.response.headers.get("set-cookie").split(";")[0];
+  const editorCookie = authCookieHeader;
   const editorIssueDenied = await postJson("/api/international/certificates/issue?projectId=certificate-rbac-project", {});
   assert.strictEqual(editorIssueDenied.response.status, 403, "ordinary business editors must not inherit certificate issuance authority");
   assert.strictEqual(editorIssueDenied.json.requiredPermission, "international:issue", "editor certificate denial should expose the dedicated issue grant");
@@ -446,6 +447,19 @@ async function verifyAuthorizationFlow() {
   assert.strictEqual(approvedContractEvent.response.status, 200, "certificate approver should approve another user's contract event");
   assert.strictEqual(approvedContractEvent.json.data.record.approvedAmount, "48000", "event approval should preserve the evaluated amount");
   assert.strictEqual(approvedContractEvent.json.data.record.decisionChecksum.length, 64, "event approval should create an immutable decision checksum");
+  const approverEventExport = await requestBuffer(`/api/international/contract_events/${approvedContractEvent.json.data.record.id}/export?projectId=certificate-rbac-project&format=xlsx`);
+  assert.strictEqual(approverEventExport.response.status, 200, "certificate approver should export an approved contract event");
+  assert.ok(approverEventExport.buffer.subarray(0, 2).equals(Buffer.from("PK")), "contract event export should be a genuine XLSX");
+  const approverEventWorkbench = await requestText("/international/certificates_page?projectId=certificate-rbac-project");
+  assert.ok(approverEventWorkbench.text.includes(`/api/international/contract_events/${approvedContractEvent.json.data.record.id}/export?format=xlsx`), "approved event rows should expose export controls to authorized users");
+  const invalidApproverEventExport = await requestJson(`/api/international/contract_events/${approvedContractEvent.json.data.record.id}/export?projectId=certificate-rbac-project&format=exe`);
+  assert.strictEqual(invalidApproverEventExport.response.status, 400, "invalid contract event export formats should fail and be audited");
+  authCookieHeader = editorCookie;
+  const editorEventExport = await requestBuffer(`/api/international/contract_events/${approvedContractEvent.json.data.record.id}/export?projectId=certificate-rbac-project&format=xlsx`);
+  assert.strictEqual(editorEventExport.response.status, 200, "ordinary editors should retain read-only determination export authority");
+  const editorEventCrossProject = await requestJson(`/api/international/contract_events/${approvedContractEvent.json.data.record.id}/export?projectId=1&format=xlsx`);
+  assert.strictEqual(editorEventCrossProject.response.status, 403, "contract event export must enforce the user's project boundary");
+  authCookieHeader = approverLogin.response.headers.get("set-cookie").split(";")[0];
   const approverApproved = await postJson(`/api/international/certificate_applications/${editorApplication.json.data.record.id}/approve`, { projectId: "certificate-rbac-project", expectedRevision: 1, remark: "Independent RBAC review" });
   assert.strictEqual(approverApproved.response.status, 200, "certificate approver should approve another user's application");
   assert.strictEqual(approverApproved.json.data.record.states, "已批准", "approved applications should persist their business state");
@@ -460,6 +474,8 @@ async function verifyAuthorizationFlow() {
   authCookieHeader = adminCookie;
   const contractEventAudits = await requestJson("/api/admin/security_audit/query?action=international_contract_event.approve&limit=20");
   assert.ok(contractEventAudits.json.data.rows.some((row) => row.result === "failure") && contractEventAudits.json.data.rows.some((row) => row.result === "success"), "failed and successful contract event approvals should both be audited");
+  const contractEventExportAudits = await requestJson("/api/admin/security_audit/query?action=international_contract_event.export&limit=20");
+  assert.ok(contractEventExportAudits.json.data.rows.some((row) => row.result === "failure") && contractEventExportAudits.json.data.rows.some((row) => row.result === "success"), "failed and successful contract event exports should both be audited");
   const projects = await requestJson("/api/admin/projects");
   assert.ok(projects.json.data.some((row) => row.projectId === "1") && projects.json.data.some((row) => row.projectId === "regression-project-2"), "admin should list tenant-scoped projects");
   const page = await requestText("/admin/users_page");
@@ -775,6 +791,26 @@ async function verifyInternationalContractFlow() {
   const approvedVariationEvent = await postJson(`/api/international/contract_events/${variationEvent.json.data.record.id}/approve`, { projectId, expectedRevision: 1, approvedAmount: "1000", approvedTimeImpactDays: 0, decisionReason: "Variation entitlement verified" });
   assert.strictEqual(approvedVariationEvent.response.status, 200, "independent checker should approve the variation entitlement");
   authCookieHeader = adminCookie;
+  const eventXlsx = await requestBuffer(`/api/international/contract_events/${approvedVariationEvent.json.data.record.id}/export?projectId=${projectId}&format=xlsx`);
+  assert.strictEqual(eventXlsx.response.status, 200, "approved contract event should export as XLSX");
+  const eventWorkbook = new ExcelJS.Workbook();
+  await eventWorkbook.xlsx.load(eventXlsx.buffer);
+  assert.deepStrictEqual(eventWorkbook.worksheets.map((sheet) => sheet.name), ["Contract Event", "Determination", "Integrity"], "contract event XLSX should separate request, determination, and integrity data");
+  assert.strictEqual(eventWorkbook.getWorksheet("Integrity").getCell("B6").value, approvedVariationEvent.json.data.record.decisionChecksum, "contract event XLSX should embed the immutable decision checksum");
+  const eventPdf = await requestBuffer(`/api/international/contract_events/${approvedVariationEvent.json.data.record.id}/export?projectId=${projectId}&format=pdf`);
+  assert.strictEqual(eventPdf.buffer.subarray(0, 5).toString("ascii"), "%PDF-", "approved contract event should export as a real PDF");
+  const eventDocx = await requestBuffer(`/api/international/contract_events/${approvedVariationEvent.json.data.record.id}/export?projectId=${projectId}&format=docx`);
+  assert.ok(eventDocx.buffer.subarray(0, 2).equals(Buffer.from("PK")), "approved contract event should export as a real DOCX");
+  const eventBundle = await requestBuffer(`/api/international/contract_events/${approvedVariationEvent.json.data.record.id}/export?projectId=${projectId}&format=all`);
+  const eventZip = await JSZip.loadAsync(eventBundle.buffer);
+  const eventManifest = JSON.parse(await eventZip.file("manifest.json").async("string"));
+  assert.strictEqual(eventManifest.decisionChecksum, approvedVariationEvent.json.data.record.decisionChecksum, "contract event bundle should pin the immutable decision checksum");
+  for (const file of eventManifest.files) {
+    const bytes = await eventZip.file(file.name).async("nodebuffer");
+    assert.strictEqual(crypto.createHash("sha256").update(bytes).digest("hex"), file.sha256, `contract event bundle checksum should verify ${file.name}`);
+  }
+  const invalidEventExport = await requestJson(`/api/international/contract_events/${approvedVariationEvent.json.data.record.id}/export?projectId=${projectId}&format=exe`);
+  assert.strictEqual(invalidEventExport.response.status, 400, "unsupported contract event export formats should fail closed");
   const variationLine = certificateInput.lines.find((line) => line.code === "VO-CNY");
   variationLine.contractEventId = approvedVariationEvent.json.data.record.id;
   variationLine.contractEventDecisionChecksum = approvedVariationEvent.json.data.record.decisionChecksum;

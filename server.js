@@ -20,6 +20,7 @@ const internationalCertificateRegister = require("./lib/international/certificat
 const internationalCertificateApplication = require("./lib/international/certificate-application");
 const internationalContractEvent = require("./lib/international/contract-event-register");
 const internationalContractEventAllocation = require("./lib/international/contract-event-allocation");
+const internationalContractEventExport = require("./lib/international/contract-event-export");
 const internationalCertificateExport = require("./lib/international/certificate-export");
 const { mapClientConfig } = require("./lib/client-config");
 const { AttachmentStore } = require("./lib/attachments/attachment-store");
@@ -135,7 +136,7 @@ function requiredPermission(req) {
   if (/^\/api\/international\/certificate_applications\/[^/]+$/.test(req.path) && req.method === "GET") return "international:read";
   if (req.path === "/api/international/certificates" && req.method === "GET") return "international:read";
   if (req.path === "/api/international/certificates/issue" && req.method === "POST") return "international:issue";
-  if (/^\/api\/international\/certificates\/[^/]+\/export$/.test(req.path) && req.method === "GET") return "international:export";
+  if (/^\/api\/international\/(?:certificates|contract_events)\/[^/]+\/export$/.test(req.path) && req.method === "GET") return "international:export";
   if (/^\/api\/international\/certificates\/[^/]+\/void$/.test(req.path) && req.method === "POST") return "international:void";
   if (/^\/api\/international\/certificates\/[^/]+$/.test(req.path) && req.method === "GET") return "international:read";
   if (req.path === "/reportManager/exportReport") return "data:read";
@@ -628,6 +629,36 @@ async function internationalCertificateExportPayload(record, format) {
   }
   if (format !== "xlsx" && format !== "excel") throw new Error("certificate export format must be xlsx, pdf, docx, or all");
   return { filename: `${safeNo}.xlsx`, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data: await internationalCertificateExport.createXlsx(record) };
+}
+
+async function internationalContractEventExportPayload(record, format, locale) {
+  const safeNo = String(record.eventNo).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "contract-event";
+  const options = { locale };
+  if (format === "pdf") return { filename: `${safeNo}.pdf`, contentType: "application/pdf", data: await internationalContractEventExport.createPdf(record, options) };
+  if (format === "docx" || format === "word") return { filename: `${safeNo}.docx`, contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", data: await internationalContractEventExport.createDocx(record, options) };
+  if (format === "all" || format === "zip") {
+    const [xlsx, pdf, docx] = await Promise.all([
+      internationalContractEventExport.createXlsx(record, options),
+      internationalContractEventExport.createPdf(record, options),
+      internationalContractEventExport.createDocx(record, options)
+    ]);
+    const files = [
+      { name: `${safeNo}.xlsx`, data: xlsx }, { name: `${safeNo}.pdf`, data: pdf }, { name: `${safeNo}.docx`, data: docx }
+    ];
+    const manifest = {
+      schemaVersion: 1,
+      contractEventId: record.id,
+      eventNo: record.eventNo,
+      locale,
+      approvedAt: record.approvedAt,
+      submissionChecksum: record.submissionChecksum,
+      decisionChecksum: record.decisionChecksum,
+      files: files.map((file) => ({ name: file.name, bytes: file.data.length, sha256: crypto.createHash("sha256").update(file.data).digest("hex") }))
+    };
+    return { filename: `${safeNo}-determination-bundle.zip`, contentType: "application/zip", data: zipBuffer([...files, { name: "manifest.json", data: JSON.stringify(manifest, null, 2) }]) };
+  }
+  if (format !== "xlsx" && format !== "excel") throw new Error("contract event export format must be xlsx, pdf, docx, or all");
+  return { filename: `${safeNo}.xlsx`, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data: await internationalContractEventExport.createXlsx(record, options) };
 }
 
 function requirePermission(permission) {
@@ -2742,6 +2773,10 @@ function internationalSettingsHtml(req, options = {}) {
     }
     if (item.states === "已批准" && canSubmit && new Decimal(remainingAmount || 0).gt(0)) {
       actions.push(`<button type="button" class="layui-btn layui-btn-xs layui-btn-normal add-international-event-line" data-id="${htmlEscape(item.id)}" data-no="${htmlEscape(item.eventNo)}" data-title="${htmlEscape(item.request.title)}" data-category="${item.request.eventType === "variation" ? "variation" : "claims"}" data-currency="${htmlEscape(item.request.currency)}" data-amount="${htmlEscape(remainingAmount)}" data-checksum="${htmlEscape(item.decisionChecksum)}">${htmlEscape(t("international.remainingAmount"))}</button>`);
+    }
+    if (item.states === "已批准" && item.decisionChecksum && canExport) {
+      const encodedId = encodeURIComponent(item.id);
+      actions.push(`<a class="layui-btn layui-btn-xs layui-btn-primary" href="/api/international/contract_events/${encodedId}/export?format=xlsx">XLSX</a><a class="layui-btn layui-btn-xs layui-btn-primary" href="/api/international/contract_events/${encodedId}/export?format=pdf">PDF</a><a class="layui-btn layui-btn-xs layui-btn-primary" href="/api/international/contract_events/${encodedId}/export?format=docx">DOCX</a>`);
     }
     return `<tr data-contract-event-id="${htmlEscape(item.id)}">
       <td>${htmlEscape(item.eventNo)}</td><td>${htmlEscape(typeText)}</td><td>${htmlEscape(item.request.title)}</td><td>${htmlEscape(item.request.noticeDate)}</td>
@@ -14981,6 +15016,36 @@ app.get("/api/international/contract_events", (req, res) => {
   } catch (error) {
     res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
   }
+});
+app.get("/api/international/contract_events/:identifier/export", (req, res) => {
+  Promise.resolve().then(async () => {
+    if (!authCore.hasPermission(req.currentSession.user.permissions, "international:export")) {
+      const error = new Error("无权导出国际合同事件");
+      error.status = 403;
+      throw error;
+    }
+    const record = internationalContractEvent.findEvent(engine.db, req.params.identifier);
+    const format = String(req.query.format || "xlsx").trim().toLowerCase();
+    const locale = currentInternationalSettings().locale;
+    const payload = await internationalContractEventExportPayload(record, format, locale);
+    authService.store.audit({
+      tenantId: req.authUser.tenantId,
+      userId: req.authUser.id,
+      action: "international_contract_event.export",
+      result: "success",
+      targetType: "international_contract_event",
+      targetId: record.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+      details: { eventNo: record.eventNo, format, locale, bytes: payload.data.length, decisionChecksum: record.decisionChecksum }
+    });
+    res.setHeader("Content-Type", payload.contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${payload.filename}"`);
+    res.send(payload.data);
+  }).catch((error) => {
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_contract_event.export", result: "failure", targetType: "international_contract_event", targetId: req.params.identifier, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { format: String(req.query.format || "xlsx"), message: error.message } });
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
+  });
 });
 app.get("/api/international/contract_events/:identifier", (req, res) => {
   try {

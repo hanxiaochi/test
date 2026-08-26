@@ -29,6 +29,7 @@ const commands = [
   ["run", "test:international-certificate-applications"],
   ["run", "test:international-contract-events"],
   ["run", "test:international-event-allocation"],
+  ["run", "test:international-event-export"],
   ["run", "test:international-certificate-export"],
   ["run", "test:attachments"],
   ["run", "test:attachment-consistency"],
