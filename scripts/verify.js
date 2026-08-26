@@ -408,6 +408,7 @@ async function verifyAuthorizationFlow() {
   assert.ok(backups.json.data.some((row) => row.fileName === backupCreated.json.data.fileName), "managed backup should appear in the backup catalog");
   const backupPage = await requestText("/admin/backups_page");
   assert.ok(backupPage.text.includes("备份恢复管理") && backupPage.text.includes("导入备份文件") && backupPage.text.includes("恢复前安全快照"), "backup administration page should expose create, import, download, and safe restore workflow");
+  assert.ok(backupPage.text.includes("创建全系统备份") && backupPage.text.includes("全系统灾备"), "backup administration page should expose full-system backup creation and catalog");
   const downloaded = await requestBuffer(`/api/admin/backups/${encodeURIComponent(backupCreated.json.data.fileName)}/download`);
   assert.strictEqual(downloaded.response.status, 200, "managed backup should download");
   const downloadedEnvelope = JSON.parse(downloaded.buffer.toString("utf8"));
@@ -420,6 +421,22 @@ async function verifyAuthorizationFlow() {
   const restoredBackup = await postJson(`/api/admin/backups/${encodeURIComponent(backupCreated.json.data.fileName)}/restore`, {});
   assert.strictEqual(restoredBackup.json.code, 1, "validated managed backup should restore successfully");
   assert.ok(restoredBackup.json.data.safetyBackup.fileName.startsWith("pre-restore-"), "restore should create a safety backup first");
+  const systemCreated = await postJson("/api/admin/system_backups", {});
+  assert.strictEqual(systemCreated.response.status, 200, "administrator should create a full-system backup");
+  assert.strictEqual(systemCreated.json.data.manifestSha256.length, 64, "full-system backup should expose a manifest checksum");
+  assert.ok(systemCreated.json.data.files >= 3, "full-system backup should include isolated runtime, security and attachment stores");
+  const systemRows = await requestJson("/api/admin/system_backups");
+  assert.ok(systemRows.json.data.some((row) => row.fileName === systemCreated.json.data.fileName), "full-system backup should appear in the catalog");
+  const systemVerified = await postJson(`/api/admin/system_backups/${encodeURIComponent(systemCreated.json.data.fileName)}/verify`, {});
+  assert.strictEqual(systemVerified.json.data.manifestSha256, systemCreated.json.data.manifestSha256, "admin revalidation should match the created manifest");
+  const systemDownloaded = await requestBuffer(`/api/admin/system_backups/${encodeURIComponent(systemCreated.json.data.fileName)}/download`);
+  assert.strictEqual(systemDownloaded.response.status, 200, "validated full-system backup should download");
+  assert.ok(systemDownloaded.buffer.subarray(0, 2).equals(Buffer.from("PK")), "full-system backup download should be a real ZIP");
+  const invalidSystem = await postJson("/api/admin/system_backups/not-a-backup.zip/verify", {});
+  assert.strictEqual(invalidSystem.response.status, 400, "invalid system backup names should fail closed");
+  const backupAudit = await requestJson("/api/admin/security_audit?limit=100&action=system_backup");
+  assert.ok(backupAudit.json.data.some((row) => row.action === "system_backup.create" && row.result === "success"), "system backup creation should be audited");
+  assert.ok(backupAudit.json.data.some((row) => row.action === "system_backup.verify" && row.result === "failure"), "system backup validation failures should be audited");
 }
 
 async function verifyConcurrentBusinessWriteConflict() {

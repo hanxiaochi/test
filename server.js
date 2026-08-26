@@ -9,6 +9,7 @@ const authCore = require("./lib/security/auth-core");
 const authService = require("./lib/security/auth-service");
 const { RuleStore } = require("./lib/rules/rule-store");
 const backupService = require("./lib/backup/backup-service");
+const systemBackupService = require("./lib/backup/system-backup");
 const tabularService = require("./lib/import-export/tabular-service");
 const measureImportService = require("./lib/import-export/measure-import-service");
 const paymentReportExport = require("./lib/reports/payment-report-export");
@@ -35,8 +36,10 @@ const engine = require("./costEngine");
 const app = express();
 const root = __dirname;
 const dataDir = path.join(root, "data");
+const systemBackupDataDir = path.resolve(process.env.APP_DATA_DIR || dataDir);
 const exportDir = process.env.APP_EXPORT_DIR || path.join(dataDir, "exports");
 const backupDir = path.resolve(process.env.APP_BACKUP_DIR || path.join(dataDir, "backups"));
+const systemBackupDir = path.resolve(process.env.APP_SYSTEM_BACKUP_DIR || path.join(systemBackupDataDir, "system-backups"));
 const attachmentDir = path.resolve(process.env.APP_ATTACHMENT_DIR || path.join(dataDir, "attachments"));
 const attachmentDbFile = path.resolve(process.env.APP_ATTACHMENT_DB_PATH || path.join(dataDir, "attachments.db"));
 const attachmentMaxBytes = Math.max(1024, Number(process.env.APP_ATTACHMENT_MAX_BYTES) || 20 * 1024 * 1024);
@@ -50,6 +53,8 @@ const loginRateLimitOptions = {
   maxEntries: process.env.APP_LOGIN_MAX_ENTRIES
 };
 fs.mkdirSync(backupDir, { recursive: true });
+fs.mkdirSync(systemBackupDir, { recursive: true });
+let systemBackupRunning = false;
 const attachmentStore = new AttachmentStore({ dbFile: attachmentDbFile, objectDir: attachmentDir, maxBytes: attachmentMaxBytes });
 const attachmentUpload = multer({
   storage: multer.memoryStorage(),
@@ -188,6 +193,51 @@ function managedBackupRows(user, projectId) {
       return { fileName: entry.name, bytes: stat.size, createdAt: stat.mtime.toISOString() };
     })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function systemBackupPath(fileName) {
+  const safeName = path.basename(String(fileName || ""));
+  if (!/^system-[0-9TZ.-]+-[a-f0-9]{8}\.zip$/.test(safeName) || safeName !== String(fileName)) throw new Error("Invalid system backup file name");
+  const target = path.resolve(systemBackupDir, safeName);
+  if (path.dirname(target) !== systemBackupDir || !fs.existsSync(target)) throw new Error("System backup file does not exist");
+  return target;
+}
+
+function systemBackupRows() {
+  return fs.readdirSync(systemBackupDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /^system-[0-9TZ.-]+-[a-f0-9]{8}\.zip$/.test(entry.name))
+    .map((entry) => {
+      const stat = fs.statSync(path.join(systemBackupDir, entry.name));
+      return { fileName: entry.name, bytes: stat.size, createdAt: stat.mtime.toISOString() };
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function systemBackupAudit(req, action, result, details = {}) {
+  authService.store.audit({
+    tenantId: req.authUser.tenantId, userId: req.authUser.id, action, result,
+    targetType: "system_backup", targetId: String(details.fileName || ""),
+    ipAddress: req.ip, userAgent: req.headers["user-agent"], details
+  });
+}
+
+async function createFullSystemBackup(req) {
+  if (systemBackupRunning) throw Object.assign(new Error("已有全系统备份任务正在执行"), { status: 409 });
+  systemBackupRunning = true;
+  try {
+    const createdAt = new Date();
+    const fileName = `system-${createdAt.toISOString().replace(/[:.]/g, "-")}-${crypto.randomBytes(4).toString("hex")}.zip`;
+    const target = path.join(systemBackupDir, fileName);
+    const temporary = `${target}.tmp`;
+    const sources = systemBackupService.collectDirectory(systemBackupDataDir, "data", { excludeNames: ["exports", "system-backups"] });
+    const bytes = await systemBackupService.createSystemBackup({ sources, createdAt, createdBy: req.authUser.account, applicationVersion: require("./package.json").version });
+    const verified = await systemBackupService.validateSystemBackup(bytes);
+    fs.writeFileSync(temporary, bytes, { flag: "wx", mode: 0o600 });
+    fs.renameSync(temporary, target);
+    return { fileName, archiveBytes: bytes.length, ...verified.manifest.totals, manifestSha256: verified.manifest.manifestSha256 };
+  } finally {
+    systemBackupRunning = false;
+  }
 }
 
 const dataExchangeModules = {
@@ -2233,6 +2283,11 @@ function backupManagementHtml(req) {
       <button type="button" class="layui-btn layui-btn-xs layui-btn-warm" data-restore-backup="${htmlEscape(row.fileName)}">恢复</button>
     </td>
   </tr>`).join("");
+  const systemBody = systemBackupRows().map((row) => `<tr>
+    <td>${htmlEscape(row.fileName)}</td><td>${htmlEscape(row.createdAt)}</td><td>${(row.bytes / 1024 / 1024).toFixed(2)} MB</td>
+    <td class="core-actions"><a href="/api/admin/system_backups/${encodeURIComponent(row.fileName)}/download">下载</a>
+    <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" data-verify-system-backup="${htmlEscape(row.fileName)}">验包</button></td>
+  </tr>`).join("");
   return `<div class="core-page" data-core-page="backup-management">
     ${corePageStyle("#0f766e")}
     <div class="core-shell">
@@ -2245,6 +2300,7 @@ function backupManagementHtml(req) {
           <h3>创建与导入</h3>
           <div class="core-tools">
             <button type="button" class="layui-btn layui-btn-sm" id="create-managed-backup">创建当前项目备份</button>
+            <button type="button" class="layui-btn layui-btn-sm layui-btn-normal" id="create-system-backup">创建全系统备份</button>
             <label class="layui-btn layui-btn-sm layui-btn-primary" for="import-managed-backup">导入备份文件</label>
             <input id="import-managed-backup" type="file" accept="application/json,.json" style="display:none;">
           </div>
@@ -2256,8 +2312,12 @@ function backupManagementHtml(req) {
         </div>
       </div>
       <div class="core-panel" style="margin-top:12px;overflow:auto;">
-        <h3>备份目录</h3>
+        <h3>当前项目备份</h3>
         <table class="layui-table" lay-size="sm"><thead><tr><th>文件</th><th>创建时间</th><th>大小</th><th>操作</th></tr></thead><tbody>${body || '<tr><td colspan="4" class="core-empty">暂无备份</td></tr>'}</tbody></table>
+      </div>
+      <div class="core-panel" style="margin-top:12px;overflow:auto;">
+        <h3>全系统灾备</h3><div class="core-note">覆盖业务、账号权限、规则、审批、附件和全部租户。恢复仅允许通过离线命令写入新目录。</div>
+        <table class="layui-table" lay-size="sm"><thead><tr><th>文件</th><th>创建时间</th><th>归档大小</th><th>操作</th></tr></thead><tbody>${systemBody || '<tr><td colspan="4" class="core-empty">暂无全系统备份</td></tr>'}</tbody></table>
       </div>
     </div>
     <script>(function(){
@@ -2266,6 +2326,8 @@ function backupManagementHtml(req) {
       function post(url,data){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(data||{})}).then(function(response){return response.json().then(function(body){if(!response.ok||body.code!==1)throw new Error(body.msg||'操作失败');return body})})}
       function done(text){message.textContent=text;setTimeout(function(){location.reload()},500)}
       root.querySelector('#create-managed-backup').addEventListener('click',function(){post('/api/admin/backups',{}).then(function(result){done('备份已创建：'+result.data.fileName)}).catch(function(error){message.textContent=error.message})});
+      root.querySelector('#create-system-backup').addEventListener('click',function(){var button=this;button.disabled=true;message.textContent='正在创建全系统一致快照...';post('/api/admin/system_backups',{}).then(function(result){done('全系统备份已创建：'+result.data.fileName)}).catch(function(error){button.disabled=false;message.textContent=error.message})});
+      Array.prototype.forEach.call(root.querySelectorAll('[data-verify-system-backup]'),function(button){button.addEventListener('click',function(){var file=button.getAttribute('data-verify-system-backup');button.disabled=true;post('/api/admin/system_backups/'+encodeURIComponent(file)+'/verify',{}).then(function(result){button.disabled=false;message.textContent='验包通过：'+result.data.files+' 个文件，清单 '+result.data.manifestSha256}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
       root.querySelector('#import-managed-backup').addEventListener('change',function(event){var file=event.target.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){post('/api/admin/backups/import',{originalName:file.name,content:String(reader.result||'')}).then(function(result){done('备份已导入：'+result.data.fileName)}).catch(function(error){message.textContent=error.message})};reader.onerror=function(){message.textContent='读取文件失败'};reader.readAsText(file,'utf-8')});
       Array.prototype.forEach.call(root.querySelectorAll('[data-restore-backup]'),function(button){button.addEventListener('click',function(){var file=button.getAttribute('data-restore-backup');if(!window.confirm('确认恢复备份 '+file+'？当前数据会先自动备份。'))return;button.disabled=true;post('/api/admin/backups/'+encodeURIComponent(file)+'/restore',{}).then(function(){done('恢复完成，正在刷新')}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
     })();</script>
@@ -14556,6 +14618,40 @@ app.post("/api/admin/backups/:fileName/restore", requirePermission("admin:access
     Object.keys(engine.db).forEach((key) => delete engine.db[key]);
     Object.assign(engine.db, before);
     try { appStore.save(engine.db, { actor: req.authUser.account, action: "backup-restore-rollback", checkpoint: true }); } catch {}
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.get("/api/admin/system_backups", requirePermission("admin:access"), (_req, res) => operationOk(res, systemBackupRows()));
+app.post("/api/admin/system_backups", requirePermission("admin:access"), async (req, res) => {
+  try {
+    const result = await createFullSystemBackup(req);
+    systemBackupAudit(req, "system_backup.create", "success", result);
+    operationOk(res, result);
+  } catch (error) {
+    systemBackupAudit(req, "system_backup.create", "failure", { message: error.message });
+    res.status(error.status || 500).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/system_backups/:fileName/verify", requirePermission("admin:access"), async (req, res) => {
+  try {
+    const source = systemBackupPath(req.params.fileName);
+    const verified = await systemBackupService.validateSystemBackup(fs.readFileSync(source));
+    const result = { fileName: req.params.fileName, ...verified.manifest.totals, manifestSha256: verified.manifest.manifestSha256 };
+    systemBackupAudit(req, "system_backup.verify", "success", result);
+    operationOk(res, result);
+  } catch (error) {
+    systemBackupAudit(req, "system_backup.verify", "failure", { fileName: req.params.fileName, message: error.message });
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.get("/api/admin/system_backups/:fileName/download", requirePermission("admin:access"), async (req, res) => {
+  try {
+    const source = systemBackupPath(req.params.fileName);
+    const verified = await systemBackupService.validateSystemBackup(fs.readFileSync(source));
+    systemBackupAudit(req, "system_backup.download", "success", { fileName: req.params.fileName, ...verified.manifest.totals });
+    res.download(source, req.params.fileName);
+  } catch (error) {
+    systemBackupAudit(req, "system_backup.download", "failure", { fileName: req.params.fileName, message: error.message });
     res.status(400).json({ code: 0, msg: error.message, data: null });
   }
 });

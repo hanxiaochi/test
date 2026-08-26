@@ -74,6 +74,8 @@ npm run backup:verify -- data/system-backups/system-时间.zip
 
 默认输出到 `data/system-backups/`。必须把该目录同步到独立服务器或对象存储；只留在应用服务器本机不构成灾备。当前工具打包 `APP_DATA_DIR`（默认项目 `data/`）；如将数据库或附件通过环境变量放在该目录之外，仍必须按照“必须持久化的数据”清单额外备份这些外部路径。
 
+管理员后台“备份恢复管理”也可创建、列出、验包和下载全系统备份。同一实例只允许一个全系统备份任务，重复请求返回 HTTP `409`；创建、验包和下载的成功或失败均写入安全审计。后台不提供全系统在线覆盖恢复或自动删除，恢复仍必须执行离线新目录门禁。
+
 ## Windows 本地运行
 
 ```powershell
@@ -293,6 +295,7 @@ node -e "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('
 ```text
 PORT                    HTTP 端口，默认 3100
 APP_STORAGE             sqlite（默认）或 json（应急回滚）
+APP_DATA_DIR            统一持久化数据根目录，默认项目 data/；容器和测试环境应显式隔离
 APP_RUNTIME_DB_PATH     旧 JSON 路径
 APP_SQLITE_DB_PATH      默认业务 SQLite 路径
 APP_SECURITY_DB_PATH    账号、权限和审计 SQLite 路径

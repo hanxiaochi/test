@@ -90,6 +90,7 @@ async function main() {
   const env = {
     ...process.env,
     APP_BASE_URL: baseUrl,
+    APP_DATA_DIR: tempRoot,
     APP_EXPORT_DIR: exportDir,
     APP_BACKUP_DIR: backupDir,
     APP_ATTACHMENT_DIR: attachmentDir,
