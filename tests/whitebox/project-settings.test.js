@@ -14,6 +14,7 @@ test("defaults and project overrides normalize deterministically", () => {
     moneyDigits: 2,
     exchangeRates: {},
     currencyDigits: {},
+    priceAdjustmentRule: { enabled: false, nonAdjustableCoefficient: "1", components: [] },
     retentionRate: "10",
     retentionLimitAmount: "",
     minimumCertificateAmount: "0"
@@ -25,6 +26,11 @@ test("defaults and project overrides normalize deterministically", () => {
     moneyDigits: 3,
     exchangeRates: { eur: "1.2", "gbp:usd": "1.3" },
     currencyDigits: { jpy: 0, kwd: 3 },
+    priceAdjustmentRule: {
+      enabled: true,
+      nonAdjustableCoefficient: "0.2",
+      components: [{ code: "labor", label: "Labour", weight: "0.8", baseIndex: "100" }]
+    },
     retentionRate: "7.500",
     retentionLimitAmount: "100000.00",
     minimumCertificateAmount: 500
@@ -32,6 +38,7 @@ test("defaults and project overrides normalize deterministically", () => {
   assert.equal(normalized.direction, "rtl");
   assert.deepEqual(normalized.exchangeRates, { EUR: "1.2", "GBP:USD": "1.3" });
   assert.deepEqual(normalized.currencyDigits, { JPY: 0, KWD: 3 });
+  assert.deepEqual(normalized.priceAdjustmentRule, { enabled: true, nonAdjustableCoefficient: "0.2", components: [{ code: "LABOR", label: "Labour", weight: "0.8", baseIndex: "100" }] });
   assert.equal(normalized.retentionRate, "7.5");
 });
 
@@ -41,6 +48,7 @@ test("partial updates inherit the current project settings", () => {
   assert.equal(updated.locale, "en-US");
   assert.equal(updated.baseCurrency, "EUR");
   assert.deepEqual(updated.exchangeRates, { USD: "0.9" });
+  assert.equal(updated.priceAdjustmentRule.enabled, false);
   assert.equal(updated.minimumCertificateAmount, "1000");
   assert.equal(settings.publicCatalog().locales.length, 6);
   assert.ok(settings.publicCatalog().certificateStandards.includes("FIDIC_YELLOW_2017"));
@@ -63,6 +71,7 @@ test("invalid settings fail closed", () => {
   assert.throws(() => settings.normalizeProjectSettings({ exchangeRates: { USD: 0 } }), /must be positive/);
   assert.throws(() => settings.normalizeProjectSettings({ currencyDigits: [] }), /must be an object/);
   assert.throws(() => settings.normalizeProjectSettings({ currencyDigits: { USD: 1.5 } }), /integer from 0 to 4/);
+  assert.throws(() => settings.normalizeProjectSettings({ priceAdjustmentRule: { enabled: true } }), /at least one/);
   assert.throws(() => settings.normalizeProjectSettings({ retentionRate: 101 }), /must not exceed/);
   assert.throws(() => settings.normalizeProjectSettings({ retentionLimitAmount: -1 }), /must not be negative/);
   assert.throws(() => settings.normalizeProjectSettings({ minimumCertificateAmount: "bad" }), /finite decimal/);
@@ -75,7 +84,7 @@ test("international settings versions are immutable, checksummed and reactivatab
   assert.equal(settings.activeSettingsVersion(state).version, 0);
   const first = settings.createSettingsVersion(state, { locale: "en-US", baseCurrency: "USD" }, { changeReason: "Contract award", createdBy: 7, createdAt: "2026-01-01T00:00:00.000Z" });
   const second = settings.createSettingsVersion(state, { exchangeRates: { EUR: "1.2" } }, { changeReason: "Engineer rate notice", createdBy: 8, createdAt: "2026-02-01T00:00:00.000Z" });
-  assert.equal(first.version, 1); assert.equal(second.version, 2); assert.equal(settings.settingsHistory(state)[1].status, "retired");
+  assert.equal(first.version, 1); assert.equal(first.schemaVersion, 2); assert.equal(second.version, 2); assert.equal(settings.settingsHistory(state)[1].status, "retired");
   assert.equal(settings.activeSettingsVersion(state).settings.exchangeRates.EUR, "1.2");
   const restored = settings.activateSettingsVersion(state, 1, { changeReason: "Engineer correction", activatedBy: 9, activatedAt: "2026-03-01T00:00:00.000Z" });
   assert.equal(restored.status, "active"); assert.equal(state.internationalSettings.locale, "en-US");
@@ -92,6 +101,16 @@ test("international version validation fails closed without partial mutation", (
   assert.equal(state.internationalSettingsVersions, undefined);
   assert.throws(() => settings.activateSettingsVersion(state, 1), /activation reason/);
   assert.throws(() => settings.createSettingsVersion(state, {}, { changeReason: "x".repeat(501) }), /500/);
-  state.internationalSettingsVersions = Array.from({ length: 1000 }, (_, index) => ({ version: index + 1, status: "retired", settings: settings.normalizeProjectSettings(), checksum: settings.settingsChecksum({}), changeReason: "x", createdBy: null, createdAt: "x", activatedAt: "x" }));
+  state.internationalSettingsVersions = Array.from({ length: 1000 }, (_, index) => ({ version: index + 1, schemaVersion: 2, status: "retired", settings: settings.normalizeProjectSettings(), checksum: settings.settingsChecksum({}), changeReason: "x", createdBy: null, createdAt: "x", activatedAt: "x" }));
   assert.throws(() => settings.createSettingsVersion(state, {}, { changeReason: "limit" }), /version limit/);
+});
+
+test("legacy version checksums remain valid after the schema gains new defaults", () => {
+  const legacySettings = settings.normalizeProjectSettings({ locale: "en-US" });
+  delete legacySettings.priceAdjustmentRule;
+  const state = { internationalSettingsVersions: [{ version: 1, status: "active", settings: legacySettings, checksum: settings.settingsChecksum(legacySettings, 1), changeReason: "legacy", createdBy: null, createdAt: "x", activatedAt: "x" }] };
+  const active = settings.activeSettingsVersion(state);
+  assert.equal(active.schemaVersion, 1);
+  assert.deepEqual(active.settings.priceAdjustmentRule, { enabled: false, nonAdjustableCoefficient: "1", components: [] });
+  assert.throws(() => settings.settingsChecksum({}, 3), /unsupported.*schema/);
 });

@@ -78,6 +78,64 @@ test("empty and negative-net certificates remain explicit", () => {
   assert.equal(negative.totals.payableNow, "-25.00");
 });
 
+test("index price adjustment produces traceable additions and deductions", () => {
+  const rule = {
+    enabled: true,
+    nonAdjustableCoefficient: "0.15",
+    components: [
+      { code: "labor", label: "Labour", weight: "0.5", baseIndex: "100" },
+      { code: "plant", label: "Plant", weight: "0.35", baseIndex: "200" }
+    ]
+  };
+  const inflation = fidic.calculateCertificate({
+    lines: [{ code: "WORK", category: "work", amount: 1000, currency: "USD" }],
+    priceAdjustment: { eligibleAmount: 1000, currentIndices: { LABOR: 110, PLANT: 180 } }
+  }, { baseCurrency: "USD", retentionRate: 0, priceAdjustmentRule: rule });
+  assert.equal(inflation.priceAdjustment.factor, "1.015");
+  assert.equal(inflation.priceAdjustment.adjustment, "15.00");
+  assert.equal(inflation.lines[1].category, "priceAdjustment");
+  assert.equal(inflation.lines[1].generated, true);
+  assert.equal(inflation.totals.netCertified, "1015.00");
+
+  const deflation = fidic.calculateCertificate({
+    lines: [{ code: "WORK", category: "work", amount: 1000, currency: "USD" }],
+    priceAdjustment: { eligibleAmount: 1000, currentIndices: { LABOR: 90, PLANT: 180 } }
+  }, { baseCurrency: "USD", retentionRate: 0, priceAdjustmentRule: rule });
+  assert.equal(deflation.priceAdjustment.adjustment, "-85.00");
+  assert.equal(deflation.lines[1].category, "priceAdjustmentDeduction");
+  assert.equal(deflation.totals.netCertified, "915.00");
+
+  const neutral = fidic.calculateCertificate({
+    lines: [],
+    priceAdjustment: { eligibleAmount: 1000, currentIndices: { LABOR: 100, PLANT: 200 } }
+  }, { baseCurrency: "USD", priceAdjustmentRule: rule });
+  assert.equal(neutral.priceAdjustment.adjustment, "0.00");
+  assert.equal(neutral.lines.length, 0);
+});
+
+test("price adjustment configuration and indices fail closed", () => {
+  assert.deepEqual(fidic.normalizePriceAdjustmentRule(), { enabled: false, nonAdjustableCoefficient: "1", components: [] });
+  assert.throws(() => fidic.normalizePriceAdjustmentRule([]), /must be an object/);
+  assert.throws(() => fidic.normalizePriceAdjustmentRule({ enabled: "yes" }), /boolean/);
+  assert.throws(() => fidic.normalizePriceAdjustmentRule({ enabled: true }), /at least one/);
+  assert.throws(() => fidic.normalizePriceAdjustmentRule({ enabled: true, nonAdjustableCoefficient: 0.2, components: [{ code: "A", weight: 0.7, baseIndex: 100 }] }), /total 1/);
+  assert.throws(() => fidic.normalizePriceAdjustmentRule({ nonAdjustableCoefficient: 1.1 }), /must not exceed 1/);
+  assert.throws(() => fidic.normalizePriceAdjustmentRule({ components: {} }), /must be an array/);
+  assert.throws(() => fidic.normalizePriceAdjustmentRule({ components: Array.from({ length: 21 }, (_, index) => ({ code: `C${index}`, weight: 0, baseIndex: 1 })) }), /must not exceed 20/);
+  assert.throws(() => fidic.normalizePriceAdjustmentRule({ components: [{ code: "?", weight: 0, baseIndex: 1 }] }), /code is invalid/);
+  assert.throws(() => fidic.normalizePriceAdjustmentRule({ components: [{ code: "A", weight: 0, baseIndex: 1 }, { code: "a", weight: 0, baseIndex: 1 }] }), /duplicate/);
+  assert.throws(() => fidic.normalizePriceAdjustmentRule({ components: [{ code: "A", label: "x".repeat(101), weight: 0, baseIndex: 1 }] }), /label is invalid/);
+  assert.throws(() => fidic.normalizePriceAdjustmentRule({ components: [{ code: "A", weight: 2, baseIndex: 1 }] }), /weight must not exceed 1/);
+  assert.throws(() => fidic.normalizePriceAdjustmentRule({ components: [{ code: "A", weight: 0, baseIndex: 0 }] }), /base index must be positive/);
+
+  const rule = { enabled: true, nonAdjustableCoefficient: 0, components: [{ code: "A", weight: 1, baseIndex: 100 }] };
+  assert.throws(() => fidic.calculatePriceAdjustment({}, rule), /eligible amount/);
+  assert.throws(() => fidic.calculatePriceAdjustment({ eligibleAmount: 1, currentIndices: [] }, rule), /indices must be an object/);
+  assert.throws(() => fidic.calculatePriceAdjustment({ eligibleAmount: 1, currentIndices: {} }, rule), /finite decimal/);
+  assert.throws(() => fidic.calculatePriceAdjustment({ eligibleAmount: 1, currentIndices: { A: 0 } }, rule), /current index must be positive/);
+  assert.throws(() => fidic.calculateCertificate({ lines: [{ code: "MANUAL", category: "priceAdjustment", amount: 1 }], priceAdjustment: { eligibleAmount: 1, currentIndices: { A: 100 } } }, { priceAdjustmentRule: rule }), /manual price adjustment/);
+});
+
 test("invalid contracts fail closed with actionable errors", () => {
   assert.throws(() => fidic.calculateCertificate({ lines: {} }), /array/);
   assert.throws(() => fidic.calculateCertificate({ lines: [{ category: "work", amount: 1 }] }), /code is required/);

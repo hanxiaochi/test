@@ -557,6 +557,7 @@ async function verifyInternationalContractFlow() {
   const page = await requestText("/admin/international_settings_page");
   assert.strictEqual(page.response.status, 200, "international contract settings page should load");
   assert.ok(page.text.includes("国际合同设置") && page.text.includes("付款证书试算") && page.text.includes("certificateStandard"), "international settings page should expose project settings and certificate calculation controls");
+  assert.ok(page.text.includes("priceAdjustmentRule") && page.text.includes("fidic-price-adjustment"), "international settings page should expose index adjustment rule and current-index inputs");
   const catalog = await requestJson("/api/admin/international_settings/catalog");
   assert.strictEqual(catalog.json.data.locales.length, 6, "international catalog should expose six initial locales");
   assert.ok(catalog.json.data.certificateStandards.includes("FIDIC_RED_2017"), "international catalog should expose FIDIC contract profiles");
@@ -576,7 +577,15 @@ async function verifyInternationalContractFlow() {
     currencyDigits: { JPY: 0 },
     retentionRate: "5",
     retentionLimitAmount: "100",
-    minimumCertificateAmount: "100"
+    minimumCertificateAmount: "100",
+    priceAdjustmentRule: {
+      enabled: true,
+      nonAdjustableCoefficient: "0.15",
+      components: [
+        { code: "LABOR", label: "Labour", weight: "0.5", baseIndex: "100" },
+        { code: "PLANT", label: "Plant", weight: "0.35", baseIndex: "200" }
+      ]
+    }
   });
   assert.strictEqual(saved.json.data.settings.locale, "en-US", "project should persist its own locale");
   assert.strictEqual(saved.json.data.settings.baseCurrency, "USD", "project should persist its own base currency");
@@ -595,13 +604,21 @@ async function verifyInternationalContractFlow() {
       { code: "WORK-USD", category: "work", amount: "1000", currency: "USD" },
       { code: "VO-CNY", category: "variation", amount: "1000", currency: "CNY" },
       { code: "ADV-REC", category: "advanceRepayment", amount: "50", currency: "USD" }
-    ]
+    ],
+    priceAdjustment: {
+      eligibleAmount: "1000",
+      currentIndices: { LABOR: "110", PLANT: "180" }
+    }
   });
   assert.strictEqual(certificate.json.data.baseCurrency, "USD", "certificate should use the selected project's base currency");
-  assert.strictEqual(certificate.json.data.totals.retentionEligibleBase, "1140.00", "certificate should convert eligible work at the project contract rate");
-  assert.strictEqual(certificate.json.data.totals.currentRetention, "57.00", "certificate should apply project retention rules after conversion");
-  assert.strictEqual(certificate.json.data.totals.netCertified, "1033.00", "certificate should close additions, deductions, and retention exactly");
+  assert.strictEqual(certificate.json.data.priceAdjustment.factor, "1.015", "certificate should calculate the configured FIDIC-compatible index factor");
+  assert.strictEqual(certificate.json.data.priceAdjustment.adjustment, "15.00", "certificate should calculate index adjustment from the eligible amount");
+  assert.ok(certificate.json.data.lines.some((line) => line.code === "AUTO-PRICE-ADJUSTMENT" && line.category === "priceAdjustment" && line.generated === true && line.baseAmount === "15.00"), "certificate should append a traceable generated price-adjustment line");
+  assert.strictEqual(certificate.json.data.totals.retentionEligibleBase, "1155.00", "certificate should include positive automatic adjustment in the retention base");
+  assert.strictEqual(certificate.json.data.totals.currentRetention, "57.75", "certificate should apply project retention rules after conversion and index adjustment");
+  assert.strictEqual(certificate.json.data.totals.netCertified, "1047.25", "certificate should close additions, deductions, adjustment, and retention exactly");
   assert.strictEqual(certificate.json.data.settingsVersion, 1, "certificate should identify the immutable project settings version");
+  assert.strictEqual(certificate.json.data.settingsSchemaVersion, 2, "certificate should identify the settings checksum schema used for calculation");
   assert.strictEqual(certificate.json.data.settingsChecksum.length, 64, "certificate should expose the settings checksum used for calculation");
   const versionHistory = await requestJson(`/api/admin/international_settings/history?projectId=${projectId}`);
   assert.strictEqual(versionHistory.json.data[0].changeReason, "Regression contract settings", "international settings history should preserve change reasons");
@@ -617,6 +634,18 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(invalid.response.status, 400, "zero contract exchange rates should fail closed");
   const afterInvalid = await requestJson(`/api/admin/international_settings?projectId=${projectId}`);
   assert.deepStrictEqual(afterInvalid.json.data, projectSettings.json.data, "failed settings updates must not mutate project state");
+  const invalidAdjustment = await postJson("/api/admin/international_settings", {
+    projectId,
+    changeReason: "Invalid adjustment regression",
+    priceAdjustmentRule: {
+      enabled: true,
+      nonAdjustableCoefficient: "0.2",
+      components: [{ code: "LABOR", weight: "0.7", baseIndex: "100" }]
+    }
+  });
+  assert.strictEqual(invalidAdjustment.response.status, 400, "unbalanced index adjustment weights should fail closed");
+  const afterInvalidAdjustment = await requestJson(`/api/admin/international_settings?projectId=${projectId}`);
+  assert.deepStrictEqual(afterInvalidAdjustment.json.data, projectSettings.json.data, "failed index adjustment updates must not mutate project settings");
   const defaultAfter = await requestJson("/api/admin/international_settings?projectId=1");
   assert.deepStrictEqual(defaultAfter.json.data, defaultSettings.json.data, "international settings must remain isolated by project");
   const arabicProjectId = "exchange-roundtrip-project";
