@@ -369,23 +369,42 @@ function applyDataExchangeImport(req) {
 }
 
 function currentInternationalSettings() {
-  return internationalSettingsService.normalizeProjectSettings(engine.db.internationalSettings || {});
+  return internationalSettingsService.activeSettingsVersion(engine.db).settings;
 }
 
 function saveInternationalSettings(req) {
   const previous = engine.db.internationalSettings;
-  const settings = internationalSettingsService.normalizeProjectSettings(req.body, currentInternationalSettings());
-  engine.db.internationalSettings = settings;
+  const previousVersions = engine.db.internationalSettingsVersions;
   try {
+    const version = internationalSettingsService.createSettingsVersion(engine.db, req.body, { changeReason: req.body.changeReason, createdBy: req.authUser.id });
     const storage = appStore.save(engine.db, {
       actor: req.authUser.account,
       action: "international-settings:update",
       checkpoint: true
     });
-    return { settings, storage };
+    return { settings: version.settings, version, storage };
   } catch (error) {
     if (previous === undefined) delete engine.db.internationalSettings;
     else engine.db.internationalSettings = previous;
+    if (previousVersions === undefined) delete engine.db.internationalSettingsVersions;
+    else engine.db.internationalSettingsVersions = previousVersions;
+    throw error;
+  }
+}
+
+function activateInternationalSettings(req) {
+  const previous = engine.db.internationalSettings;
+  const previousVersions = engine.db.internationalSettingsVersions;
+  try {
+    const version = internationalSettingsService.activateSettingsVersion(engine.db, req.params.version, {
+      changeReason: req.body.changeReason,
+      activatedBy: req.authUser.id
+    });
+    const storage = appStore.save(engine.db, { actor: req.authUser.account, action: `international-settings:activate:${version.version}`, checkpoint: true });
+    return { settings: version.settings, version, storage };
+  } catch (error) {
+    if (previous === undefined) delete engine.db.internationalSettings; else engine.db.internationalSettings = previous;
+    if (previousVersions === undefined) delete engine.db.internationalSettingsVersions; else engine.db.internationalSettingsVersions = previousVersions;
     throw error;
   }
 }
@@ -2415,6 +2434,7 @@ function internationalSettingsHtml(req) {
       <div class="core-grid">
         <form class="core-panel" id="international-settings-form">
           <h3>${htmlEscape(t("international.parameters"))}</h3>
+          <div class="layui-form-item"><label class="layui-form-label">变更原因</label><div class="layui-input-block"><input class="layui-input" name="changeReason" required maxlength="500"></div></div>
           <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.locale"))}</label><div class="layui-input-block"><select name="locale" class="layui-select">${localeOptions}</select></div></div>
           <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.baseCurrency"))}</label><div class="layui-input-block"><input class="layui-input" name="baseCurrency" maxlength="3" value="${htmlEscape(settings.baseCurrency)}"></div></div>
           <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.standard"))}</label><div class="layui-input-block"><select name="certificateStandard" class="layui-select">${standardOptions}</select></div></div>
@@ -2445,7 +2465,7 @@ function internationalSettingsHtml(req) {
       var form=root.querySelector('#international-settings-form'),message=root.querySelector('#international-settings-message'),totals=root.querySelector('#fidic-totals');
       function escapeHtml(value){var node=document.createElement('div');node.textContent=String(value==null?'':value);return node.innerHTML}
       function request(url,body){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json().then(function(result){if(!response.ok||result.code!==1)throw new Error(result.msg||'操作失败');return result.data})})}
-      form.addEventListener('submit',function(event){event.preventDefault();var data=new FormData(form),payload={locale:data.get('locale'),baseCurrency:data.get('baseCurrency'),certificateStandard:data.get('certificateStandard'),moneyDigits:Number(data.get('moneyDigits')),retentionRate:data.get('retentionRate'),retentionLimitAmount:data.get('retentionLimitAmount'),minimumCertificateAmount:data.get('minimumCertificateAmount')};try{payload.exchangeRates=JSON.parse(data.get('exchangeRates')||'{}');payload.currencyDigits=JSON.parse(data.get('currencyDigits')||'{}')}catch(error){message.textContent='JSON: '+error.message;return}request('/api/admin/international_settings',payload).then(function(){message.textContent=${JSON.stringify(t("international.saved"))}}).catch(function(error){message.textContent=error.message})});
+      form.addEventListener('submit',function(event){event.preventDefault();var data=new FormData(form),payload={changeReason:data.get('changeReason'),locale:data.get('locale'),baseCurrency:data.get('baseCurrency'),certificateStandard:data.get('certificateStandard'),moneyDigits:Number(data.get('moneyDigits')),retentionRate:data.get('retentionRate'),retentionLimitAmount:data.get('retentionLimitAmount'),minimumCertificateAmount:data.get('minimumCertificateAmount')};try{payload.exchangeRates=JSON.parse(data.get('exchangeRates')||'{}');payload.currencyDigits=JSON.parse(data.get('currencyDigits')||'{}')}catch(error){message.textContent='JSON: '+error.message;return}request('/api/admin/international_settings',payload).then(function(result){message.textContent=${JSON.stringify(t("international.saved"))}+' v'+result.version.version}).catch(function(error){message.textContent=error.message})});
       root.querySelector('#fidic-calculate').addEventListener('click',function(){var payload;try{payload={lines:JSON.parse(root.querySelector('#fidic-lines').value||'[]'),previousRetention:root.querySelector('#fidic-previous-retention').value,retentionRelease:root.querySelector('#fidic-retention-release').value}}catch(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>';return}request('/api/international/certificate/calculate',payload).then(function(result){var order=['grossCertified','lineDeductions','currentRetention','retentionRelease','netCertified','payableNow','carriedForward','cumulativeCertified'];totals.innerHTML=order.map(function(key){return '<tr><th>'+escapeHtml(key)+'</th><td>'+escapeHtml(result.totals[key])+' '+escapeHtml(result.baseCurrency)+'</td></tr>'}).join('')}).catch(function(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>'})});
     })();</script>
   </div>`;
@@ -14500,6 +14520,7 @@ app.get("/api/admin/international_settings/catalog", requirePermission("admin:ac
 app.get("/api/admin/international_settings", requirePermission("admin:access"), (req, res) => {
   operationOk(res, currentInternationalSettings());
 });
+app.get("/api/admin/international_settings/history", requirePermission("admin:access"), (_req, res) => operationOk(res, internationalSettingsService.settingsHistory(engine.db)));
 app.post("/api/admin/international_settings", requirePermission("admin:access"), (req, res) => {
   try {
     const result = saveInternationalSettings(req);
@@ -14518,9 +14539,20 @@ app.post("/api/admin/international_settings", requirePermission("admin:access"),
     res.status(400).json({ code: 0, msg: error.message, data: null });
   }
 });
+app.post("/api/admin/international_settings/:version/activate", requirePermission("admin:access"), (req, res) => {
+  try {
+    const result = activateInternationalSettings(req);
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_settings.activate", result: "success", targetType: "project", targetId: req.businessContext.projectId, details: { version: result.version.version, checksum: result.version.checksum, changeReason: result.version.activationReason } });
+    operationOk(res, result);
+  } catch (error) {
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_settings.activate", result: "failure", targetType: "project", targetId: req.businessContext.projectId, details: { version: req.params.version, message: error.message } });
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
 app.post("/api/international/certificate/calculate", (req, res) => {
   try {
-    operationOk(res, fidicCore.calculateCertificate(req.body, currentInternationalSettings()));
+    const version = internationalSettingsService.activeSettingsVersion(engine.db);
+    operationOk(res, { ...fidicCore.calculateCertificate(req.body, version.settings), settingsVersion: version.version, settingsChecksum: version.checksum, certificateStandard: version.settings.certificateStandard });
   } catch (error) {
     res.status(400).json({ code: 0, msg: error.message, data: null });
   }

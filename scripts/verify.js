@@ -567,6 +567,7 @@ async function verifyInternationalContractFlow() {
   const projectId = "regression-project-2";
   const saved = await postJson("/api/admin/international_settings", {
     projectId,
+    changeReason: "Regression contract settings",
     locale: "en-US",
     baseCurrency: "USD",
     certificateStandard: "FIDIC_RED_2017",
@@ -600,15 +601,26 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(certificate.json.data.totals.retentionEligibleBase, "1140.00", "certificate should convert eligible work at the project contract rate");
   assert.strictEqual(certificate.json.data.totals.currentRetention, "57.00", "certificate should apply project retention rules after conversion");
   assert.strictEqual(certificate.json.data.totals.netCertified, "1033.00", "certificate should close additions, deductions, and retention exactly");
+  assert.strictEqual(certificate.json.data.settingsVersion, 1, "certificate should identify the immutable project settings version");
+  assert.strictEqual(certificate.json.data.settingsChecksum.length, 64, "certificate should expose the settings checksum used for calculation");
+  const versionHistory = await requestJson(`/api/admin/international_settings/history?projectId=${projectId}`);
+  assert.strictEqual(versionHistory.json.data[0].changeReason, "Regression contract settings", "international settings history should preserve change reasons");
+  const secondVersion = await postJson("/api/admin/international_settings", { projectId, changeReason: "Regression locale update", locale: "fr-FR" });
+  assert.strictEqual(secondVersion.json.data.version.version, 2, "international settings updates should create consecutive versions");
+  const missingActivationReason = await postJson("/api/admin/international_settings/1/activate", { projectId });
+  assert.strictEqual(missingActivationReason.response.status, 400, "historical settings activation should require a reason");
+  const reactivated = await postJson("/api/admin/international_settings/1/activate", { projectId, changeReason: "Regression rollback" });
+  assert.strictEqual(reactivated.json.data.version.version, 1, "historical settings should be reactivatable");
+  assert.strictEqual(reactivated.json.data.version.activationReason, "Regression rollback", "activation reason should remain traceable");
 
-  const invalid = await postJson("/api/admin/international_settings", { projectId, exchangeRates: { EUR: 0 } });
+  const invalid = await postJson("/api/admin/international_settings", { projectId, changeReason: "Invalid regression", exchangeRates: { EUR: 0 } });
   assert.strictEqual(invalid.response.status, 400, "zero contract exchange rates should fail closed");
   const afterInvalid = await requestJson(`/api/admin/international_settings?projectId=${projectId}`);
   assert.deepStrictEqual(afterInvalid.json.data, projectSettings.json.data, "failed settings updates must not mutate project state");
   const defaultAfter = await requestJson("/api/admin/international_settings?projectId=1");
   assert.deepStrictEqual(defaultAfter.json.data, defaultSettings.json.data, "international settings must remain isolated by project");
   const arabicProjectId = "exchange-roundtrip-project";
-  const arabicSaved = await postJson("/api/admin/international_settings", { projectId: arabicProjectId, locale: "ar-SA" });
+  const arabicSaved = await postJson("/api/admin/international_settings", { projectId: arabicProjectId, changeReason: "Arabic deployment", locale: "ar-SA" });
   assert.strictEqual(arabicSaved.json.data.settings.direction, "rtl", "Arabic project should persist RTL direction");
   const arabicPage = await requestText(`/admin/international_settings_page?projectId=${arabicProjectId}`);
   assert.ok(arabicPage.text.includes("إعدادات العقود الدولية") && arabicPage.text.includes('lang="ar-SA"') && arabicPage.text.includes('dir="rtl"'), "Arabic project should render localized RTL administration markup");

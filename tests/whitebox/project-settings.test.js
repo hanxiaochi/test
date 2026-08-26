@@ -69,3 +69,29 @@ test("invalid settings fail closed", () => {
   assert.throws(() => settings.decimalString(Infinity, "value"), /finite decimal/);
   assert.equal(settings.optionalDecimalString(null, "value", "10"), "");
 });
+
+test("international settings versions are immutable, checksummed and reactivatable", () => {
+  const state = { internationalSettings: settings.normalizeProjectSettings() };
+  assert.equal(settings.activeSettingsVersion(state).version, 0);
+  const first = settings.createSettingsVersion(state, { locale: "en-US", baseCurrency: "USD" }, { changeReason: "Contract award", createdBy: 7, createdAt: "2026-01-01T00:00:00.000Z" });
+  const second = settings.createSettingsVersion(state, { exchangeRates: { EUR: "1.2" } }, { changeReason: "Engineer rate notice", createdBy: 8, createdAt: "2026-02-01T00:00:00.000Z" });
+  assert.equal(first.version, 1); assert.equal(second.version, 2); assert.equal(settings.settingsHistory(state)[1].status, "retired");
+  assert.equal(settings.activeSettingsVersion(state).settings.exchangeRates.EUR, "1.2");
+  const restored = settings.activateSettingsVersion(state, 1, { changeReason: "Engineer correction", activatedBy: 9, activatedAt: "2026-03-01T00:00:00.000Z" });
+  assert.equal(restored.status, "active"); assert.equal(state.internationalSettings.locale, "en-US");
+  assert.equal(restored.activationReason, "Engineer correction"); assert.equal(restored.activatedBy, 9);
+  assert.throws(() => settings.activateSettingsVersion(state, 99, { changeReason: "Missing version" }), /does not exist/);
+  state.internationalSettingsVersions[0].settings.locale = "fr-FR";
+  assert.throws(() => settings.settingsHistory(state), /checksum mismatch/);
+});
+
+test("international version validation fails closed without partial mutation", () => {
+  assert.throws(() => settings.createSettingsVersion(null, {}, { changeReason: "x" }), /state is required/);
+  const state = {};
+  assert.throws(() => settings.createSettingsVersion(state, {}, {}), /change reason/);
+  assert.equal(state.internationalSettingsVersions, undefined);
+  assert.throws(() => settings.activateSettingsVersion(state, 1), /activation reason/);
+  assert.throws(() => settings.createSettingsVersion(state, {}, { changeReason: "x".repeat(501) }), /500/);
+  state.internationalSettingsVersions = Array.from({ length: 1000 }, (_, index) => ({ version: index + 1, status: "retired", settings: settings.normalizeProjectSettings(), checksum: settings.settingsChecksum({}), changeReason: "x", createdBy: null, createdAt: "x", activatedAt: "x" }));
+  assert.throws(() => settings.createSettingsVersion(state, {}, { changeReason: "limit" }), /version limit/);
+});
