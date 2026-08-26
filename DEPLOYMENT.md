@@ -40,6 +40,8 @@ SQLite 是默认模式，不需要 MySQL 或 PostgreSQL。账号、RBAC、租户
 
 付款证书台账可直接下载 XLSX、PDF 和 DOCX，也可通过 `GET /api/international/certificates/{id}/export?format=all` 下载完整 ZIP。导出前会重新验证输入、结果和签发三层 SHA-256，不会使用当前参数重新计算。XLSX 分为证书信息、计价行、合计、指数调价和完整性工作表；完整 ZIP 的 `manifest.json` 固定证书 ID、签发 SHA-256，并记录每个文件的字节数和 SHA-256。导出成功、非法格式和校验失败都会写入 `international_certificate.export` 安全审计。
 
+正式 XLSX、PDF、DOCX 按证书签发时冻结的 `locale` 输出简体中文、英语、西班牙语、法语、巴西葡萄牙语或阿拉伯语；后续修改项目界面语言不会改变旧证书的导出语言。阿拉伯语文件启用 RTL 工作表、段落和 PDF 双栏排版，PDF 使用项目随附的 `assets/fonts/NotoSansArabic-VF.ttf` 嵌入字体，许可文本为 `assets/fonts/OFL-NotoSansArabic.txt`。部署包必须保留这两个文件以及 `assets/fonts/NotoSansSC-VF.ttf`，否则对应语言的 PDF 导出会失败。
+
 国际证书采用独立职责权限：`international:read`、`international:calculate`、`international:export`、`international:issue`、`international:void`。内置“只读用户”和“业务编辑者”可以查看、试算和导出，但不能签发或作废；内置“国际证书签发人”可以执行完整证书生命周期，但没有合同参数后台或其他业务写权限；系统管理员保留全部权限。操作人员使用 `/international/certificates_page`，管理员使用 `/admin/international_settings_page` 维护不可变参数版本。旧菜单兼容地址与标准地址执行相同权限检查，不能通过页面 ID 绕过。
 
 当前 SQLite 部署应保持一个 Node.js 写入实例，不要启用 Node cluster 或同时启动多个 systemd 副本。存储层带版本化乐观并发保护：意外重复实例或外部写入不会静默覆盖数据，陈旧表单会收到 HTTP `409`，服务端会重新加载已提交状态，用户刷新后可重试。需要水平扩展时，应先升级为共享数据库和跨实例事务架构。
