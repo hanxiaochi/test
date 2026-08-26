@@ -251,6 +251,10 @@ npm audit
 curl -fsS http://127.0.0.1:3100/api/health
 ```
 
+仓库内的 `.github/workflows/quality-gate.yml` 会在每次推送、Pull Request 和人工触发时，使用 Node.js 24 执行 `npm ci` 与同一套 `npm run test:all`。合并或部署前必须同时满足本地门禁和 GitHub Actions `Quality Gate` 成功；CI 失败时不得只凭本地一次通过继续发布。
+
+`npm audit` 依赖 npm 官方在线审计接口。若命令因 TLS、超时或接口不可用而失败，应记录为“依赖审计未完成”并重试，不能写成“未发现漏洞”；只有命令正常返回且报告为零时，才能作为依赖安全通过证据。
+
 人工门禁：
 
 1. 登录、退出、错误密码和会话失效正常。
