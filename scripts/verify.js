@@ -1,5 +1,6 @@
 ﻿const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const assert = require("assert");
 const ExcelJS = require("exceljs");
 const JSZip = require("jszip");
@@ -654,6 +655,27 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(Object.prototype.hasOwnProperty.call(register.json.data.rows[0], "calculationResult"), false, "certificate list should not repeat full calculation snapshots");
   const certificateDetail = await requestJson(`/api/international/certificates/${issued.json.data.record.id}?projectId=${projectId}`);
   assert.strictEqual(certificateDetail.json.data.calculationResultChecksum, issued.json.data.record.calculationResultChecksum, "certificate detail should return the verified result snapshot");
+  const certificateXlsx = await requestBuffer(`/api/international/certificates/${issued.json.data.record.id}/export?projectId=${projectId}&format=xlsx`);
+  assert.strictEqual(certificateXlsx.response.status, 200, "issued certificate should export as XLSX");
+  assert.ok(certificateXlsx.buffer.subarray(0, 2).equals(Buffer.from("PK")), "certificate XLSX should be a real ZIP-based workbook");
+  const certificateWorkbook = new ExcelJS.Workbook();
+  await certificateWorkbook.xlsx.load(certificateXlsx.buffer);
+  assert.deepStrictEqual(certificateWorkbook.worksheets.map((sheet) => sheet.name), ["Certificate", "Line Items", "Totals", "Price Adjustment", "Integrity"], "certificate XLSX should preserve calculation and integrity sheets");
+  assert.strictEqual(certificateWorkbook.getWorksheet("Integrity").getCell("B8").value, issued.json.data.record.issueChecksum, "certificate XLSX should embed the immutable issue checksum");
+  const certificatePdf = await requestBuffer(`/api/international/certificates/${issued.json.data.record.id}/export?projectId=${projectId}&format=pdf`);
+  assert.strictEqual(certificatePdf.buffer.subarray(0, 5).toString("ascii"), "%PDF-", "issued certificate should export as a real PDF");
+  const certificateDocx = await requestBuffer(`/api/international/certificates/${issued.json.data.record.id}/export?projectId=${projectId}&format=docx`);
+  assert.ok(certificateDocx.buffer.subarray(0, 2).equals(Buffer.from("PK")), "issued certificate should export as a real DOCX");
+  const certificateBundle = await requestBuffer(`/api/international/certificates/${issued.json.data.record.id}/export?projectId=${projectId}&format=all`);
+  const certificateZip = await JSZip.loadAsync(certificateBundle.buffer);
+  const certificateManifest = JSON.parse(await certificateZip.file("manifest.json").async("string"));
+  assert.strictEqual(certificateManifest.issueChecksum, issued.json.data.record.issueChecksum, "certificate bundle manifest should pin the immutable issue checksum");
+  for (const file of certificateManifest.files) {
+    const bytes = await certificateZip.file(file.name).async("nodebuffer");
+    assert.strictEqual(crypto.createHash("sha256").update(bytes).digest("hex"), file.sha256, `certificate bundle checksum should verify ${file.name}`);
+  }
+  const invalidCertificateExport = await requestJson(`/api/international/certificates/${issued.json.data.record.id}/export?projectId=${projectId}&format=exe`);
+  assert.strictEqual(invalidCertificateExport.response.status, 400, "unsupported certificate export formats should fail closed");
   const missingVoidReason = await postJson(`/api/international/certificates/${issued.json.data.record.id}/void`, { projectId });
   assert.strictEqual(missingVoidReason.response.status, 400, "certificate voiding should require a reason");
   const secondInput = {
@@ -791,6 +813,8 @@ async function verifyInternationalContractFlow() {
   assert.ok(audit.json.data.some((row) => row.action === "international_certificate.issue" && row.result === "failure"), "failed international certificate issues should be audited");
   assert.ok(audit.json.data.some((row) => row.action === "international_certificate.void" && row.result === "success"), "successful international certificate voids should be audited");
   assert.ok(audit.json.data.some((row) => row.action === "international_certificate.void" && row.result === "failure"), "failed international certificate voids should be audited");
+  assert.ok(audit.json.data.some((row) => row.action === "international_certificate.export" && row.result === "success"), "successful international certificate exports should be audited");
+  assert.ok(audit.json.data.some((row) => row.action === "international_certificate.export" && row.result === "failure"), "failed international certificate exports should be audited");
 }
 
 async function verifyTenantBusinessIsolation() {

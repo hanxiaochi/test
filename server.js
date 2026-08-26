@@ -16,6 +16,7 @@ const paymentReportExport = require("./lib/reports/payment-report-export");
 const fidicCore = require("./lib/international/fidic-core");
 const internationalSettingsService = require("./lib/international/project-settings");
 const internationalCertificateRegister = require("./lib/international/certificate-register");
+const internationalCertificateExport = require("./lib/international/certificate-export");
 const { mapClientConfig } = require("./lib/client-config");
 const { AttachmentStore } = require("./lib/attachments/attachment-store");
 const { scanAttachmentConsistency } = require("./lib/attachments/attachment-consistency");
@@ -414,6 +415,7 @@ function calculateInternationalCertificate(input) {
   const version = internationalSettingsService.activeSettingsVersion(engine.db);
   return {
     ...fidicCore.calculateCertificate(input, version.settings),
+    locale: version.settings.locale,
     settingsVersion: version.version,
     settingsSchemaVersion: version.schemaVersion,
     settingsChecksum: version.checksum,
@@ -480,6 +482,33 @@ function internationalCertificateErrorStatus(error) {
   if (/does not exist/.test(error.message)) return 404;
   if (/already|idempotency key|active successor/.test(error.message)) return 409;
   return 400;
+}
+
+async function internationalCertificateExportPayload(record, format) {
+  const safeNo = String(record.certificateNo).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "certificate";
+  if (format === "pdf") return { filename: `${safeNo}.pdf`, contentType: "application/pdf", data: await internationalCertificateExport.createPdf(record) };
+  if (format === "docx" || format === "word") return { filename: `${safeNo}.docx`, contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", data: await internationalCertificateExport.createDocx(record) };
+  if (format === "all" || format === "zip") {
+    const [xlsx, pdf, docx] = await Promise.all([
+      internationalCertificateExport.createXlsx(record),
+      internationalCertificateExport.createPdf(record),
+      internationalCertificateExport.createDocx(record)
+    ]);
+    const files = [
+      { name: `${safeNo}.xlsx`, data: xlsx }, { name: `${safeNo}.pdf`, data: pdf }, { name: `${safeNo}.docx`, data: docx }
+    ];
+    const manifest = {
+      schemaVersion: 1,
+      certificateId: record.id,
+      certificateNo: record.certificateNo,
+      issuedAt: record.issuedAt,
+      issueChecksum: record.issueChecksum,
+      files: files.map((file) => ({ name: file.name, bytes: file.data.length, sha256: crypto.createHash("sha256").update(file.data).digest("hex") }))
+    };
+    return { filename: `${safeNo}-bundle.zip`, contentType: "application/zip", data: zipBuffer([...files, { name: "manifest.json", data: JSON.stringify(manifest, null, 2) }]) };
+  }
+  if (format !== "xlsx" && format !== "excel") throw new Error("certificate export format must be xlsx, pdf, docx, or all");
+  return { filename: `${safeNo}.xlsx`, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data: await internationalCertificateExport.createXlsx(record) };
 }
 
 function requirePermission(permission) {
@@ -2526,7 +2555,10 @@ function internationalSettingsHtml(req) {
   const previousCumulative = latestActiveCertificate ? latestActiveCertificate.cumulativeCertified : "0";
   const certificateRows = certificates.map((item) => {
     const statusText = item.status === "issued" ? t("international.issued") : t("international.voided");
-    const action = item.status === "issued" ? `<button type="button" class="layui-btn layui-btn-xs layui-btn-danger void-international-certificate" data-id="${htmlEscape(item.id)}" data-no="${htmlEscape(item.certificateNo)}">${htmlEscape(t("international.void"))}</button>` : `<span title="${htmlEscape(item.voidReason)}">${htmlEscape(item.voidReason)}</span>`;
+    const encodedId = encodeURIComponent(item.id);
+    const downloads = `<a class="layui-btn layui-btn-xs layui-btn-primary" href="/api/international/certificates/${encodedId}/export?format=xlsx">XLSX</a><a class="layui-btn layui-btn-xs layui-btn-primary" href="/api/international/certificates/${encodedId}/export?format=pdf">PDF</a><a class="layui-btn layui-btn-xs layui-btn-primary" href="/api/international/certificates/${encodedId}/export?format=docx">DOCX</a>`;
+    const lifecycle = item.status === "issued" ? `<button type="button" class="layui-btn layui-btn-xs layui-btn-danger void-international-certificate" data-id="${htmlEscape(item.id)}" data-no="${htmlEscape(item.certificateNo)}">${htmlEscape(t("international.void"))}</button>` : `<span title="${htmlEscape(item.voidReason)}">${htmlEscape(item.voidReason)}</span>`;
+    const action = `<div class="core-tools">${downloads}${lifecycle}</div>`;
     const predecessor = item.predecessorCertificateId ? `<code title="${htmlEscape(item.predecessorIssueChecksum)}">${htmlEscape(item.predecessorCertificateId)}</code>` : "-";
     return `<tr data-certificate-id="${htmlEscape(item.id)}">
       <td>${htmlEscape(item.certificateNo)}</td><td>${htmlEscape(item.periodStart)} - ${htmlEscape(item.periodEnd)}</td>
@@ -14701,6 +14733,30 @@ app.get("/api/international/certificates", (_req, res) => {
   } catch (error) {
     res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
   }
+});
+app.get("/api/international/certificates/:identifier/export", (req, res) => {
+  Promise.resolve().then(async () => {
+    const record = internationalCertificateRegister.findCertificate(engine.db, req.params.identifier);
+    const format = String(req.query.format || "xlsx").trim().toLowerCase();
+    const payload = await internationalCertificateExportPayload(record, format);
+    authService.store.audit({
+      tenantId: req.authUser.tenantId,
+      userId: req.authUser.id,
+      action: "international_certificate.export",
+      result: "success",
+      targetType: "international_certificate",
+      targetId: record.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+      details: { certificateNo: record.certificateNo, format, bytes: payload.data.length, issueChecksum: record.issueChecksum }
+    });
+    res.setHeader("Content-Type", payload.contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${payload.filename}"`);
+    res.send(payload.data);
+  }).catch((error) => {
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_certificate.export", result: "failure", targetType: "international_certificate", targetId: req.params.identifier, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { format: String(req.query.format || "xlsx"), message: error.message } });
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
+  });
 });
 app.get("/api/international/certificates/:identifier", (req, res) => {
   try {
