@@ -409,6 +409,7 @@ async function verifyAuthorizationFlow() {
   const backupPage = await requestText("/admin/backups_page");
   assert.ok(backupPage.text.includes("备份恢复管理") && backupPage.text.includes("导入备份文件") && backupPage.text.includes("恢复前安全快照"), "backup administration page should expose create, import, download, and safe restore workflow");
   assert.ok(backupPage.text.includes("创建全系统备份") && backupPage.text.includes("全系统灾备"), "backup administration page should expose full-system backup creation and catalog");
+  assert.ok(backupPage.text.includes("检查附件完整性"), "backup administration page should expose attachment consistency inspection");
   const downloaded = await requestBuffer(`/api/admin/backups/${encodeURIComponent(backupCreated.json.data.fileName)}/download`);
   assert.strictEqual(downloaded.response.status, 200, "managed backup should download");
   const downloadedEnvelope = JSON.parse(downloaded.buffer.toString("utf8"));
@@ -421,10 +422,13 @@ async function verifyAuthorizationFlow() {
   const restoredBackup = await postJson(`/api/admin/backups/${encodeURIComponent(backupCreated.json.data.fileName)}/restore`, {});
   assert.strictEqual(restoredBackup.json.code, 1, "validated managed backup should restore successfully");
   assert.ok(restoredBackup.json.data.safetyBackup.fileName.startsWith("pre-restore-"), "restore should create a safety backup first");
+  const attachmentConsistency = await postJson("/api/admin/attachment_consistency", {});
+  assert.strictEqual(attachmentConsistency.json.data.ok, true, "attachment metadata and objects should be consistent before disaster backup");
   const systemCreated = await postJson("/api/admin/system_backups", {});
   assert.strictEqual(systemCreated.response.status, 200, "administrator should create a full-system backup");
   assert.strictEqual(systemCreated.json.data.manifestSha256.length, 64, "full-system backup should expose a manifest checksum");
   assert.ok(systemCreated.json.data.files >= 3, "full-system backup should include isolated runtime, security and attachment stores");
+  assert.strictEqual(systemCreated.json.data.attachmentConsistency.errors, 0, "full-system backup should expose its attachment consistency gate");
   const systemRows = await requestJson("/api/admin/system_backups");
   assert.ok(systemRows.json.data.some((row) => row.fileName === systemCreated.json.data.fileName), "full-system backup should appear in the catalog");
   const systemVerified = await postJson(`/api/admin/system_backups/${encodeURIComponent(systemCreated.json.data.fileName)}/verify`, {});

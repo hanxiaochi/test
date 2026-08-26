@@ -26,6 +26,7 @@ const commands = [
   ["run", "test:fidic"],
   ["run", "test:international-settings"],
   ["run", "test:attachments"],
+  ["run", "test:attachment-consistency"],
   ["run", "test:measure-import"],
   ["run", "test:report-export"],
   ["run", "test:workflow"],
