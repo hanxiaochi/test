@@ -603,6 +603,7 @@ async function verifyInternationalContractFlow() {
 
   const certificateInput = {
     previousRetention: 0,
+    previousCumulativeCertified: 0,
     lines: [
       { code: "WORK-USD", category: "work", amount: "1000", currency: "USD" },
       { code: "VO-CNY", category: "variation", amount: "1000", currency: "CNY" },
@@ -655,6 +656,61 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(certificateDetail.json.data.calculationResultChecksum, issued.json.data.record.calculationResultChecksum, "certificate detail should return the verified result snapshot");
   const missingVoidReason = await postJson(`/api/international/certificates/${issued.json.data.record.id}/void`, { projectId });
   assert.strictEqual(missingVoidReason.response.status, 400, "certificate voiding should require a reason");
+  const secondInput = {
+    previousRetention: "57.75",
+    previousCumulativeCertified: "1047.25",
+    lines: [{ code: "WORK-USD-002", category: "work", amount: "100", currency: "USD" }],
+    priceAdjustment: {
+      eligibleAmount: "100",
+      currentIndices: { LABOR: "100", PLANT: "200" }
+    }
+  };
+  const badContinuation = await postJson("/api/international/certificates/issue", {
+    projectId,
+    certificateNo: "IPC-REG-BAD-RETENTION",
+    periodStart: "2026-08-01",
+    periodEnd: "2026-08-31",
+    idempotencyKey: "ipc-reg-bad-retention",
+    calculationInput: { ...secondInput, previousRetention: "57.74" }
+  });
+  assert.strictEqual(badContinuation.response.status, 400, "a second certificate must reject a mismatched predecessor closing retention");
+  assert.ok(badContinuation.json.msg.includes("57.75"), "continuity rejection should expose the exact expected retention");
+  const overlap = await postJson("/api/international/certificates/issue", {
+    projectId,
+    certificateNo: "IPC-REG-BAD-PERIOD",
+    periodStart: "2026-07-31",
+    periodEnd: "2026-08-31",
+    idempotencyKey: "ipc-reg-bad-period",
+    calculationInput: secondInput
+  });
+  assert.strictEqual(overlap.response.status, 400, "a new certificate period must not overlap its active predecessor");
+  const afterRejectedContinuity = await requestJson(`/api/international/certificates?projectId=${projectId}`);
+  assert.strictEqual(afterRejectedContinuity.json.data.total, 1, "failed continuity checks must not mutate the certificate register");
+  const secondIssued = await postJson("/api/international/certificates/issue", {
+    projectId,
+    certificateNo: "IPC-REG-002",
+    periodStart: "2026-08-01",
+    periodEnd: "2026-08-31",
+    applicationReference: "APP-REG-002",
+    remarks: "Second continuous certificate",
+    idempotencyKey: "ipc-reg-002-request",
+    calculationInput: secondInput
+  });
+  assert.strictEqual(secondIssued.response.status, 200, "a correctly continued second certificate should issue");
+  assert.strictEqual(secondIssued.json.data.record.calculationResult.totals.currentRetention, "5.00", "second certificate should calculate its current retention independently");
+  assert.strictEqual(secondIssued.json.data.record.calculationResult.totals.netCertified, "95.00", "second certificate should calculate its net certified amount");
+  assert.strictEqual(secondIssued.json.data.record.calculationResult.totals.cumulativeCertified, "1142.25", "second certificate should carry forward predecessor cumulative certification");
+  assert.strictEqual(secondIssued.json.data.record.closingRetention, "62.75", "second certificate should close predecessor plus current retention");
+  assert.strictEqual(secondIssued.json.data.record.predecessorCertificateId, issued.json.data.record.id, "second certificate should pin the predecessor certificate id");
+  assert.strictEqual(secondIssued.json.data.record.predecessorIssueChecksum, issued.json.data.record.issueChecksum, "second certificate should pin the predecessor issue checksum");
+  const continuationPage = await requestText(`/admin/international_settings_page?projectId=${projectId}`);
+  assert.ok(continuationPage.text.includes('id="fidic-previous-retention"') && continuationPage.text.includes('value="62.75"'), "certificate page should default previous retention from the latest active certificate");
+  assert.ok(continuationPage.text.includes('id="fidic-previous-cumulative"') && continuationPage.text.includes('value="1142.25"'), "certificate page should default cumulative certification from the latest active certificate");
+  assert.ok(continuationPage.text.includes(secondIssued.json.data.record.id), "certificate register should expose predecessor trace identifiers");
+  const predecessorVoidBlocked = await postJson(`/api/international/certificates/${issued.json.data.record.id}/void`, { projectId, reason: "Invalid reverse-order attempt" });
+  assert.strictEqual(predecessorVoidBlocked.response.status, 409, "a predecessor with an active successor must reject reverse-order voiding as a conflict");
+  const secondVoided = await postJson(`/api/international/certificates/${secondIssued.json.data.record.id}/void`, { projectId, reason: "Regression unwind second" });
+  assert.strictEqual(secondVoided.json.data.record.status, "voided", "the latest active certificate should be voidable first");
   const voided = await postJson(`/api/international/certificates/${issued.json.data.record.id}/void`, { projectId, reason: "Regression correction" });
   assert.strictEqual(voided.json.data.record.status, "voided", "a certificate should be voided without deleting its issue snapshot");
   assert.strictEqual(voided.json.data.record.issueChecksum, issued.json.data.record.issueChecksum, "voiding must preserve the immutable issue checksum");
@@ -697,6 +753,31 @@ async function verifyInternationalContractFlow() {
   const arabicProjectId = "exchange-roundtrip-project";
   const arabicSaved = await postJson("/api/admin/international_settings", { projectId: arabicProjectId, changeReason: "Arabic deployment", locale: "ar-SA" });
   assert.strictEqual(arabicSaved.json.data.settings.direction, "rtl", "Arabic project should persist RTL direction");
+  const openingInput = {
+    previousRetention: "10",
+    previousCumulativeCertified: "200",
+    lines: [{ code: "OPEN-WORK-001", category: "work", amount: "100", currency: "CNY" }]
+  };
+  const missingOpeningReason = await postJson("/api/international/certificates/issue", {
+    projectId: arabicProjectId,
+    certificateNo: "IPC-OPEN-BAD",
+    periodStart: "2026-01-01",
+    periodEnd: "2026-01-31",
+    idempotencyKey: "ipc-opening-bad-request",
+    calculationInput: openingInput
+  });
+  assert.strictEqual(missingOpeningReason.response.status, 400, "a non-zero first-certificate opening balance should require a migration reason through the HTTP API");
+  const openingIssued = await postJson("/api/international/certificates/issue", {
+    projectId: arabicProjectId,
+    certificateNo: "IPC-OPEN-001",
+    periodStart: "2026-01-01",
+    periodEnd: "2026-01-31",
+    openingBalanceReason: "Audited legacy balance migration",
+    idempotencyKey: "ipc-opening-001-request",
+    calculationInput: openingInput
+  });
+  assert.strictEqual(openingIssued.response.status, 200, "an explained legacy opening balance should issue through the HTTP API");
+  assert.strictEqual(openingIssued.json.data.record.openingBalanceReason, "Audited legacy balance migration", "the immutable certificate should retain its opening balance reason");
   const arabicPage = await requestText(`/admin/international_settings_page?projectId=${arabicProjectId}`);
   assert.ok(arabicPage.text.includes("إعدادات العقود الدولية") && arabicPage.text.includes('lang="ar-SA"') && arabicPage.text.includes('dir="rtl"'), "Arabic project should render localized RTL administration markup");
   assert.ok(arabicPage.text.includes("سجل شهادات الدفع") && arabicPage.text.includes("إصدار وأرشفة"), "Arabic project should localize certificate register controls");
