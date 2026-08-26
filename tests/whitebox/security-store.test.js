@@ -34,6 +34,22 @@ test("bootstrap is idempotent and never resets an existing password", () => with
   assert.equal(store.authenticate({ account: "ys1", password: "changed-by-restart" }), null);
 }));
 
+test("security migration repairs certificate roles for every existing tenant", () => withStore((store) => {
+  store.bootstrap({ tenantId: "legacy-tenant", account: "legacy-admin", password: "Legacy-Admin-42!" });
+  const viewerRole = store.db.prepare("SELECT id FROM roles WHERE tenant_id = 'legacy-tenant' AND code = 'viewer'").get();
+  store.db.prepare("DELETE FROM role_permissions WHERE role_id = ? AND permission_code = 'international:export'").run(viewerRole.id);
+  store.db.prepare("DELETE FROM roles WHERE tenant_id = 'legacy-tenant' AND code = 'certificate_approver'").run();
+  const reopened = new SecurityStore(store.file, { now: store.now });
+  try {
+    assert.deepEqual(reopened.listRoles("legacy-tenant").map((role) => role.code), ["admin", "certificate_approver", "editor", "viewer"]);
+    assert.ok(reopened.listRoles("legacy-tenant").find((role) => role.code === "viewer").permissions.includes("international:export"));
+    assert.ok(reopened.listRoles("legacy-tenant").find((role) => role.code === "certificate_approver").permissions.includes("international:issue"));
+    assert.ok(reopened.db.prepare("SELECT 1 FROM security_migrations WHERE version = 4").get());
+  } finally {
+    reopened.close();
+  }
+}));
+
 test("production bootstrap requires a strong password only for a new account", () => withStore((store) => {
   assert.throws(() => store.bootstrap({ account: "ys1", password: "000000", requireStrongPassword: true }), /Production bootstrap password is invalid/);
   assert.equal(store.db.prepare("SELECT COUNT(*) AS count FROM users").get().count, 0);
@@ -159,11 +175,20 @@ test("user creation validates password and roles transactionally", () => withSto
   assert.ok(store.auditRows().some((row) => row.action === "user.create"));
 
   const viewer = store.createUser({ account: "viewer", password: "Viewer-Pass-42!", roleCodes: ["viewer"] });
-  assert.deepEqual(viewer.permissions, ["data:read"]);
+  assert.deepEqual(viewer.permissions, ["data:read", "international:calculate", "international:export", "international:read"]);
   const viewerLogin = store.authenticate({ account: "viewer", password: "Viewer-Pass-42!" });
   assert.ok(store.authorize(viewerLogin.token, "data:read"));
+  assert.ok(store.authorize(viewerLogin.token, "international:export"));
+  assert.equal(store.authorize(viewerLogin.token, "international:issue"), null);
   assert.equal(store.authorize(viewerLogin.token, "data:write"), null);
   assert.equal(store.authorize(viewerLogin.token, "admin:access"), null);
+
+  const approver = store.createUser({ account: "approver", password: "Approver-Pass-42!", roleCodes: ["certificate_approver"] });
+  assert.deepEqual(approver.permissions, ["data:read", "international:calculate", "international:export", "international:issue", "international:read", "international:void"]);
+  const approverLogin = store.authenticate({ account: "approver", password: "Approver-Pass-42!" });
+  assert.ok(store.authorize(approverLogin.token, "international:issue"));
+  assert.ok(store.authorize(approverLogin.token, "international:void"));
+  assert.equal(store.authorize(approverLogin.token, "data:write"), null);
 }));
 
 test("invalid database path and permission denials are explicit", () => {
@@ -178,8 +203,9 @@ test("invalid database path and permission denials are explicit", () => {
 
 test("administration lists users, changes roles, disables users, and revokes sessions", () => withStore((store) => {
   const admin = store.bootstrap({ account: "ys1", password: "000000" });
-  assert.deepStrictEqual(store.listRoles().map((role) => role.code), ["admin", "editor", "viewer"]);
-  assert.deepStrictEqual(store.listRoles().find((role) => role.code === "viewer").permissions, ["data:read"]);
+  assert.deepStrictEqual(store.listRoles().map((role) => role.code), ["admin", "certificate_approver", "editor", "viewer"]);
+  assert.deepStrictEqual(store.listRoles().find((role) => role.code === "viewer").permissions, ["data:read", "international:calculate", "international:export", "international:read"]);
+  assert.deepStrictEqual(store.listRoles().find((role) => role.code === "certificate_approver").permissions, ["data:read", "international:calculate", "international:export", "international:issue", "international:read", "international:void"]);
   const created = store.createUser({ account: "worker", password: "Worker-Pass-42!", roleCodes: ["editor"] });
   assert.deepEqual(store.listUsers().map((user) => user.account), ["worker", "ys1"]);
   const login = store.authenticate({ account: "worker", password: "Worker-Pass-42!" });

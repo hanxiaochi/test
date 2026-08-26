@@ -235,7 +235,7 @@ async function verifyAuthorizationFlow() {
     projectIds: ["1"]
   });
   assert.strictEqual(created.response.status, 200, "admin should create a viewer account");
-  assert.deepStrictEqual(created.json.data.permissions, ["data:read"], "viewer should receive read-only permission");
+  assert.deepStrictEqual(created.json.data.permissions, ["data:read", "international:calculate", "international:export", "international:read"], "viewer should receive read-only and non-mutating certificate permissions");
   const attachmentDocumentId = engine.documentRows()[0].nodeId || engine.documentRows()[0].id;
   const viewerFixtureBytes = Buffer.from("%PDF-1.7\nviewer-permission-fixture\n");
   const viewerFixture = await postMultipart("/projectInformationNode/upload_attachment", { hangId: attachmentDocumentId, remark: "viewer permission fixture" }, {
@@ -271,8 +271,20 @@ async function verifyAuthorizationFlow() {
   const viewerCertificate = await postJson("/api/international/certificate/calculate", { lines: [{ code: "VIEW", category: "work", amount: 100, currency: "CNY" }] });
   assert.strictEqual(viewerCertificate.response.status, 200, "read-only users should calculate a non-mutating international certificate");
   assert.strictEqual(viewerCertificate.json.data.totals.netCertified, "90.00", "viewer certificate should use the current project retention settings");
+  const viewerCertificatePage = await requestText("/international/certificates_page");
+  assert.strictEqual(viewerCertificatePage.response.status, 200, "viewer should open the certificate workbench");
+  assert.ok(viewerCertificatePage.text.includes('id="fidic-calculate"') && viewerCertificatePage.text.includes('id="international-certificate-register"'), "viewer workbench should expose calculation and register controls");
+  assert.ok(!viewerCertificatePage.text.includes('id="international-settings-form"') && !viewerCertificatePage.text.includes('id="international-settings-history"'), "viewer workbench must not expose contract administration controls");
+  assert.ok(!viewerCertificatePage.text.includes('id="fidic-issue"'), "viewer workbench must not render certificate issuance controls");
+  assert.doesNotThrow(() => [...viewerCertificatePage.text.matchAll(/<script>([\s\S]*?)<\/script>/gi)].forEach((match) => new Function(match[1])), "viewer workbench inline scripts should compile without missing-admin assumptions");
+  const viewerLegacySettingsDenied = await requestText("/sbr/sbr_com/9040");
+  assert.strictEqual(viewerLegacySettingsDenied.response.status, 403, "legacy menu routing must not expose contract settings to a viewer");
+  const viewerLegacyWorkbench = await requestText("/sbr/sbr_com/9041");
+  assert.strictEqual(viewerLegacyWorkbench.response.status, 200, "legacy menu routing should expose the authorized certificate workbench");
+  assert.ok(!viewerLegacyWorkbench.text.includes('id="international-settings-form"'), "legacy workbench rendering must retain the operational-only boundary");
   const viewerIssueDenied = await postJson("/api/international/certificates/issue", {});
   assert.strictEqual(viewerIssueDenied.response.status, 403, "read-only users should not issue an international certificate");
+  assert.strictEqual(viewerIssueDenied.json.requiredPermission, "international:issue", "certificate issue denial should name the dedicated permission");
   const crossProjectDenied = await requestJson("/api/cost/summary?projectId=regression-project-2");
   assert.strictEqual(crossProjectDenied.response.status, 403, "viewer should not cross a project assignment boundary");
   assert.strictEqual(crossProjectDenied.json.requiredProjectId, "regression-project-2", "project denial should identify the rejected project scope");
@@ -346,7 +358,72 @@ async function verifyAuthorizationFlow() {
   assert.ok(users.json.data.some((user) => user.account === "regression_viewer"), "admin user list should include the created viewer");
   const adminUserId = users.json.data.find((user) => user.account === "ys1").id;
   const roles = await requestJson("/api/admin/roles");
-  assert.deepStrictEqual(roles.json.data.map((role) => role.code), ["admin", "editor", "viewer"], "admin should list the three built-in roles");
+  assert.deepStrictEqual(roles.json.data.map((role) => role.code), ["admin", "certificate_approver", "editor", "viewer"], "admin should list the four built-in roles including certificate approver");
+  assert.deepStrictEqual(roles.json.data.find((role) => role.code === "certificate_approver").permissions, ["data:read", "international:calculate", "international:export", "international:issue", "international:read", "international:void"], "certificate approver should receive only certificate lifecycle grants plus base read access");
+  const certificateProject = await postJson("/api/admin/projects", { projectKey: "certificate-rbac-project", name: "证书职责分离项目" });
+  assert.strictEqual(certificateProject.response.status, 200, "admin should create an isolated certificate RBAC project");
+  const editorUser = await postJson("/api/admin/users", {
+    account: "regression_editor",
+    displayName: "回归业务编辑者",
+    password: "Editor-Pass-42!",
+    mustChangePassword: false,
+    roleCodes: ["editor"],
+    projectIds: ["certificate-rbac-project"]
+  });
+  const approverUser = await postJson("/api/admin/users", {
+    account: "regression_approver",
+    displayName: "回归证书签发人",
+    password: "Approver-Pass-42!",
+    mustChangePassword: false,
+    roleCodes: ["certificate_approver"],
+    projectIds: ["certificate-rbac-project"]
+  });
+  assert.strictEqual(editorUser.response.status, 200, "admin should create an editor role fixture");
+  assert.strictEqual(approverUser.response.status, 200, "admin should create a certificate approver fixture");
+
+  authCookieHeader = "";
+  const editorLogin = await requestJson("/dologin", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ user_account: "regression_editor", password: "Editor-Pass-42!", remember_me: "false" }).toString()
+  });
+  authCookieHeader = editorLogin.response.headers.get("set-cookie").split(";")[0];
+  const editorIssueDenied = await postJson("/api/international/certificates/issue?projectId=certificate-rbac-project", {});
+  assert.strictEqual(editorIssueDenied.response.status, 403, "ordinary business editors must not inherit certificate issuance authority");
+  assert.strictEqual(editorIssueDenied.json.requiredPermission, "international:issue", "editor certificate denial should expose the dedicated issue grant");
+  const editorWorkbench = await requestText("/international/certificates_page?projectId=certificate-rbac-project");
+  assert.ok(!editorWorkbench.text.includes('id="fidic-issue"'), "editor workbench should not render issuance controls");
+
+  authCookieHeader = "";
+  const approverLogin = await requestJson("/dologin", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ user_account: "regression_approver", password: "Approver-Pass-42!", remember_me: "false" }).toString()
+  });
+  authCookieHeader = approverLogin.response.headers.get("set-cookie").split(";")[0];
+  const approverWorkbench = await requestText("/international/certificates_page?projectId=certificate-rbac-project");
+  assert.strictEqual(approverWorkbench.response.status, 200, "certificate approver should open the operational workbench");
+  assert.ok(approverWorkbench.text.includes('id="fidic-issue"') && !approverWorkbench.text.includes('id="international-settings-form"'), "approver workbench should expose issuance without administrative settings");
+  assert.doesNotThrow(() => [...approverWorkbench.text.matchAll(/<script>([\s\S]*?)<\/script>/gi)].forEach((match) => new Function(match[1])), "approver workbench inline scripts should compile");
+  const approverAdminDenied = await requestJson("/api/admin/international_settings?projectId=certificate-rbac-project");
+  assert.strictEqual(approverAdminDenied.response.status, 403, "certificate approver should not administer contract parameters");
+  const approverBusinessWriteDenied = await postJson("/bill_measure/save?projectId=certificate-rbac-project", { measureNo: "APPROVER-FORBIDDEN-WRITE" });
+  assert.strictEqual(approverBusinessWriteDenied.response.status, 403, "certificate approver should not receive unrelated business write authority");
+  const approverIssued = await postJson("/api/international/certificates/issue", {
+    projectId: "certificate-rbac-project",
+    certificateNo: "IPC-RBAC-001",
+    periodStart: "2026-01-01",
+    periodEnd: "2026-01-31",
+    idempotencyKey: "ipc-rbac-001-request",
+    calculationInput: { previousRetention: 0, previousCumulativeCertified: 0, lines: [{ code: "RBAC-WORK", category: "work", amount: 100, currency: "CNY" }] }
+  });
+  assert.strictEqual(approverIssued.response.status, 200, "certificate approver should issue inside the assigned project");
+  const approverExport = await requestBuffer(`/api/international/certificates/${approverIssued.json.data.record.id}/export?projectId=certificate-rbac-project&format=xlsx`);
+  assert.ok(approverExport.buffer.subarray(0, 2).equals(Buffer.from("PK")), "certificate approver should export the immutable certificate");
+  const approverVoided = await postJson(`/api/international/certificates/${approverIssued.json.data.record.id}/void`, { projectId: "certificate-rbac-project", reason: "RBAC regression unwind" });
+  assert.strictEqual(approverVoided.json.data.record.status, "voided", "certificate approver should void with a reason inside the assigned project");
+
+  authCookieHeader = adminCookie;
   const projects = await requestJson("/api/admin/projects");
   assert.ok(projects.json.data.some((row) => row.projectId === "1") && projects.json.data.some((row) => row.projectId === "regression-project-2"), "admin should list tenant-scoped projects");
   const page = await requestText("/admin/users_page");

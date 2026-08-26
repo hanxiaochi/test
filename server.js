@@ -110,7 +110,16 @@ const publicPathRules = [
 
 function requiredPermission(req) {
   if (req.path === "/api/account/password") return null;
-  if (req.path === "/api/international/certificate/calculate") return "data:read";
+  const legacyResourceId = req.path === "/sbr/sbr_com" ? String(req.body.leftId || req.query.leftId || "") : (req.path.match(/^\/sbr\/sbr_com\/(\d+)$/) || [])[1];
+  if (legacyResourceId === "9040") return "admin:access";
+  if (legacyResourceId === "9041") return "international:read";
+  if (req.path === "/international/certificates_page") return "international:read";
+  if (req.path === "/api/international/certificate/calculate") return "international:calculate";
+  if (req.path === "/api/international/certificates" && req.method === "GET") return "international:read";
+  if (req.path === "/api/international/certificates/issue" && req.method === "POST") return "international:issue";
+  if (/^\/api\/international\/certificates\/[^/]+\/export$/.test(req.path) && req.method === "GET") return "international:export";
+  if (/^\/api\/international\/certificates\/[^/]+\/void$/.test(req.path) && req.method === "POST") return "international:void";
+  if (/^\/api\/international\/certificates\/[^/]+$/.test(req.path) && req.method === "GET") return "international:read";
   if (req.path === "/reportManager/exportReport") return "data:read";
   if (["GET", "HEAD", "OPTIONS"].includes(req.method) && req.path.startsWith("/import_measure/")) return "data:read";
   if (/^\/api\/debug(?:\/|$)/.test(req.path)) return "admin:access";
@@ -1444,6 +1453,25 @@ leftMenus.set("9000", [
     controllerDes: "",
     flagFlow: 1,
     isShow: 1,
+    menuIcon: "layui-icon layui-icon-form",
+    parentId: 9000,
+    refreshType: 1,
+    resourceCode: "990008",
+    resourceDes: "国际付款证书试算、签发、作废与下载",
+    resourceId: 9041,
+    resourceLevel: 0,
+    resourceName: "国际证书工作台",
+    resourceNo: "model",
+    resourceUrl: "international/certificates_page",
+    sysBusinessResources: [],
+    sysIdentityResources: ""
+  },
+  {
+    appImageUrl: "",
+    appPageUrl: "",
+    controllerDes: "",
+    flagFlow: 1,
+    isShow: 1,
     menuIcon: "layui-icon layui-icon-set",
     parentId: 9000,
     refreshType: 1,
@@ -2103,6 +2131,7 @@ function adminDashboardHtml() {
     ["备份恢复管理", "/admin/backups_page", "按当前项目导出、导入和恢复校验备份"],
     ["数据导入导出", "/admin/data_exchange_page", "批量校验、追加、更新并导出核心业务数据"],
     ["国际合同设置", "/admin/international_settings_page", "维护项目语言、币种、汇率和FIDIC付款证书参数"],
+    ["国际证书工作台", "/international/certificates_page", "按角色试算、签发、作废和导出不可变付款证书"],
     ["审批流程配置", "/admin/workflows_page", "按项目维护流程版本、状态、跳转权限并查看启用记录"],
     ["审批一致性巡检", "/admin/workflow_consistency_page", "核对业务状态、审批实例、事件修订和待决事务"]
   ].map(([name, href, desc]) => `
@@ -2520,13 +2549,19 @@ function dataExchangeManagementHtml(req) {
   </div>`;
 }
 
-function internationalSettingsHtml(req) {
+function internationalSettingsHtml(req, options = {}) {
   const settings = currentInternationalSettings();
   const storedHistory = internationalSettingsService.settingsHistory(engine.db);
   const activeVersion = internationalSettingsService.activeSettingsVersion(engine.db);
   const history = storedHistory.length ? storedHistory : [activeVersion];
   const catalog = internationalSettingsService.publicCatalog();
   const t = (key) => internationalSettingsService.translate(settings.locale, key);
+  const permissions = req.currentSession ? req.currentSession.user.permissions : [];
+  const manageSettings = options.manageSettings !== false && authCore.hasPermission(permissions, "admin:access");
+  const canCalculate = authCore.hasPermission(permissions, "international:calculate");
+  const canIssue = authCore.hasPermission(permissions, "international:issue");
+  const canVoid = authCore.hasPermission(permissions, "international:void");
+  const canExport = authCore.hasPermission(permissions, "international:export");
   const localeOptions = catalog.locales.map((item) => `<option value="${item.code}"${item.code === settings.locale ? " selected" : ""}>${htmlEscape(item.name)} (${item.code})</option>`).join("");
   const standardOptions = catalog.certificateStandards.map((item) => `<option value="${item}"${item === settings.certificateStandard ? " selected" : ""}>${item}</option>`).join("");
   const historyRows = history.map((item) => {
@@ -2556,9 +2591,9 @@ function internationalSettingsHtml(req) {
   const certificateRows = certificates.map((item) => {
     const statusText = item.status === "issued" ? t("international.issued") : t("international.voided");
     const encodedId = encodeURIComponent(item.id);
-    const downloads = `<a class="layui-btn layui-btn-xs layui-btn-primary" href="/api/international/certificates/${encodedId}/export?format=xlsx">XLSX</a><a class="layui-btn layui-btn-xs layui-btn-primary" href="/api/international/certificates/${encodedId}/export?format=pdf">PDF</a><a class="layui-btn layui-btn-xs layui-btn-primary" href="/api/international/certificates/${encodedId}/export?format=docx">DOCX</a>`;
-    const lifecycle = item.status === "issued" ? `<button type="button" class="layui-btn layui-btn-xs layui-btn-danger void-international-certificate" data-id="${htmlEscape(item.id)}" data-no="${htmlEscape(item.certificateNo)}">${htmlEscape(t("international.void"))}</button>` : `<span title="${htmlEscape(item.voidReason)}">${htmlEscape(item.voidReason)}</span>`;
-    const action = `<div class="core-tools">${downloads}${lifecycle}</div>`;
+    const downloads = canExport ? `<a class="layui-btn layui-btn-xs layui-btn-primary" href="/api/international/certificates/${encodedId}/export?format=xlsx">XLSX</a><a class="layui-btn layui-btn-xs layui-btn-primary" href="/api/international/certificates/${encodedId}/export?format=pdf">PDF</a><a class="layui-btn layui-btn-xs layui-btn-primary" href="/api/international/certificates/${encodedId}/export?format=docx">DOCX</a>` : "";
+    const lifecycle = item.status === "issued" && canVoid ? `<button type="button" class="layui-btn layui-btn-xs layui-btn-danger void-international-certificate" data-id="${htmlEscape(item.id)}" data-no="${htmlEscape(item.certificateNo)}">${htmlEscape(t("international.void"))}</button>` : item.status === "voided" ? `<span title="${htmlEscape(item.voidReason)}">${htmlEscape(item.voidReason)}</span>` : "";
+    const action = downloads || lifecycle ? `<div class="core-tools">${downloads}${lifecycle}</div>` : "-";
     const predecessor = item.predecessorCertificateId ? `<code title="${htmlEscape(item.predecessorIssueChecksum)}">${htmlEscape(item.predecessorCertificateId)}</code>` : "-";
     return `<tr data-certificate-id="${htmlEscape(item.id)}">
       <td>${htmlEscape(item.certificateNo)}</td><td>${htmlEscape(item.periodStart)} - ${htmlEscape(item.periodEnd)}</td>
@@ -2571,30 +2606,43 @@ function internationalSettingsHtml(req) {
   const monthStart = `${currentDate.slice(0, 8)}01`;
   const suggestedPeriodStart = latestActiveCertificate ? new Date(new Date(`${latestActiveCertificate.periodEnd}T00:00:00.000Z`).getTime() + 86400000).toISOString().slice(0, 10) : monthStart;
   const suggestedPeriodEnd = suggestedPeriodStart > currentDate ? suggestedPeriodStart : currentDate;
+  const settingsPanel = manageSettings ? `<form class="core-panel" id="international-settings-form">
+    <h3>${htmlEscape(t("international.parameters"))}</h3>
+    <div class="layui-form-item"><label class="layui-form-label">变更原因</label><div class="layui-input-block"><input class="layui-input" name="changeReason" required maxlength="500"></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.locale"))}</label><div class="layui-input-block"><select name="locale" class="layui-select">${localeOptions}</select></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.baseCurrency"))}</label><div class="layui-input-block"><input class="layui-input" name="baseCurrency" maxlength="3" value="${htmlEscape(settings.baseCurrency)}"></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.standard"))}</label><div class="layui-input-block"><select name="certificateStandard" class="layui-select">${standardOptions}</select></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.moneyDigits"))}</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" max="4" step="1" name="moneyDigits" value="${settings.moneyDigits}"></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.retentionRate"))}</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" max="100" step="0.01" name="retentionRate" value="${htmlEscape(settings.retentionRate)}"></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.retentionLimit"))}</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" step="0.01" name="retentionLimitAmount" value="${htmlEscape(settings.retentionLimitAmount)}"></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.minimumCertificate"))}</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" step="0.01" name="minimumCertificateAmount" value="${htmlEscape(settings.minimumCertificateAmount)}"></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.exchangeRates"))}</label><div class="layui-input-block"><textarea class="layui-textarea" name="exchangeRates" rows="5">${htmlEscape(JSON.stringify(settings.exchangeRates, null, 2))}</textarea></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.currencyDigits"))}</label><div class="layui-input-block"><textarea class="layui-textarea" name="currencyDigits" rows="4">${htmlEscape(JSON.stringify(settings.currencyDigits, null, 2))}</textarea></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.priceAdjustmentRule"))}</label><div class="layui-input-block"><textarea class="layui-textarea" name="priceAdjustmentRule" rows="9">${htmlEscape(JSON.stringify(settings.priceAdjustmentRule, null, 2))}</textarea></div></div>
+    <div class="core-tools"><button class="layui-btn layui-btn-sm" type="submit">${htmlEscape(t("international.save"))}</button></div>
+  </form>` : "";
+  const issuePanel = canIssue ? `<h4>${htmlEscape(t("international.issue"))}</h4>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.certificateNo"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-certificate-no" maxlength="64" required></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.periodStart"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-period-start" type="date" value="${suggestedPeriodStart}" required></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.periodEnd"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-period-end" type="date" value="${suggestedPeriodEnd}" required></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.applicationReference"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-application-reference" maxlength="100"></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.openingBalanceReason"))}</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-opening-balance-reason" maxlength="500" rows="2"${latestActiveCertificate ? " disabled" : ""}></textarea></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.remarks"))}</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-certificate-remarks" maxlength="500" rows="3"></textarea></div></div>
+    <div class="core-tools"><button class="layui-btn layui-btn-sm" type="button" id="fidic-issue">${htmlEscape(t("international.issue"))}</button></div>` : "";
+  const historyPanel = manageSettings ? `<div class="core-panel" style="margin-top:12px;overflow:auto;">
+    <h3>合同参数版本历史</h3>
+    <table class="layui-table" lay-size="sm"><thead><tr><th>版本</th><th>状态</th><th>语言</th><th>基础币种</th><th>证书标准</th><th>指数调价</th><th>变更原因</th><th>创建人</th><th>创建时间</th><th>最近启用</th><th>校验和</th><th>操作</th></tr></thead><tbody id="international-settings-history">${historyRows}</tbody></table>
+  </div>` : "";
   return `<div class="core-page" data-core-page="international-settings" lang="${htmlEscape(settings.locale)}" dir="${htmlEscape(settings.direction)}">
     ${corePageStyle("#0369a1")}
     <div class="core-shell">
       <div class="core-head">
         <div><h2>${htmlEscape(t("international.title"))}</h2><p>${htmlEscape(t("international.project"))}：${htmlEscape(req.businessContext.projectId)}</p></div>
-        <div class="core-tools"><a class="layui-btn layui-btn-sm layui-btn-primary" href="/admin/dashboard_page">${htmlEscape(t("international.back"))}</a></div>
+        <div class="core-tools"><a class="layui-btn layui-btn-sm layui-btn-primary" href="${manageSettings ? "/admin/dashboard_page" : "/main"}">${htmlEscape(t("international.back"))}</a></div>
       </div>
+      <div id="international-settings-message" class="core-note" style="margin:0 0 12px;"></div>
       <div class="core-grid">
-        <form class="core-panel" id="international-settings-form">
-          <h3>${htmlEscape(t("international.parameters"))}</h3>
-          <div class="layui-form-item"><label class="layui-form-label">变更原因</label><div class="layui-input-block"><input class="layui-input" name="changeReason" required maxlength="500"></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.locale"))}</label><div class="layui-input-block"><select name="locale" class="layui-select">${localeOptions}</select></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.baseCurrency"))}</label><div class="layui-input-block"><input class="layui-input" name="baseCurrency" maxlength="3" value="${htmlEscape(settings.baseCurrency)}"></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.standard"))}</label><div class="layui-input-block"><select name="certificateStandard" class="layui-select">${standardOptions}</select></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.moneyDigits"))}</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" max="4" step="1" name="moneyDigits" value="${settings.moneyDigits}"></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.retentionRate"))}</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" max="100" step="0.01" name="retentionRate" value="${htmlEscape(settings.retentionRate)}"></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.retentionLimit"))}</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" step="0.01" name="retentionLimitAmount" value="${htmlEscape(settings.retentionLimitAmount)}"></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.minimumCertificate"))}</label><div class="layui-input-block"><input class="layui-input" type="number" min="0" step="0.01" name="minimumCertificateAmount" value="${htmlEscape(settings.minimumCertificateAmount)}"></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.exchangeRates"))}</label><div class="layui-input-block"><textarea class="layui-textarea" name="exchangeRates" rows="5">${htmlEscape(JSON.stringify(settings.exchangeRates, null, 2))}</textarea></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.currencyDigits"))}</label><div class="layui-input-block"><textarea class="layui-textarea" name="currencyDigits" rows="4">${htmlEscape(JSON.stringify(settings.currencyDigits, null, 2))}</textarea></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.priceAdjustmentRule"))}</label><div class="layui-input-block"><textarea class="layui-textarea" name="priceAdjustmentRule" rows="9">${htmlEscape(JSON.stringify(settings.priceAdjustmentRule, null, 2))}</textarea></div></div>
-          <div class="core-tools"><button class="layui-btn layui-btn-sm" type="submit">${htmlEscape(t("international.save"))}</button></div>
-          <div id="international-settings-message" class="core-note" style="margin-top:10px;"></div>
-        </form>
+        ${settingsPanel}
         <div class="core-panel">
           <h3>${htmlEscape(t("international.calculator"))}</h3>
           <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.lines"))}</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-lines" rows="13">${htmlEscape(JSON.stringify([
@@ -2607,20 +2655,10 @@ function internationalSettingsHtml(req) {
           <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.priceAdjustmentInput"))}</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-price-adjustment" rows="7">${htmlEscape(JSON.stringify({ eligibleAmount: "100000", currentIndices: Object.fromEntries(settings.priceAdjustmentRule.components.map((component) => [component.code, component.baseIndex])) }, null, 2))}</textarea></div></div>
           <div class="core-tools"><button class="layui-btn layui-btn-sm layui-btn-normal" type="button" id="fidic-calculate">${htmlEscape(t("international.calculate"))}</button></div>
           <table class="layui-table" lay-size="sm"><tbody id="fidic-totals"><tr><td class="core-empty">${htmlEscape(t("international.notCalculated"))}</td></tr></tbody></table>
-          <h4>${htmlEscape(t("international.issue"))}</h4>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.certificateNo"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-certificate-no" maxlength="64" required></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.periodStart"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-period-start" type="date" value="${suggestedPeriodStart}" required></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.periodEnd"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-period-end" type="date" value="${suggestedPeriodEnd}" required></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.applicationReference"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-application-reference" maxlength="100"></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.openingBalanceReason"))}</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-opening-balance-reason" maxlength="500" rows="2"${latestActiveCertificate ? " disabled" : ""}></textarea></div></div>
-          <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.remarks"))}</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-certificate-remarks" maxlength="500" rows="3"></textarea></div></div>
-          <div class="core-tools"><button class="layui-btn layui-btn-sm" type="button" id="fidic-issue">${htmlEscape(t("international.issue"))}</button></div>
+          ${issuePanel}
         </div>
       </div>
-      <div class="core-panel" style="margin-top:12px;overflow:auto;">
-        <h3>合同参数版本历史</h3>
-        <table class="layui-table" lay-size="sm"><thead><tr><th>版本</th><th>状态</th><th>语言</th><th>基础币种</th><th>证书标准</th><th>指数调价</th><th>变更原因</th><th>创建人</th><th>创建时间</th><th>最近启用</th><th>校验和</th><th>操作</th></tr></thead><tbody id="international-settings-history">${historyRows}</tbody></table>
-      </div>
+      ${historyPanel}
       <div class="core-panel" style="margin-top:12px;overflow:auto;">
         <h3>${htmlEscape(t("international.register"))}</h3>
         <table class="layui-table" lay-size="sm"><thead><tr><th>${htmlEscape(t("international.certificateNo"))}</th><th>${htmlEscape(t("international.periodStart"))} / ${htmlEscape(t("international.periodEnd"))}</th><th>${htmlEscape(t("international.status"))}</th><th>Net certified</th><th>${htmlEscape(t("international.predecessor"))}</th><th>${htmlEscape(t("international.settingsTrace"))}</th><th>${htmlEscape(t("international.issuedBy"))}</th><th>SHA-256</th><th>${htmlEscape(t("international.action"))}</th></tr></thead><tbody id="international-certificate-register">${certificateRows || `<tr><td colspan="9" class="core-empty">${htmlEscape(t("international.noCertificates"))}</td></tr>`}</tbody></table>
@@ -2628,15 +2666,15 @@ function internationalSettingsHtml(req) {
     </div>
     <script>(function(){
       var root=document.querySelector('[data-core-page="international-settings"]');if(!root)return;
-      var form=root.querySelector('#international-settings-form'),message=root.querySelector('#international-settings-message'),totals=root.querySelector('#fidic-totals'),issueButton=root.querySelector('#fidic-issue'),pendingIssue=null;
+      var form=root.querySelector('#international-settings-form'),message=root.querySelector('#international-settings-message'),totals=root.querySelector('#fidic-totals'),calculateButton=root.querySelector('#fidic-calculate'),issueButton=root.querySelector('#fidic-issue'),pendingIssue=null;
       function escapeHtml(value){var node=document.createElement('div');node.textContent=String(value==null?'':value);return node.innerHTML}
       function request(url,body){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json().then(function(result){if(!response.ok||result.code!==1)throw new Error(result.msg||'操作失败');return result.data})})}
       function certificateInput(){return {lines:JSON.parse(root.querySelector('#fidic-lines').value||'[]'),previousRetention:root.querySelector('#fidic-previous-retention').value,previousCumulativeCertified:root.querySelector('#fidic-previous-cumulative').value,retentionRelease:root.querySelector('#fidic-retention-release').value,priceAdjustment:JSON.parse(root.querySelector('#fidic-price-adjustment').value||'{}')}}
       function newIssueKey(){return window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():('issue-'+Date.now()+'-'+Math.random().toString(16).slice(2))}
-      form.addEventListener('submit',function(event){event.preventDefault();var data=new FormData(form),payload={changeReason:data.get('changeReason'),locale:data.get('locale'),baseCurrency:data.get('baseCurrency'),certificateStandard:data.get('certificateStandard'),moneyDigits:Number(data.get('moneyDigits')),retentionRate:data.get('retentionRate'),retentionLimitAmount:data.get('retentionLimitAmount'),minimumCertificateAmount:data.get('minimumCertificateAmount')};try{payload.exchangeRates=JSON.parse(data.get('exchangeRates')||'{}');payload.currencyDigits=JSON.parse(data.get('currencyDigits')||'{}');payload.priceAdjustmentRule=JSON.parse(data.get('priceAdjustmentRule')||'{}')}catch(error){message.textContent='JSON: '+error.message;return}request('/api/admin/international_settings',payload).then(function(result){message.textContent=${JSON.stringify(t("international.saved"))}+' v'+result.version.version+'，正在刷新...';setTimeout(function(){location.reload()},500)}).catch(function(error){message.textContent=error.message})});
+      if(form)form.addEventListener('submit',function(event){event.preventDefault();var data=new FormData(form),payload={changeReason:data.get('changeReason'),locale:data.get('locale'),baseCurrency:data.get('baseCurrency'),certificateStandard:data.get('certificateStandard'),moneyDigits:Number(data.get('moneyDigits')),retentionRate:data.get('retentionRate'),retentionLimitAmount:data.get('retentionLimitAmount'),minimumCertificateAmount:data.get('minimumCertificateAmount')};try{payload.exchangeRates=JSON.parse(data.get('exchangeRates')||'{}');payload.currencyDigits=JSON.parse(data.get('currencyDigits')||'{}');payload.priceAdjustmentRule=JSON.parse(data.get('priceAdjustmentRule')||'{}')}catch(error){message.textContent='JSON: '+error.message;return}request('/api/admin/international_settings',payload).then(function(result){message.textContent=${JSON.stringify(t("international.saved"))}+' v'+result.version.version+'，正在刷新...';setTimeout(function(){location.reload()},500)}).catch(function(error){message.textContent=error.message})});
       Array.prototype.forEach.call(root.querySelectorAll('.activate-settings-version'),function(button){button.addEventListener('click',function(){var row=button.closest('tr'),input=row.querySelector('.activation-reason'),reason=String(input.value||'').trim(),version=button.getAttribute('data-version');if(!reason){message.textContent='请填写 V'+version+' 的启用原因';input.focus();return}if(!window.confirm('确认启用合同参数 V'+version+'？'))return;button.disabled=true;request('/api/admin/international_settings/'+encodeURIComponent(version)+'/activate',{projectId:${JSON.stringify(req.businessContext.projectId)},changeReason:reason}).then(function(){message.textContent='V'+version+' 已启用，正在刷新...';setTimeout(function(){location.reload()},500)}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
-      root.querySelector('#fidic-calculate').addEventListener('click',function(){var payload;try{payload=certificateInput()}catch(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>';return}request('/api/international/certificate/calculate',payload).then(function(result){var order=['grossCertified','lineDeductions','currentRetention','retentionRelease','netCertified','payableNow','carriedForward','cumulativeCertified'],adjustment=result.priceAdjustment&&result.priceAdjustment.enabled?'<tr><th>priceAdjustmentFactor</th><td>'+escapeHtml(result.priceAdjustment.factor)+'</td></tr><tr><th>priceAdjustment</th><td>'+escapeHtml(result.priceAdjustment.adjustment)+' '+escapeHtml(result.baseCurrency)+'</td></tr>':'';totals.innerHTML=adjustment+order.map(function(key){return '<tr><th>'+escapeHtml(key)+'</th><td>'+escapeHtml(result.totals[key])+' '+escapeHtml(result.baseCurrency)+'</td></tr>'}).join('')}).catch(function(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>'})});
-      issueButton.addEventListener('click',function(){var payload;try{payload={certificateNo:root.querySelector('#fidic-certificate-no').value,periodStart:root.querySelector('#fidic-period-start').value,periodEnd:root.querySelector('#fidic-period-end').value,applicationReference:root.querySelector('#fidic-application-reference').value,openingBalanceReason:root.querySelector('#fidic-opening-balance-reason').value,remarks:root.querySelector('#fidic-certificate-remarks').value,calculationInput:certificateInput()}}catch(error){message.textContent=error.message;return}if(!payload.certificateNo||!payload.periodStart||!payload.periodEnd){message.textContent=${JSON.stringify(t("international.certificateNo"))}+' / '+${JSON.stringify(t("international.periodStart"))}+' / '+${JSON.stringify(t("international.periodEnd"))};return}if(!window.confirm(${JSON.stringify(t("international.issue"))}+' '+payload.certificateNo+'?'))return;var signature=JSON.stringify(payload);if(!pendingIssue||pendingIssue.signature!==signature)pendingIssue={signature:signature,key:newIssueKey()};payload.idempotencyKey=pendingIssue.key;issueButton.disabled=true;request('/api/international/certificates/issue',payload).then(function(result){pendingIssue=null;message.textContent=${JSON.stringify(t("international.issued"))}+'：'+result.record.certificateNo+' / '+result.record.issueChecksum.slice(0,12);setTimeout(function(){location.reload()},500)}).catch(function(error){issueButton.disabled=false;message.textContent=error.message})});
+      if(calculateButton)calculateButton.addEventListener('click',function(){var payload;try{payload=certificateInput()}catch(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>';return}request('/api/international/certificate/calculate',payload).then(function(result){var order=['grossCertified','lineDeductions','currentRetention','retentionRelease','netCertified','payableNow','carriedForward','cumulativeCertified'],adjustment=result.priceAdjustment&&result.priceAdjustment.enabled?'<tr><th>priceAdjustmentFactor</th><td>'+escapeHtml(result.priceAdjustment.factor)+'</td></tr><tr><th>priceAdjustment</th><td>'+escapeHtml(result.priceAdjustment.adjustment)+' '+escapeHtml(result.baseCurrency)+'</td></tr>':'';totals.innerHTML=adjustment+order.map(function(key){return '<tr><th>'+escapeHtml(key)+'</th><td>'+escapeHtml(result.totals[key])+' '+escapeHtml(result.baseCurrency)+'</td></tr>'}).join('')}).catch(function(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>'})});
+      if(issueButton)issueButton.addEventListener('click',function(){var payload;try{payload={certificateNo:root.querySelector('#fidic-certificate-no').value,periodStart:root.querySelector('#fidic-period-start').value,periodEnd:root.querySelector('#fidic-period-end').value,applicationReference:root.querySelector('#fidic-application-reference').value,openingBalanceReason:root.querySelector('#fidic-opening-balance-reason').value,remarks:root.querySelector('#fidic-certificate-remarks').value,calculationInput:certificateInput()}}catch(error){message.textContent=error.message;return}if(!payload.certificateNo||!payload.periodStart||!payload.periodEnd){message.textContent=${JSON.stringify(t("international.certificateNo"))}+' / '+${JSON.stringify(t("international.periodStart"))}+' / '+${JSON.stringify(t("international.periodEnd"))};return}if(!window.confirm(${JSON.stringify(t("international.issue"))}+' '+payload.certificateNo+'?'))return;var signature=JSON.stringify(payload);if(!pendingIssue||pendingIssue.signature!==signature)pendingIssue={signature:signature,key:newIssueKey()};payload.idempotencyKey=pendingIssue.key;issueButton.disabled=true;request('/api/international/certificates/issue',payload).then(function(result){pendingIssue=null;message.textContent=${JSON.stringify(t("international.issued"))}+'：'+result.record.certificateNo+' / '+result.record.issueChecksum.slice(0,12);setTimeout(function(){location.reload()},500)}).catch(function(error){issueButton.disabled=false;message.textContent=error.message})});
       Array.prototype.forEach.call(root.querySelectorAll('.void-international-certificate'),function(button){button.addEventListener('click',function(){var reason=window.prompt(${JSON.stringify(t("international.voidReason"))});if(!reason||!window.confirm(${JSON.stringify(t("international.void"))}+' '+button.getAttribute('data-no')+'?'))return;button.disabled=true;request('/api/international/certificates/'+encodeURIComponent(button.getAttribute('data-id'))+'/void',{reason:reason}).then(function(){message.textContent=${JSON.stringify(t("international.voided"))};setTimeout(function(){location.reload()},500)}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
     })();</script>
   </div>`;
@@ -3089,7 +3127,7 @@ function requestLike(pathname, query = {}, params = {}) {
   return { path: pathname, query, body: {}, params };
 }
 
-function contentForId(id) {
+function contentForId(id, req) {
   if (String(id) === "46") return dataGatherDashboardHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "47") return billMeasureManagementPageHtml({ query: {}, body: {}, params: {} });
   if (String(id) === "48") return materialDiasManagementPageHtml({ query: {}, body: {}, params: {} });
@@ -3127,7 +3165,8 @@ function contentForId(id) {
   if (String(id) === "9010") return userManagementHtml();
   if (String(id) === "9020") return backupManagementHtml({ businessContext: businessContext.current(), authUser: { tenantId: businessContext.current().tenantId } });
   if (String(id) === "9030") return dataExchangeManagementHtml({ businessContext: businessContext.current() });
-  if (String(id) === "9040") return internationalSettingsHtml({ businessContext: businessContext.current() });
+  if (String(id) === "9040") return internationalSettingsHtml({ businessContext: businessContext.current(), currentSession: req.currentSession });
+  if (String(id) === "9041") return internationalSettingsHtml({ businessContext: businessContext.current(), currentSession: req.currentSession }, { manageSettings: false });
   if (String(id) === "9050") return workflowManagementHtml({ query: {}, authUser: { tenantId: businessContext.current().tenantId }, businessContext: businessContext.current() });
   if (String(id) === "9060") return workflowConsistencyHtml({ authUser: { tenantId: businessContext.current().tenantId }, businessContext: businessContext.current() });
   if (String(id) === "6998") return reportManagerDashboardHtml({ query: {}, body: {}, params: {} });
@@ -14366,6 +14405,7 @@ app.get("/admin/users_page", requirePermission("admin:users"), (req, res) => htm
 app.get("/admin/backups_page", requirePermission("admin:access"), (req, res) => html(res, backupManagementHtml(req)));
 app.get("/admin/data_exchange_page", requirePermission("admin:access"), (req, res) => html(res, dataExchangeManagementHtml(req)));
 app.get("/admin/international_settings_page", requirePermission("admin:access"), (req, res) => html(res, internationalSettingsHtml(req)));
+app.get("/international/certificates_page", requirePermission("international:read"), (req, res) => html(res, internationalSettingsHtml(req, { manageSettings: false })));
 app.get("/admin/workflows_page", requirePermission("admin:access"), (req, res) => html(res, workflowManagementHtml(req)));
 app.get("/admin/workflow_consistency_page", requirePermission("admin:access"), (req, res) => html(res, workflowConsistencyHtml(req)));
 app.get("/system/calculation_rules_page", (req, res) => html(res, calculationRulesPageHtml(req)));
@@ -14374,8 +14414,8 @@ app.all("/payment/jl_print_page", (req, res) => html(res, jlPaymentPrintableHtml
 app.all("/payment/export_jl_report", (req, res) => csv(res, "jl-payment-report.csv", jlPaymentExportRows(req)));
 app.all("/payment/export_jl_report_pdf", (req, res, next) => Promise.resolve(jlPaymentExportPdf(req, res)).catch(next));
 app.all("/payment/export_jl_form_pdf", (req, res, next) => Promise.resolve(jlPaymentExportFormPdf(req, res)).catch(next));
-app.get("/sbr/sbr_com/:id", (req, res) => html(res, contentForId(req.params.id)));
-app.all("/sbr/sbr_com", (req, res) => html(res, contentForId(req.body.leftId || req.query.leftId || "")));
+app.get("/sbr/sbr_com/:id", (req, res) => html(res, contentForId(req.params.id, req)));
+app.all("/sbr/sbr_com", (req, res) => html(res, contentForId(req.body.leftId || req.query.leftId || "", req)));
 
 app.get("/js/ColResizable/colResizable-1.6.min.js", (req, res) => {
   res.type("application/javascript").send("(function($){if($&&!$.fn.colResizable){$.fn.colResizable=function(){return this;};}})(window.jQueryZW||window.jQuery);");
