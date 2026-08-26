@@ -123,11 +123,31 @@ test("legacy unlinked issued certificates count and returned applications releas
   assert.equal(allocations.eventUsage(secondState, secondEvent.id).used.toString(), "0");
 });
 
+test("pre-upgrade unbound variation rows do not block new event allocations", () => {
+  const state = {};
+  const event = approvedEvent(state);
+  const legacyRequest = certificateRequest(event, 250, { certificateNo: "IPC-PRE-UPGRADE", idempotencyKey: "ipc-pre-upgrade-request" });
+  legacyRequest.calculationInput.lines.forEach((item) => {
+    delete item.contractEventId;
+    delete item.contractEventDecisionChecksum;
+  });
+  legacyRequest.calculationResult.lines.forEach((item) => {
+    delete item.contractEventId;
+    delete item.contractEventDecisionChecksum;
+  });
+  certificates.issueCertificate(state, legacyRequest, { id: "pre-upgrade-certificate", issuedAt: "2026-07-01T00:00:00.000Z", issuedBy: "legacy" });
+
+  assert.equal(allocations.eventUsage(state, event.id).used.toString(), "0");
+  assert.equal(allocations.validateCertificateEventAllocations(state, certificateRequest(event, 100)).bindings[0].remainingAfterRequest, "900");
+});
+
 test("invalid, unapproved, mismatched and duplicated references fail closed", () => {
   const state = {};
   const event = approvedEvent(state);
   const request = certificateRequest(event, 100);
   assert.throws(() => allocations.validateCertificateEventAllocations(state, { calculationInput: { lines: [{ code: "VO", category: "variation", amount: "1", currency: "USD" }] } }), /requires an approved contract event/);
+  assert.equal(allocations.eventReference({ code: "LEGACY", category: "variation", amount: "1", currency: "USD" }, 0, { allowUnbound: true }), null);
+  assert.throws(() => allocations.eventReference({ code: "PARTIAL", category: "variation", amount: "1", currency: "USD", contractEventId: event.id }, 0, { allowUnbound: true }), /checksum is invalid/);
   assert.throws(() => allocations.validateCertificateEventAllocations(state, { calculationInput: { lines: [{ code: "WORK", category: "work", amount: "1", currency: "USD", contractEventId: event.id, contractEventDecisionChecksum: event.decisionChecksum }] } }), /cannot reference/);
   assert.throws(() => allocations.validateCertificateEventAllocations(state, { calculationInput: { lines: [{ ...line(event, 1), contractEventDecisionChecksum: "bad" }] } }), /checksum is invalid/);
   assert.throws(() => allocations.validateCertificateEventAllocations(state, { calculationInput: { lines: [{ ...line(event, 0) }] } }), /must be positive/);
