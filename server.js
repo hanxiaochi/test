@@ -127,6 +127,10 @@ function requiredPermission(req) {
   if (req.path === "/api/international/certificate/calculate") return "international:calculate";
   if (req.path === "/api/international/contract_events" && req.method === "GET") return "international:read";
   if (req.path === "/api/international/contract_events" && req.method === "POST") return "international:submit";
+  if (/^\/api\/international\/contract_events\/[^/]+\/evidence$/.test(req.path) && req.method === "GET") return "international:read";
+  if (/^\/api\/international\/contract_events\/[^/]+\/evidence$/.test(req.path) && req.method === "POST") return "international:submit";
+  if (/^\/api\/international\/contract_events\/[^/]+\/evidence\/\d+$/.test(req.path) && req.method === "DELETE") return "international:submit";
+  if (/^\/api\/international\/contract_events\/[^/]+\/evidence\/\d+\/download$/.test(req.path) && req.method === "GET") return "international:read";
   if (/^\/api\/international\/contract_events\/[^/]+\/(?:approve|return)$/.test(req.path) && req.method === "POST") return "international:review";
   if (/^\/api\/international\/contract_events\/[^/]+$/.test(req.path) && req.method === "GET") return "international:read";
   if (req.path === "/api/international/certificate_applications" && req.method === "GET") return "international:read";
@@ -532,6 +536,7 @@ function reviewInternationalContractEvent(req, action) {
   const event = internationalContractEvent.findEvent(engine.db, req.params.identifier);
   if (Number(event.submittedByUserId) === Number(req.authUser.id)) throw Object.assign(new Error("contract events require a different reviewer"), { status: 409 });
   const decisionReason = String(req.body.decisionReason || req.body.remark || "").trim();
+  const evidenceManifest = action === "approve" ? verifiedContractEventEvidenceManifest(req, event) : undefined;
   const transition = executeWorkflowBatchTransition(req, "internationalcontractevent", [event.id], action, {
     expectedRevision: req.body.expectedRevision,
     remark: decisionReason,
@@ -539,7 +544,8 @@ function reviewInternationalContractEvent(req, action) {
       const approved = internationalContractEvent.approveRecord(targets[0].row, {
         approvedAmount: req.body.approvedAmount,
         approvedTimeImpactDays: req.body.approvedTimeImpactDays,
-        decisionReason
+        decisionReason,
+        evidenceManifest
       }, {
         approvedBy: req.authUser.account,
         approvedByUserId: req.authUser.id
@@ -598,6 +604,7 @@ function voidInternationalCertificate(req) {
 
 function internationalCertificateErrorStatus(error) {
   if (Number.isInteger(error.status)) return error.status;
+  if (error.code === "ATTACHMENT_CORRUPT") return 409;
   if (error.code === "SQLITE_RUNTIME_CONFLICT") return 409;
   if (/does not exist/.test(error.message)) return 404;
   if (/already|idempotency key|active successor/.test(error.message)) return 409;
@@ -653,6 +660,9 @@ async function internationalContractEventExportPayload(record, format, locale) {
       approvedAt: record.approvedAt,
       submissionChecksum: record.submissionChecksum,
       decisionChecksum: record.decisionChecksum,
+      evidenceCount: (record.evidenceManifest || []).length,
+      evidenceChecksum: record.evidenceChecksum || "",
+      evidenceManifest: record.evidenceManifest || [],
       files: files.map((file) => ({ name: file.name, bytes: file.data.length, sha256: crypto.createHash("sha256").update(file.data).digest("hex") }))
     };
     return { filename: `${safeNo}-determination-bundle.zip`, contentType: "application/zip", data: zipBuffer([...files, { name: "manifest.json", data: JSON.stringify(manifest, null, 2) }]) };
@@ -1418,6 +1428,89 @@ function attachmentAudit(req, action, result, details = {}) {
     ipAddress: req.ip,
     userAgent: req.headers["user-agent"],
     details: { projectId: req.businessContext.projectId, ...details }
+  });
+}
+
+function contractEventAttachmentScope(req, eventId) {
+  return {
+    tenantId: req.authUser.tenantId,
+    projectId: req.businessContext.projectId,
+    module: "international_contract_event",
+    entityType: "evidence",
+    entityId: String(eventId)
+  };
+}
+
+function contractEventEvidenceAudit(req, action, result, event, details = {}) {
+  authService.store.audit({
+    tenantId: req.authUser.tenantId,
+    userId: req.authUser.id,
+    action,
+    result,
+    targetType: "international_contract_event_evidence",
+    targetId: String(details.attachmentId || event.id),
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+    details: { projectId: req.businessContext.projectId, eventId: event.id, eventNo: event.eventNo, ...details }
+  });
+}
+
+function pendingOwnedContractEvent(req) {
+  const event = internationalContractEvent.findEvent(engine.db, req.contractEventIdentifier || req.params.identifier);
+  if (event.states !== "待审核" || event.decisionChecksum) throw Object.assign(new Error("approved or closed contract event evidence is locked"), { status: 409 });
+  if (Number(event.submittedByUserId) !== Number(req.authUser.id)) throw Object.assign(new Error("only the contract event submitter can change pending evidence"), { status: 403 });
+  return event;
+}
+
+function contractEventEvidenceRows(req, event) {
+  return attachmentStore.list(contractEventAttachmentScope(req, event.id));
+}
+
+function contractEventEvidenceView(row) {
+  return {
+    id: row.id,
+    attachmentId: row.id,
+    originalName: row.originalName,
+    fileName: row.fileName,
+    mimeType: row.mimeType,
+    byteSize: row.byteSize,
+    size: row.byteSize,
+    sha256: row.sha256,
+    uploaderUserId: row.uploaderUserId,
+    remark: row.remark,
+    createdAt: row.createdAt,
+    uploadDate: row.uploadDate
+  };
+}
+
+function evidenceManifestItem(row) {
+  return {
+    attachmentId: row.id,
+    originalName: row.originalName,
+    mimeType: row.mimeType,
+    byteSize: row.byteSize,
+    sha256: row.sha256,
+    createdAt: row.createdAt,
+    uploaderUserId: row.uploaderUserId,
+    remark: row.remark
+  };
+}
+
+function verifiedContractEventEvidenceManifest(req, event) {
+  return contractEventEvidenceRows(req, event).map((row) => {
+    const verified = attachmentStore.read({ ...contractEventAttachmentScope(req, event.id), id: row.id });
+    return evidenceManifestItem(verified.row);
+  });
+}
+
+function contractEventEvidenceUploadMiddleware(req, res, next) {
+  const identifier = req.params.identifier;
+  const scope = { ...req.businessContext };
+  attachmentUpload(req, res, (error) => {
+    req.contractEventIdentifier = identifier;
+    if (!error) return businessContext.runForScope(scope.tenantId, scope.projectId, next);
+    error.status = error.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+    businessContext.runForScope(scope.tenantId, scope.projectId, () => next(error));
   });
 }
 
@@ -2763,7 +2856,9 @@ function internationalSettingsHtml(req, options = {}) {
     const typeText = t(item.request.eventType === "variation" ? "international.variation" : "international.claim");
     const usage = item.decisionChecksum ? internationalContractEventAllocation.eventUsage(engine.db, item.id) : null;
     const remainingAmount = usage ? Decimal.max(0, new Decimal(item.approvedAmount).minus(usage.used)).toString() : "";
+    const evidenceCount = attachmentStore.count(contractEventAttachmentScope(req, item.id));
     const actions = [];
+    actions.push(`<button type="button" class="layui-btn layui-btn-xs layui-btn-primary manage-international-event-evidence" data-id="${htmlEscape(item.id)}" data-no="${htmlEscape(item.eventNo)}" data-mutable="${item.states === "待审核" && canSubmit && isOwn ? "1" : "0"}">${htmlEscape(t("international.evidence"))} (${evidenceCount})</button>`);
     if (item.states === "待审核" && canReview && !isOwn) {
       actions.push(`<button type="button" class="layui-btn layui-btn-xs review-international-event" data-action="approve" data-id="${htmlEscape(item.id)}" data-revision="${workflow ? workflow.revision : ""}" data-amount="${htmlEscape(item.request.claimedAmount)}" data-days="${item.request.claimedTimeImpactDays}">${htmlEscape(t("international.approve"))}</button>`);
       actions.push(`<button type="button" class="layui-btn layui-btn-xs layui-btn-danger review-international-event" data-action="return" data-id="${htmlEscape(item.id)}" data-revision="${workflow ? workflow.revision : ""}">${htmlEscape(t("international.return"))}</button>`);
@@ -2782,6 +2877,7 @@ function internationalSettingsHtml(req, options = {}) {
       <td>${htmlEscape(item.eventNo)}</td><td>${htmlEscape(typeText)}</td><td>${htmlEscape(item.request.title)}</td><td>${htmlEscape(item.request.noticeDate)}</td>
       <td>${htmlEscape(item.request.claimedAmount)} ${htmlEscape(item.request.currency)}</td><td>${item.decisionChecksum ? `${htmlEscape(item.approvedAmount)} ${htmlEscape(item.request.currency)}<br>${htmlEscape(t("international.remainingAmount"))}: ${htmlEscape(remainingAmount)}` : "-"}</td>
       <td>${item.request.claimedTimeImpactDays} / ${item.decisionChecksum ? item.approvedTimeImpactDays : "-"}</td><td>${htmlEscape(item.submittedBy)}</td><td>${htmlEscape(stateText)}</td>
+      <td>${evidenceCount}${item.evidenceChecksum ? `<br><code title="${htmlEscape(item.evidenceChecksum)}">${htmlEscape(item.evidenceChecksum.slice(0, 12))}</code>` : ""}</td>
       <td title="${htmlEscape(item.decisionChecksum || item.submissionChecksum)}"><code>${htmlEscape((item.decisionChecksum || item.submissionChecksum).slice(0, 12))}</code></td>
       <td>${actions.length ? `<div class="core-tools">${actions.join("")}</div>` : "-"}</td>
     </tr>`;
@@ -2878,7 +2974,7 @@ function internationalSettingsHtml(req, options = {}) {
       ${historyPanel}
       <div class="core-panel" style="margin-top:12px;overflow:auto;">
         <h3>${htmlEscape(t("international.contractEvents"))}</h3>
-        <table class="layui-table" lay-size="sm"><thead><tr><th>${htmlEscape(t("international.eventNo"))}</th><th>${htmlEscape(t("international.eventType"))}</th><th>${htmlEscape(t("international.description"))}</th><th>${htmlEscape(t("international.noticeDate"))}</th><th>${htmlEscape(t("international.claimedAmount"))}</th><th>${htmlEscape(t("international.approvedAmount"))}</th><th>${htmlEscape(t("international.timeImpact"))}</th><th>${htmlEscape(t("international.applicant"))}</th><th>${htmlEscape(t("international.status"))}</th><th>SHA-256</th><th>${htmlEscape(t("international.action"))}</th></tr></thead><tbody id="international-contract-event-register">${contractEventRows || `<tr><td colspan="11" class="core-empty">${htmlEscape(t("international.noEvents"))}</td></tr>`}</tbody></table>
+        <table class="layui-table" lay-size="sm"><thead><tr><th>${htmlEscape(t("international.eventNo"))}</th><th>${htmlEscape(t("international.eventType"))}</th><th>${htmlEscape(t("international.description"))}</th><th>${htmlEscape(t("international.noticeDate"))}</th><th>${htmlEscape(t("international.claimedAmount"))}</th><th>${htmlEscape(t("international.approvedAmount"))}</th><th>${htmlEscape(t("international.timeImpact"))}</th><th>${htmlEscape(t("international.applicant"))}</th><th>${htmlEscape(t("international.status"))}</th><th>${htmlEscape(t("international.evidence"))}</th><th>SHA-256</th><th>${htmlEscape(t("international.action"))}</th></tr></thead><tbody id="international-contract-event-register">${contractEventRows || `<tr><td colspan="12" class="core-empty">${htmlEscape(t("international.noEvents"))}</td></tr>`}</tbody></table>
       </div>
       <div class="core-panel" style="margin-top:12px;overflow:auto;">
         <h3>${htmlEscape(t("international.applications"))}</h3>
@@ -2902,6 +2998,8 @@ function internationalSettingsHtml(req, options = {}) {
       if(calculateButton)calculateButton.addEventListener('click',function(){var payload;try{payload=certificateInput()}catch(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>';return}request('/api/international/certificate/calculate',payload).then(function(result){var order=['grossCertified','lineDeductions','currentRetention','retentionRelease','netCertified','payableNow','carriedForward','cumulativeCertified'],adjustment=result.priceAdjustment&&result.priceAdjustment.enabled?'<tr><th>priceAdjustmentFactor</th><td>'+escapeHtml(result.priceAdjustment.factor)+'</td></tr><tr><th>priceAdjustment</th><td>'+escapeHtml(result.priceAdjustment.adjustment)+' '+escapeHtml(result.baseCurrency)+'</td></tr>':'';totals.innerHTML=adjustment+order.map(function(key){return '<tr><th>'+escapeHtml(key)+'</th><td>'+escapeHtml(result.totals[key])+' '+escapeHtml(result.baseCurrency)+'</td></tr>'}).join('')}).catch(function(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>'})});
       if(submitButton)submitButton.addEventListener('click',function(){var payload;try{payload={applicationNo:root.querySelector('#fidic-application-no').value,supersedesApplicationId:root.querySelector('#fidic-supersedes-application-id').value,certificateNo:root.querySelector('#fidic-certificate-no').value,periodStart:root.querySelector('#fidic-period-start').value,periodEnd:root.querySelector('#fidic-period-end').value,applicationReference:root.querySelector('#fidic-application-reference').value,openingBalanceReason:root.querySelector('#fidic-opening-balance-reason').value,remarks:root.querySelector('#fidic-certificate-remarks').value,calculationInput:certificateInput()}}catch(error){message.textContent=error.message;return}if(!payload.applicationNo||!payload.certificateNo||!payload.periodStart||!payload.periodEnd){message.textContent=${JSON.stringify(t("international.applicationNo"))}+' / '+${JSON.stringify(t("international.certificateNo"))}+' / '+${JSON.stringify(t("international.periodStart"))}+' / '+${JSON.stringify(t("international.periodEnd"))};return}if(!window.confirm(${JSON.stringify(t("international.submitApplication"))}+' '+payload.applicationNo+'?'))return;var signature=JSON.stringify(payload);if(!pendingSubmit||pendingSubmit.signature!==signature)pendingSubmit={signature:signature,key:newApplicationKey()};payload.idempotencyKey=pendingSubmit.key;submitButton.disabled=true;request('/api/international/certificate_applications',payload).then(function(result){pendingSubmit=null;message.textContent=${JSON.stringify(t("international.pending"))}+'：'+result.record.applicationNo+' / '+result.record.submissionChecksum.slice(0,12);setTimeout(function(){location.reload()},500)}).catch(function(error){submitButton.disabled=false;message.textContent=error.message})});
       if(eventSubmitButton)eventSubmitButton.addEventListener('click',function(){var payload={eventNo:root.querySelector('#contract-event-no').value,supersedesEventId:root.querySelector('#contract-event-supersedes-id').value,eventType:root.querySelector('#contract-event-type').value,title:root.querySelector('#contract-event-title').value,noticeDate:root.querySelector('#contract-event-notice-date').value,currency:root.querySelector('#contract-event-currency').value,claimedAmount:root.querySelector('#contract-event-claimed-amount').value,claimedTimeImpactDays:Number(root.querySelector('#contract-event-time-impact').value),contractClause:root.querySelector('#contract-event-clause').value,description:root.querySelector('#contract-event-description').value};if(!payload.eventNo||!payload.title||!payload.noticeDate){message.textContent=${JSON.stringify(t("international.eventNo"))}+' / '+${JSON.stringify(t("international.description"))}+' / '+${JSON.stringify(t("international.noticeDate"))};return}if(!window.confirm(${JSON.stringify(t("international.submitEvent"))}+' '+payload.eventNo+'?'))return;var signature=JSON.stringify(payload);if(!pendingEvent||pendingEvent.signature!==signature)pendingEvent={signature:signature,key:newEventKey()};payload.idempotencyKey=pendingEvent.key;eventSubmitButton.disabled=true;request('/api/international/contract_events',payload).then(function(result){pendingEvent=null;message.textContent=${JSON.stringify(t("international.pending"))}+'：'+result.record.eventNo+' / '+result.record.submissionChecksum.slice(0,12);setTimeout(function(){location.reload()},500)}).catch(function(error){eventSubmitButton.disabled=false;message.textContent=error.message})});
+      function evidenceRequest(url,options){return fetch(url,Object.assign({headers:{'Accept':'application/json'}},options||{})).then(function(response){return response.json().then(function(result){if(!response.ok||result.code!==1)throw new Error(result.msg||'操作失败');return result.data})})}
+      Array.prototype.forEach.call(root.querySelectorAll('.manage-international-event-evidence'),function(button){button.addEventListener('click',function(){var id=button.getAttribute('data-id'),mutable=button.getAttribute('data-mutable')==='1',base='/api/international/contract_events/'+encodeURIComponent(id)+'/evidence',project='?projectId='+encodeURIComponent(${JSON.stringify(req.businessContext.projectId)});evidenceRequest(base+project).then(function(data){var rows=data.rows||[],list=rows.length?rows.map(function(row){return '<tr><td><a href="'+base+'/'+row.id+'/download'+project+'">'+escapeHtml(row.fileName)+'</a></td><td>'+escapeHtml(row.remark||'-')+'</td><td>'+escapeHtml(row.byteSize)+'</td><td><code title="'+escapeHtml(row.sha256)+'">'+escapeHtml(row.sha256.slice(0,12))+'</code></td><td>'+(mutable?'<button type="button" class="layui-btn layui-btn-xs layui-btn-danger evidence-delete" data-id="'+row.id+'">${htmlEscape(t("international.deleteEvidence"))}</button>':'${htmlEscape(t("international.evidenceLocked"))}')+'</td></tr>'}).join(''):'<tr><td colspan="5" class="core-empty">${htmlEscape(t("international.noEvidence"))}</td></tr>',upload=mutable?'<form class="layui-form" id="event-evidence-upload" style="margin-bottom:12px"><input class="layui-input" name="file" type="file" required><input class="layui-input" name="remark" maxlength="500" placeholder="${htmlEscape(t("international.remarks"))}" style="margin-top:8px"><button class="layui-btn layui-btn-sm" type="submit" style="margin-top:8px">${htmlEscape(t("international.uploadEvidence"))}</button></form>':'<p>${htmlEscape(t("international.evidenceLocked"))}</p>',content=document.createElement('div');content.style.padding='16px';content.innerHTML=upload+'<table class="layui-table" lay-size="sm"><thead><tr><th>${htmlEscape(t("international.evidence"))}</th><th>${htmlEscape(t("international.remarks"))}</th><th>Bytes</th><th>SHA-256</th><th>${htmlEscape(t("international.action"))}</th></tr></thead><tbody>'+list+'</tbody></table>';function bind(){var form=content.querySelector('#event-evidence-upload');if(form)form.addEventListener('submit',function(event){event.preventDefault();var file=form.querySelector('[name="file"]').files[0];if(!file)return;var body=new FormData();body.append('file',file,file.name);body.append('remark',form.querySelector('[name="remark"]').value);var submit=form.querySelector('button');submit.disabled=true;fetch(base+project,{method:'POST',body:body,headers:{'Accept':'application/json'}}).then(function(response){return response.json().then(function(result){if(!response.ok||result.code!==1)throw new Error(result.msg||'操作失败');location.reload()})}).catch(function(error){submit.disabled=false;message.textContent=error.message})});Array.prototype.forEach.call(content.querySelectorAll('.evidence-delete'),function(remove){remove.addEventListener('click',function(){if(!window.confirm(${JSON.stringify(t("international.deleteEvidence"))}+'?'))return;remove.disabled=true;evidenceRequest(base+'/'+remove.getAttribute('data-id')+project,{method:'DELETE'}).then(function(){location.reload()}).catch(function(error){remove.disabled=false;message.textContent=error.message})})})}if(window.layer&&window.layer.open)window.layer.open({type:1,title:${JSON.stringify(t("international.evidence"))}+' '+button.getAttribute('data-no'),area:['min(900px,92vw)','min(620px,82vh)'],content:content,success:bind});else{root.appendChild(content);bind();content.scrollIntoView({behavior:'smooth'})}}).catch(function(error){message.textContent=error.message})})});
       Array.prototype.forEach.call(root.querySelectorAll('.review-international-event'),function(button){button.addEventListener('click',function(){var action=button.getAttribute('data-action'),id=button.getAttribute('data-id'),payload={expectedRevision:Number(button.getAttribute('data-revision'))};if(action==='approve'){var amount=window.prompt(${JSON.stringify(t("international.approvedAmount"))},button.getAttribute('data-amount')),days=window.prompt(${JSON.stringify(t("international.timeImpact"))},button.getAttribute('data-days')),reason=window.prompt(${JSON.stringify(t("international.decisionReason"))});if(amount===null||days===null||!reason)return;payload.approvedAmount=amount;payload.approvedTimeImpactDays=Number(days);payload.decisionReason=reason}else{var remark=window.prompt(${JSON.stringify(t("international.return"))});if(!remark)return;payload.remark=remark}button.disabled=true;request('/api/international/contract_events/'+encodeURIComponent(id)+'/'+action,payload).then(function(){message.textContent=action==='approve'?${JSON.stringify(t("international.approved"))}:${JSON.stringify(t("international.returned"))};setTimeout(function(){location.reload()},500)}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
       Array.prototype.forEach.call(root.querySelectorAll('.replace-international-event'),function(button){button.addEventListener('click',function(){var values={"#contract-event-supersedes-id":button.getAttribute('data-id'),"#contract-event-no":button.getAttribute('data-no')+'-R',"#contract-event-type":button.getAttribute('data-type'),"#contract-event-title":button.getAttribute('data-title'),"#contract-event-notice-date":button.getAttribute('data-date'),"#contract-event-currency":button.getAttribute('data-currency'),"#contract-event-claimed-amount":button.getAttribute('data-amount'),"#contract-event-time-impact":button.getAttribute('data-days'),"#contract-event-clause":button.getAttribute('data-clause'),"#contract-event-description":button.getAttribute('data-description')};Object.keys(values).forEach(function(selector){var element=root.querySelector(selector);if(element)element.value=values[selector]});var eventNo=root.querySelector('#contract-event-no');if(eventNo)eventNo.focus();message.textContent=${JSON.stringify(t("international.returned"))}+'：'+button.getAttribute('data-no')})});
       Array.prototype.forEach.call(root.querySelectorAll('.add-international-event-line'),function(button){button.addEventListener('click',function(){var linesElement=root.querySelector('#fidic-lines'),lines;try{lines=JSON.parse(linesElement.value||'[]');if(!Array.isArray(lines))throw new Error('lines')}catch(error){message.textContent='JSON: '+error.message;return}var id=button.getAttribute('data-id');if(lines.some(function(line){return line&&line.contractEventId===id})){message.textContent=button.getAttribute('data-no')+' already added';return}var baseCode='EVENT-'+button.getAttribute('data-no'),code=baseCode,index=2;while(lines.some(function(line){return line&&line.code===code}))code=baseCode+'-'+index++;lines.push({code:code,description:button.getAttribute('data-title'),category:button.getAttribute('data-category'),amount:button.getAttribute('data-amount'),currency:button.getAttribute('data-currency'),contractEventId:id,contractEventDecisionChecksum:button.getAttribute('data-checksum')});linesElement.value=JSON.stringify(lines,null,2);message.textContent=${JSON.stringify(t("international.remainingAmount"))}+'：'+button.getAttribute('data-no')+' / '+button.getAttribute('data-amount');linesElement.focus()})});
@@ -15047,11 +15145,81 @@ app.get("/api/international/contract_events/:identifier/export", (req, res) => {
     res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
   });
 });
+app.get("/api/international/contract_events/:identifier/evidence", (req, res) => {
+  try {
+    const record = internationalContractEvent.findEvent(engine.db, req.params.identifier);
+    const rows = contractEventEvidenceRows(req, record).map(contractEventEvidenceView);
+    operationOk(res, {
+      rows,
+      count: rows.length,
+      locked: record.states !== "待审核" || Boolean(record.decisionChecksum),
+      frozenManifest: record.evidenceManifest || [],
+      evidenceChecksum: record.evidenceChecksum || ""
+    });
+  } catch (error) {
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null, errorCode: error.code });
+  }
+});
+app.post("/api/international/contract_events/:identifier/evidence", contractEventEvidenceUploadMiddleware, (req, res) => {
+  let event;
+  try {
+    event = pendingOwnedContractEvent(req);
+    if (!req.file) throw Object.assign(new Error("contract event evidence file is required"), { status: 400 });
+    const row = attachmentStore.create({
+      ...contractEventAttachmentScope(req, event.id),
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      buffer: req.file.buffer,
+      uploaderUserId: req.authUser.id,
+      remark: req.body.remark
+    });
+    contractEventEvidenceAudit(req, "international_contract_event.evidence_upload", "success", event, { attachmentId: row.id, fileName: row.fileName, bytes: row.byteSize, sha256: row.sha256 });
+    operationOk(res, { row: contractEventEvidenceView(row), count: attachmentStore.count(contractEventAttachmentScope(req, event.id)) });
+  } catch (error) {
+    if (event) contractEventEvidenceAudit(req, "international_contract_event.evidence_upload", "failure", event, { fileName: req.file && req.file.originalname, reason: error.code || error.message });
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null, errorCode: error.code });
+  }
+});
+app.delete("/api/international/contract_events/:identifier/evidence/:attachmentId", (req, res) => {
+  let event;
+  try {
+    event = pendingOwnedContractEvent(req);
+    const attachmentId = Number(req.params.attachmentId);
+    if (!Number.isSafeInteger(attachmentId) || attachmentId < 1) throw Object.assign(new Error("contract event evidence attachment id is invalid"), { status: 400 });
+    const changed = attachmentStore.delete({ ...contractEventAttachmentScope(req, event.id), id: attachmentId, deletedBy: req.authUser.id });
+    if (!changed) throw Object.assign(new Error("contract event evidence does not exist"), { status: 404 });
+    contractEventEvidenceAudit(req, "international_contract_event.evidence_delete", "success", event, { attachmentId });
+    operationOk(res, { changed, count: attachmentStore.count(contractEventAttachmentScope(req, event.id)) });
+  } catch (error) {
+    if (event) contractEventEvidenceAudit(req, "international_contract_event.evidence_delete", "failure", event, { attachmentId: Number(req.params.attachmentId) || 0, reason: error.code || error.message });
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null, errorCode: error.code });
+  }
+});
+app.get("/api/international/contract_events/:identifier/evidence/:attachmentId/download", (req, res) => {
+  let event;
+  try {
+    event = internationalContractEvent.findEvent(engine.db, req.params.identifier);
+    const attachmentId = Number(req.params.attachmentId);
+    const verified = attachmentStore.read({ ...contractEventAttachmentScope(req, event.id), id: attachmentId });
+    const extension = path.extname(verified.row.fileName).replace(/[^.a-z0-9]/gi, "").slice(0, 12);
+    const encodedName = encodeURIComponent(verified.row.fileName).replace(/['()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+    res.setHeader("Content-Type", verified.row.mimeType);
+    res.setHeader("Content-Length", String(verified.buffer.length));
+    res.setHeader("Content-Disposition", `attachment; filename="contract-event-evidence-${verified.row.id}${extension}"; filename*=UTF-8''${encodedName}`);
+    res.setHeader("X-Content-SHA256", verified.row.sha256);
+    contractEventEvidenceAudit(req, "international_contract_event.evidence_download", "success", event, { attachmentId, fileName: verified.row.fileName, bytes: verified.buffer.length, sha256: verified.row.sha256 });
+    res.send(verified.buffer);
+  } catch (error) {
+    if (event) contractEventEvidenceAudit(req, "international_contract_event.evidence_download", "failure", event, { attachmentId: Number(req.params.attachmentId) || 0, reason: error.code || error.message });
+    const status = error.code === "ATTACHMENT_CORRUPT" ? 409 : internationalCertificateErrorStatus(error);
+    res.status(status).json({ code: 0, msg: error.message, data: null, errorCode: error.code });
+  }
+});
 app.get("/api/international/contract_events/:identifier", (req, res) => {
   try {
     const record = internationalContractEvent.findEvent(engine.db, req.params.identifier);
     const workflow = record.workflowInstanceKey ? workflowStore.getInstance(req.authUser.tenantId, req.businessContext.projectId, "internationalcontractevent", record.workflowInstanceKey) : null;
-    operationOk(res, { record, workflow, events: workflow ? workflowStore.events({ tenantId: req.authUser.tenantId, projectId: req.businessContext.projectId, module: "internationalcontractevent", businessId: record.workflowInstanceKey, limit: 100 }) : [] });
+    operationOk(res, { record, workflow, evidence: contractEventEvidenceRows(req, record).map(contractEventEvidenceView), events: workflow ? workflowStore.events({ tenantId: req.authUser.tenantId, projectId: req.businessContext.projectId, module: "internationalcontractevent", businessId: record.workflowInstanceKey, limit: 100 }) : [] });
   } catch (error) {
     res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
   }
@@ -15069,7 +15237,7 @@ app.post("/api/international/contract_events", (req, res) => {
 app.post("/api/international/contract_events/:identifier/approve", (req, res) => {
   try {
     const result = reviewInternationalContractEvent(req, "approve");
-    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_contract_event.approve", result: "success", targetType: "international_contract_event", targetId: result.record.id, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { eventNo: result.record.eventNo, approvedAmount: result.record.approvedAmount, approvedTimeImpactDays: result.record.approvedTimeImpactDays, decisionChecksum: result.record.decisionChecksum } });
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_contract_event.approve", result: "success", targetType: "international_contract_event", targetId: result.record.id, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { eventNo: result.record.eventNo, approvedAmount: result.record.approvedAmount, approvedTimeImpactDays: result.record.approvedTimeImpactDays, evidenceCount: (result.record.evidenceManifest || []).length, evidenceChecksum: result.record.evidenceChecksum || "", decisionChecksum: result.record.decisionChecksum } });
     operationOk(res, result);
   } catch (error) {
     authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_contract_event.approve", result: "failure", targetType: "international_contract_event", targetId: req.params.identifier, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { message: error.message } });
@@ -16276,7 +16444,7 @@ app.use((error, req, res, _next) => {
   const status = reportedStatus >= 400 && reportedStatus <= 599 ? reportedStatus : 500;
   if (status >= 500) console.error("request failed", req.method, req.path, error && error.stack ? error.stack : error);
   else console.warn("request rejected", req.method, req.path, status);
-  const attachmentRequest = req.path.startsWith("/projectInformationNode/") && /attachment/i.test(req.path);
+  const attachmentRequest = (req.path.startsWith("/projectInformationNode/") && /attachment/i.test(req.path)) || /^\/api\/international\/contract_events\/[^/]+\/evidence/.test(req.path);
   const measureImportRequest = req.path.startsWith("/import_measure/");
   const clientMessage = (attachmentRequest || measureImportRequest) && status < 500
     ? (error.code === "LIMIT_FILE_SIZE" ? "附件超过允许的大小限制" : String(error.message || "附件请求无效"))

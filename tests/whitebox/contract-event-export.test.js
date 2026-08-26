@@ -38,6 +38,8 @@ test("builds one localized model from a verified approved determination", () => 
   assert.ok(model.eventRows.some(([key, value]) => key === "事件类型" && value === "变更"));
   assert.ok(model.determinationRows.some(([key, value]) => key === "审定金额" && value === "12000.5"));
   assert.ok(model.integrityRows.some(([key, value]) => key === "审定 SHA-256" && value === record.decisionChecksum));
+  assert.ok(model.integrityRows.some(([key, value]) => key === "证据文件数" && value === 0));
+  assert.ok(model.integrityRows.some(([key, value]) => key === "证据清单 SHA-256" && value === record.evidenceChecksum));
   assert.equal(exporter.text(null), "");
   assert.equal(exporter.reportText("unknown", "title"), "Contract Event Determination");
   assert.equal(exporter.reportText("en-US", "unknown.key"), "unknown.key");
@@ -51,7 +53,9 @@ test("builds one localized model from a verified approved determination", () => 
     approvedAt: "",
     approvedBy: "",
     approvedByUserId: 0,
-    decisionChecksum: ""
+    decisionChecksum: "",
+    evidenceManifest: [],
+    evidenceChecksum: ""
   };
   assert.throws(() => exporter.contractEventModel(pending), /approved contract event/);
   const tampered = structuredClone(record);

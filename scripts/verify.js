@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const assert = require("assert");
 const ExcelJS = require("exceljs");
 const JSZip = require("jszip");
+const { DatabaseSync } = require("node:sqlite");
 
 const engine = require("../costEngine");
 
@@ -422,6 +423,21 @@ async function verifyAuthorizationFlow() {
   });
   assert.strictEqual(editorContractEvent.response.status, 200, "editor should submit a frozen contract event");
   assert.strictEqual(editorContractEvent.json.data.record.states, "待审核", "contract event submission should enter pending review");
+  const eventEvidenceOne = await postMultipart(`/api/international/contract_events/${editorContractEvent.json.data.record.id}/evidence?projectId=certificate-rbac-project`, { remark: "Engineer instruction" }, {
+    name: "engineer-instruction.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\ncontract-event-evidence-one\n%%EOF")
+  });
+  assert.strictEqual(eventEvidenceOne.response.status, 200, `event submitter should upload pending evidence: ${JSON.stringify(eventEvidenceOne.json)}`);
+  const eventEvidenceTwo = await postMultipart(`/api/international/contract_events/${editorContractEvent.json.data.record.id}/evidence?projectId=certificate-rbac-project`, { remark: "Contract notice" }, {
+    name: "contract-notice.txt", mimeType: "text/plain", buffer: Buffer.from("contract event notice evidence", "utf8")
+  });
+  assert.strictEqual(eventEvidenceTwo.response.status, 200, "event submitter should upload a second evidence file");
+  const pendingEvidence = await requestJson(`/api/international/contract_events/${editorContractEvent.json.data.record.id}/evidence?projectId=certificate-rbac-project`);
+  assert.strictEqual(pendingEvidence.json.data.count, 2, "pending event evidence list should expose both isolated attachments");
+  const deletedEvidence = await requestJson(`/api/international/contract_events/${editorContractEvent.json.data.record.id}/evidence/${eventEvidenceTwo.json.data.row.id}?projectId=certificate-rbac-project`, { method: "DELETE" });
+  assert.strictEqual(deletedEvidence.response.status, 200, "event submitter should delete pending evidence");
+  assert.strictEqual(deletedEvidence.json.data.count, 1, "pending evidence delete should update the active count");
+  const crossProjectEvidence = await requestJson(`/api/international/contract_events/${editorContractEvent.json.data.record.id}/evidence?projectId=1`);
+  assert.strictEqual(crossProjectEvidence.response.status, 403, "contract event evidence must enforce project assignment");
 
   authCookieHeader = "";
   const approverLogin = await requestJson("/dologin", {
@@ -434,27 +450,66 @@ async function verifyAuthorizationFlow() {
   assert.strictEqual(approverWorkbench.response.status, 200, "certificate approver should open the operational workbench");
   assert.ok(approverWorkbench.text.includes("APP-RBAC-001") && approverWorkbench.text.includes("VO-RBAC-001") && approverWorkbench.text.includes('data-action="approve"') && !approverWorkbench.text.includes('id="fidic-submit-application"') && !approverWorkbench.text.includes('id="contract-event-submit"') && !approverWorkbench.text.includes('id="international-settings-form"'), "approver workbench should expose application and event review without submission or administrative settings controls");
   assert.doesNotThrow(() => [...approverWorkbench.text.matchAll(/<script>([\s\S]*?)<\/script>/gi)].forEach((match) => new Function(match[1])), "approver workbench inline scripts should compile");
+  assert.ok(approverWorkbench.text.includes("manage-international-event-evidence") && approverWorkbench.text.includes("VO-RBAC-001"), "review workbench should expose the real event evidence browser");
   const approverAdminDenied = await requestJson("/api/admin/international_settings?projectId=certificate-rbac-project");
   assert.strictEqual(approverAdminDenied.response.status, 403, "certificate approver should not administer contract parameters");
   const approverBusinessWriteDenied = await postJson("/bill_measure/save?projectId=certificate-rbac-project", { measureNo: "APPROVER-FORBIDDEN-WRITE" });
   assert.strictEqual(approverBusinessWriteDenied.response.status, 403, "certificate approver should not receive unrelated business write authority");
+  const approverEvidence = await requestJson(`/api/international/contract_events/${editorContractEvent.json.data.record.id}/evidence?projectId=certificate-rbac-project`);
+  assert.strictEqual(approverEvidence.json.data.count, 1, "reviewer should inspect event evidence before deciding");
+  const approverEvidenceDownload = await requestBuffer(`/api/international/contract_events/${editorContractEvent.json.data.record.id}/evidence/${eventEvidenceOne.json.data.row.id}/download?projectId=certificate-rbac-project`);
+  assert.strictEqual(approverEvidenceDownload.response.status, 200, "reviewer should download and verify event evidence");
+  assert.strictEqual(approverEvidenceDownload.response.headers.get("x-content-sha256"), eventEvidenceOne.json.data.row.sha256, "evidence download should expose the verified object hash");
+  const approverEvidenceUploadDenied = await postMultipart(`/api/international/contract_events/${editorContractEvent.json.data.record.id}/evidence?projectId=certificate-rbac-project`, {}, {
+    name: "reviewer-mutation.txt", mimeType: "text/plain", buffer: Buffer.from("reviewer must not mutate evidence")
+  });
+  assert.strictEqual(approverEvidenceUploadDenied.response.status, 403, "reviewers must not mutate a submitter's pending evidence");
   const excessiveEventApproval = await postJson(`/api/international/contract_events/${editorContractEvent.json.data.record.id}/approve`, { projectId: "certificate-rbac-project", expectedRevision: 1, approvedAmount: "50000.01", approvedTimeImpactDays: 5, decisionReason: "Exceeds submitted entitlement" });
   assert.strictEqual(excessiveEventApproval.response.status, 400, "contract event approval must reject an amount above the immutable claim");
   const eventAfterRejectedApproval = await requestJson(`/api/international/contract_events/${editorContractEvent.json.data.record.id}?projectId=certificate-rbac-project`);
   assert.strictEqual(eventAfterRejectedApproval.json.data.record.states, "待审核", "failed contract event approval must roll back the business state");
   assert.strictEqual(eventAfterRejectedApproval.json.data.workflow.revision, 1, "failed contract event approval must roll back the workflow revision");
+  if (process.env.APP_ENABLE_IPC_SHUTDOWN === "true" && process.env.APP_ATTACHMENT_DB_PATH && process.env.APP_ATTACHMENT_DIR) {
+    const attachmentDb = new DatabaseSync(process.env.APP_ATTACHMENT_DB_PATH);
+    const storedEvidence = attachmentDb.prepare("SELECT storage_name FROM attachments WHERE id = ?").get(eventEvidenceOne.json.data.row.id);
+    attachmentDb.close();
+    const objectPath = path.join(process.env.APP_ATTACHMENT_DIR, ...storedEvidence.storage_name.split("/"));
+    const originalEvidenceBytes = fs.readFileSync(objectPath);
+    fs.writeFileSync(objectPath, Buffer.from("corrupted-contract-event-evidence"));
+    const corruptEvidenceApproval = await postJson(`/api/international/contract_events/${editorContractEvent.json.data.record.id}/approve`, { projectId: "certificate-rbac-project", expectedRevision: 1, approvedAmount: "48000", approvedTimeImpactDays: 4, decisionReason: "Corrupt evidence must block approval" });
+    assert.strictEqual(corruptEvidenceApproval.response.status, 409, "corrupt evidence must block contract event approval");
+    const eventAfterCorruptEvidence = await requestJson(`/api/international/contract_events/${editorContractEvent.json.data.record.id}?projectId=certificate-rbac-project`);
+    assert.strictEqual(eventAfterCorruptEvidence.json.data.record.states, "待审核", "corrupt evidence approval must leave the event pending");
+    assert.strictEqual(eventAfterCorruptEvidence.json.data.workflow.revision, 1, "corrupt evidence approval must not advance workflow revision");
+    fs.writeFileSync(objectPath, originalEvidenceBytes);
+  }
   const approvedContractEvent = await postJson(`/api/international/contract_events/${editorContractEvent.json.data.record.id}/approve`, { projectId: "certificate-rbac-project", expectedRevision: 1, approvedAmount: "48000", approvedTimeImpactDays: 4, decisionReason: "Independent evaluation" });
   assert.strictEqual(approvedContractEvent.response.status, 200, "certificate approver should approve another user's contract event");
   assert.strictEqual(approvedContractEvent.json.data.record.approvedAmount, "48000", "event approval should preserve the evaluated amount");
   assert.strictEqual(approvedContractEvent.json.data.record.decisionChecksum.length, 64, "event approval should create an immutable decision checksum");
+  assert.strictEqual(approvedContractEvent.json.data.record.evidenceManifest.length, 1, "event approval should freeze every active evidence attachment");
+  assert.strictEqual(approvedContractEvent.json.data.record.evidenceManifest[0].sha256, eventEvidenceOne.json.data.row.sha256, "frozen evidence should retain the verified object hash");
+  assert.strictEqual(approvedContractEvent.json.data.record.evidenceChecksum.length, 64, "event approval should freeze a canonical evidence checksum");
   const approverEventExport = await requestBuffer(`/api/international/contract_events/${approvedContractEvent.json.data.record.id}/export?projectId=certificate-rbac-project&format=xlsx`);
   assert.strictEqual(approverEventExport.response.status, 200, "certificate approver should export an approved contract event");
   assert.ok(approverEventExport.buffer.subarray(0, 2).equals(Buffer.from("PK")), "contract event export should be a genuine XLSX");
+  const approverEventBundle = await requestBuffer(`/api/international/contract_events/${approvedContractEvent.json.data.record.id}/export?projectId=certificate-rbac-project&format=all`);
+  const approverEventZip = await JSZip.loadAsync(approverEventBundle.buffer);
+  const approverEventManifest = JSON.parse(await approverEventZip.file("manifest.json").async("string"));
+  assert.strictEqual(approverEventManifest.evidenceCount, 1, "contract event export bundle should disclose the frozen evidence count");
+  assert.strictEqual(approverEventManifest.evidenceChecksum, approvedContractEvent.json.data.record.evidenceChecksum, "contract event export bundle should pin the evidence manifest checksum");
+  assert.deepStrictEqual(approverEventManifest.evidenceManifest, approvedContractEvent.json.data.record.evidenceManifest, "contract event export bundle should carry the canonical frozen evidence manifest");
   const approverEventWorkbench = await requestText("/international/certificates_page?projectId=certificate-rbac-project");
   assert.ok(approverEventWorkbench.text.includes(`/api/international/contract_events/${approvedContractEvent.json.data.record.id}/export?format=xlsx`), "approved event rows should expose export controls to authorized users");
   const invalidApproverEventExport = await requestJson(`/api/international/contract_events/${approvedContractEvent.json.data.record.id}/export?projectId=certificate-rbac-project&format=exe`);
   assert.strictEqual(invalidApproverEventExport.response.status, 400, "invalid contract event export formats should fail and be audited");
   authCookieHeader = editorCookie;
+  const lockedEvidenceDelete = await requestJson(`/api/international/contract_events/${approvedContractEvent.json.data.record.id}/evidence/${eventEvidenceOne.json.data.row.id}?projectId=certificate-rbac-project`, { method: "DELETE" });
+  assert.strictEqual(lockedEvidenceDelete.response.status, 409, "approved event evidence must be immutable");
+  const lockedEvidenceUpload = await postMultipart(`/api/international/contract_events/${approvedContractEvent.json.data.record.id}/evidence?projectId=certificate-rbac-project`, {}, {
+    name: "late-evidence.txt", mimeType: "text/plain", buffer: Buffer.from("late evidence must be rejected")
+  });
+  assert.strictEqual(lockedEvidenceUpload.response.status, 409, "approved events must reject late evidence uploads");
   const editorEventExport = await requestBuffer(`/api/international/contract_events/${approvedContractEvent.json.data.record.id}/export?projectId=certificate-rbac-project&format=xlsx`);
   assert.strictEqual(editorEventExport.response.status, 200, "ordinary editors should retain read-only determination export authority");
   const editorEventCrossProject = await requestJson(`/api/international/contract_events/${approvedContractEvent.json.data.record.id}/export?projectId=1&format=xlsx`);

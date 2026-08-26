@@ -37,6 +37,9 @@ test("creates, verifies, lists and replays an immutable contract event", () => {
   assert.equal(created.replay, false);
   assert.equal(created.record.request.currency, "USD");
   assert.equal(created.record.request.claimedAmount, "125000.5");
+  assert.equal(created.record.schemaVersion, 2);
+  assert.deepEqual(created.record.evidenceManifest, []);
+  assert.equal(created.record.evidenceChecksum, "");
   assert.equal(created.record.submissionChecksum.length, 64);
   assert.deepEqual(events.findEvent(state, "VO-001"), created.record);
   assert.deepEqual(events.listEvents(state, { offset: 0, limit: 1 }), { rows: [created.record], total: 1, offset: 0, limit: 1 });
@@ -49,13 +52,44 @@ test("creates a checksummed independent decision only after workflow approval", 
   create(state);
   assert.throws(() => events.approveRecord(state.internationalContractEvents[0], { approvedAmount: "100000", approvedTimeImpactDays: 8, decisionReason: "Evaluated entitlement" }, { approvedAt: "2026-08-03T00:00:00.000Z", approvedBy: "checker", approvedByUserId: 8 }), /workflow approval/);
   state.internationalContractEvents[0].states = "已批准";
-  const approved = events.approveRecord(state.internationalContractEvents[0], { approvedAmount: "100000", approvedTimeImpactDays: 8, decisionReason: "Evaluated entitlement" }, { approvedAt: "2026-08-03T00:00:00.000Z", approvedBy: "checker", approvedByUserId: 8 });
+  const evidence = [
+    { attachmentId: 9, originalName: "instruction.pdf", mimeType: "application/pdf", byteSize: 120, sha256: "b".repeat(64), createdAt: "2026-08-02T02:00:00.000Z", uploaderUserId: 7, remark: "Engineer instruction" },
+    { attachmentId: 3, originalName: "notice.txt", mimeType: "text/plain", byteSize: 20, sha256: "a".repeat(64), createdAt: "2026-08-02T01:00:00.000Z", uploaderUserId: 7, remark: "Notice" }
+  ];
+  const approved = events.approveRecord(state.internationalContractEvents[0], { approvedAmount: "100000", approvedTimeImpactDays: 8, decisionReason: "Evaluated entitlement", evidenceManifest: evidence }, { approvedAt: "2026-08-03T00:00:00.000Z", approvedBy: "checker", approvedByUserId: 8 });
   assert.equal(approved.approvedAmount, "100000");
   assert.equal(approved.decisionChecksum.length, 64);
+  assert.deepEqual(approved.evidenceManifest.map((item) => item.attachmentId), [3, 9]);
+  assert.equal(approved.evidenceChecksum.length, 64);
+  assert.equal(approved.evidenceChecksum, events.evidenceManifestChecksum([...evidence].reverse()));
   assert.equal(approved.submissionChecksum, state.internationalContractEvents[0].submissionChecksum);
   assert.throws(() => events.approveRecord(approved, { approvedAmount: "1", decisionReason: "Again" }, { approvedBy: "checker", approvedByUserId: 8 }), /already exists/);
   assert.throws(() => events.approveRecord({ ...state.internationalContractEvents[0], states: "已批准" }, { approvedAmount: "130000", decisionReason: "Too high" }, { approvedBy: "checker", approvedByUserId: 8 }), /exceeds the claim/);
   assert.throws(() => events.approveRecord({ ...state.internationalContractEvents[0], states: "已批准" }, { approvedAmount: "100", decisionReason: "Self" }, { approvedBy: "editor", approvedByUserId: 7 }), /different approver/);
+  assert.throws(() => events.eventView({ ...approved, evidenceManifest: [{ ...approved.evidenceManifest[0], byteSize: 21 }, approved.evidenceManifest[1]] }), /evidence checksum mismatch/);
+  assert.throws(() => events.approveRecord({ ...state.internationalContractEvents[0], states: "已批准" }, { approvedAmount: "100", decisionReason: "Malformed evidence", evidenceManifest: [{ attachmentId: 1, originalName: "bad.pdf" }] }, { approvedBy: "checker", approvedByUserId: 8 }), /evidence.*invalid/);
+});
+
+test("schema v2 freezes an empty evidence manifest while schema v1 remains compatible", () => {
+  const state = {};
+  create(state);
+  state.internationalContractEvents[0].states = "已批准";
+  const approved = events.approveRecord(state.internationalContractEvents[0], { approvedAmount: "1", approvedTimeImpactDays: 0, decisionReason: "No supporting files", evidenceManifest: [] }, { approvedAt: "2026-08-03T00:00:00.000Z", approvedBy: "checker", approvedByUserId: 8 });
+  assert.deepEqual(approved.evidenceManifest, []);
+  assert.equal(approved.evidenceChecksum, events.evidenceManifestChecksum([]));
+
+  const legacyState = {};
+  create(legacyState);
+  const legacy = legacyState.internationalContractEvents[0];
+  legacy.schemaVersion = 1;
+  delete legacy.evidenceManifest;
+  delete legacy.evidenceChecksum;
+  legacy.submissionChecksum = events.recordChecksum(events.submissionPayload(legacy));
+  assert.equal(events.eventView(legacy).schemaVersion, 1);
+  legacy.states = "已批准";
+  const legacyApproved = events.approveRecord(legacy, { approvedAmount: "1", approvedTimeImpactDays: 0, decisionReason: "Legacy determination" }, { approvedAt: "2026-08-03T00:00:00.000Z", approvedBy: "checker", approvedByUserId: 8 });
+  assert.equal(legacyApproved.schemaVersion, 1);
+  assert.equal(Object.prototype.hasOwnProperty.call(legacyApproved, "evidenceManifest"), false);
 });
 
 test("supports one replacement only for a returned event", () => {
