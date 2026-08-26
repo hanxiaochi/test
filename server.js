@@ -2420,10 +2420,32 @@ function dataExchangeManagementHtml(req) {
 
 function internationalSettingsHtml(req) {
   const settings = currentInternationalSettings();
+  const storedHistory = internationalSettingsService.settingsHistory(engine.db);
+  const activeVersion = internationalSettingsService.activeSettingsVersion(engine.db);
+  const history = storedHistory.length ? storedHistory : [activeVersion];
   const catalog = internationalSettingsService.publicCatalog();
   const t = (key) => internationalSettingsService.translate(settings.locale, key);
   const localeOptions = catalog.locales.map((item) => `<option value="${item.code}"${item.code === settings.locale ? " selected" : ""}>${htmlEscape(item.name)} (${item.code})</option>`).join("");
   const standardOptions = catalog.certificateStandards.map((item) => `<option value="${item}"${item === settings.certificateStandard ? " selected" : ""}>${item}</option>`).join("");
+  const historyRows = history.map((item) => {
+    const isActive = item.status === "active" || item.status === "legacy";
+    const actor = item.createdBy === null || item.createdBy === undefined ? "系统" : `用户 #${htmlEscape(item.createdBy)}`;
+    const reason = item.changeReason || (item.status === "legacy" ? "部署前既有参数" : "-");
+    const activated = item.activationReason ? `${htmlEscape(item.activationReason)} / ${item.activatedBy === null || item.activatedBy === undefined ? "系统" : `用户 #${htmlEscape(item.activatedBy)}`}` : "-";
+    return `<tr data-settings-version="${item.version}">
+      <td>V${item.version}</td>
+      <td>${isActive ? "当前生效" : "已停用"}</td>
+      <td>${htmlEscape(item.settings.locale)}</td>
+      <td>${htmlEscape(item.settings.baseCurrency)}</td>
+      <td>${htmlEscape(item.settings.certificateStandard)}</td>
+      <td>${htmlEscape(reason)}</td>
+      <td>${actor}</td>
+      <td>${htmlEscape(item.createdAt || "-")}</td>
+      <td>${activated}</td>
+      <td title="${htmlEscape(item.checksum)}"><code>${htmlEscape(item.checksum.slice(0, 12))}</code></td>
+      <td>${isActive ? "-" : `<div class="core-tools"><input class="layui-input activation-reason" maxlength="500" placeholder="填写启用原因" aria-label="V${item.version} 启用原因"><button type="button" class="layui-btn layui-btn-xs activate-settings-version" data-version="${item.version}">启用</button></div>`}</td>
+    </tr>`;
+  }).join("");
   return `<div class="core-page" data-core-page="international-settings" lang="${htmlEscape(settings.locale)}" dir="${htmlEscape(settings.direction)}">
     ${corePageStyle("#0369a1")}
     <div class="core-shell">
@@ -2459,13 +2481,18 @@ function internationalSettingsHtml(req) {
           <table class="layui-table" lay-size="sm"><tbody id="fidic-totals"><tr><td class="core-empty">${htmlEscape(t("international.notCalculated"))}</td></tr></tbody></table>
         </div>
       </div>
+      <div class="core-panel" style="margin-top:12px;overflow:auto;">
+        <h3>合同参数版本历史</h3>
+        <table class="layui-table" lay-size="sm"><thead><tr><th>版本</th><th>状态</th><th>语言</th><th>基础币种</th><th>证书标准</th><th>变更原因</th><th>创建人</th><th>创建时间</th><th>最近启用</th><th>校验和</th><th>操作</th></tr></thead><tbody id="international-settings-history">${historyRows}</tbody></table>
+      </div>
     </div>
     <script>(function(){
       var root=document.querySelector('[data-core-page="international-settings"]');if(!root)return;
       var form=root.querySelector('#international-settings-form'),message=root.querySelector('#international-settings-message'),totals=root.querySelector('#fidic-totals');
       function escapeHtml(value){var node=document.createElement('div');node.textContent=String(value==null?'':value);return node.innerHTML}
       function request(url,body){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json().then(function(result){if(!response.ok||result.code!==1)throw new Error(result.msg||'操作失败');return result.data})})}
-      form.addEventListener('submit',function(event){event.preventDefault();var data=new FormData(form),payload={changeReason:data.get('changeReason'),locale:data.get('locale'),baseCurrency:data.get('baseCurrency'),certificateStandard:data.get('certificateStandard'),moneyDigits:Number(data.get('moneyDigits')),retentionRate:data.get('retentionRate'),retentionLimitAmount:data.get('retentionLimitAmount'),minimumCertificateAmount:data.get('minimumCertificateAmount')};try{payload.exchangeRates=JSON.parse(data.get('exchangeRates')||'{}');payload.currencyDigits=JSON.parse(data.get('currencyDigits')||'{}')}catch(error){message.textContent='JSON: '+error.message;return}request('/api/admin/international_settings',payload).then(function(result){message.textContent=${JSON.stringify(t("international.saved"))}+' v'+result.version.version}).catch(function(error){message.textContent=error.message})});
+      form.addEventListener('submit',function(event){event.preventDefault();var data=new FormData(form),payload={changeReason:data.get('changeReason'),locale:data.get('locale'),baseCurrency:data.get('baseCurrency'),certificateStandard:data.get('certificateStandard'),moneyDigits:Number(data.get('moneyDigits')),retentionRate:data.get('retentionRate'),retentionLimitAmount:data.get('retentionLimitAmount'),minimumCertificateAmount:data.get('minimumCertificateAmount')};try{payload.exchangeRates=JSON.parse(data.get('exchangeRates')||'{}');payload.currencyDigits=JSON.parse(data.get('currencyDigits')||'{}')}catch(error){message.textContent='JSON: '+error.message;return}request('/api/admin/international_settings',payload).then(function(result){message.textContent=${JSON.stringify(t("international.saved"))}+' v'+result.version.version+'，正在刷新...';setTimeout(function(){location.reload()},500)}).catch(function(error){message.textContent=error.message})});
+      Array.prototype.forEach.call(root.querySelectorAll('.activate-settings-version'),function(button){button.addEventListener('click',function(){var row=button.closest('tr'),input=row.querySelector('.activation-reason'),reason=String(input.value||'').trim(),version=button.getAttribute('data-version');if(!reason){message.textContent='请填写 V'+version+' 的启用原因';input.focus();return}if(!window.confirm('确认启用合同参数 V'+version+'？'))return;button.disabled=true;request('/api/admin/international_settings/'+encodeURIComponent(version)+'/activate',{projectId:${JSON.stringify(req.businessContext.projectId)},changeReason:reason}).then(function(){message.textContent='V'+version+' 已启用，正在刷新...';setTimeout(function(){location.reload()},500)}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
       root.querySelector('#fidic-calculate').addEventListener('click',function(){var payload;try{payload={lines:JSON.parse(root.querySelector('#fidic-lines').value||'[]'),previousRetention:root.querySelector('#fidic-previous-retention').value,retentionRelease:root.querySelector('#fidic-retention-release').value}}catch(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>';return}request('/api/international/certificate/calculate',payload).then(function(result){var order=['grossCertified','lineDeductions','currentRetention','retentionRelease','netCertified','payableNow','carriedForward','cumulativeCertified'];totals.innerHTML=order.map(function(key){return '<tr><th>'+escapeHtml(key)+'</th><td>'+escapeHtml(result.totals[key])+' '+escapeHtml(result.baseCurrency)+'</td></tr>'}).join('')}).catch(function(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>'})});
     })();</script>
   </div>`;

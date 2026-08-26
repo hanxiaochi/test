@@ -624,6 +624,9 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(arabicSaved.json.data.settings.direction, "rtl", "Arabic project should persist RTL direction");
   const arabicPage = await requestText(`/admin/international_settings_page?projectId=${arabicProjectId}`);
   assert.ok(arabicPage.text.includes("إعدادات العقود الدولية") && arabicPage.text.includes('lang="ar-SA"') && arabicPage.text.includes('dir="rtl"'), "Arabic project should render localized RTL administration markup");
+  assert.ok(arabicPage.text.includes('id="international-settings-history"') && arabicPage.text.includes('data-settings-version="1"'), "international administration page should render project version history");
+  const versionedPage = await requestText(`/admin/international_settings_page?projectId=${projectId}`);
+  assert.ok(versionedPage.text.includes("activation-reason") && versionedPage.text.includes("activate-settings-version"), "international administration page should expose reasoned historical activation controls");
   const audit = await requestJson("/api/admin/security_audit?limit=200");
   assert.ok(audit.json.data.some((row) => row.action === "international_settings.update" && row.result === "success"), "successful international settings updates should be audited");
   assert.ok(audit.json.data.some((row) => row.action === "international_settings.update" && row.result === "failure"), "failed international settings updates should be audited");
