@@ -12,8 +12,12 @@ let sessionCookie = "";
 const sampleRoot = process.env.SAMPLE_REGRESSION_ROOT
   ? path.resolve(process.env.SAMPLE_REGRESSION_ROOT)
   : reportDir;
+const extractedFixturePath = path.join(root, "test-data", "sample-regression-extracted.json");
 const pythonExe = process.env.CODEX_PYTHON
-  || "C:\\Users\\hxc\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe";
+  || (process.platform === "win32"
+    ? "C:\\Users\\hxc\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe"
+    : "python3");
+let sampleInputMode = "pdf";
 
 function round(value, digits = 0) {
   return Number(Number(value || 0).toFixed(digits));
@@ -33,6 +37,15 @@ function unique(values) {
 }
 
 function extractSamples() {
+  const periodDirs = ["p13", "p14"].map((name) => path.join(sampleRoot, name));
+  const present = periodDirs.map((folder) => fs.existsSync(folder));
+  if (!present.some(Boolean)) {
+    const fixture = JSON.parse(fs.readFileSync(extractedFixturePath, "utf8"));
+    if (!fixture || !fixture["13"] || !fixture["14"]) throw new Error("committed sample extraction fixture is incomplete");
+    sampleInputMode = "committed-extraction";
+    return fixture;
+  }
+  if (!present.every(Boolean)) throw new Error(`sample PDF folders are incomplete: expected ${periodDirs.join(", ")}`);
   const python = String.raw`
 import json
 import pathlib
@@ -241,8 +254,9 @@ print(json.dumps(result, ensure_ascii=True))
     encoding: "utf8",
     maxBuffer: 20 * 1024 * 1024
   });
+  if (result.error) throw new Error(`PDF extraction failed to start ${pythonExe}: ${result.error.message}`);
   if (result.status !== 0) {
-    throw new Error(`PDF extraction failed:\n${result.stderr || result.stdout}`);
+    throw new Error(`PDF extraction failed with exit code ${result.status}:\n${result.stderr || result.stdout || "no process output"}`);
   }
   return JSON.parse(result.stdout);
 }
@@ -694,6 +708,7 @@ function writeReports(extracted, fixture, regression, port) {
     generatedAt: new Date().toISOString(),
     port,
     sampleRoot,
+    sampleInputMode,
     checks: regression.checks,
     extracted,
     apiSnapshots: regression.apiSnapshots,
@@ -719,12 +734,15 @@ function writeReports(extracted, fixture, regression, port) {
     "",
     `- ok: ${result.ok}`,
     `- generatedAt: ${result.generatedAt}`,
-    `- sampleRoot: ${sampleRoot}`,
+    `- sampleInputMode: ${sampleInputMode}`,
+    `- sampleRoot: ${sampleInputMode === "pdf" ? sampleRoot : extractedFixturePath}`,
     `- localApiPort: ${port}`,
     "",
     "## Method",
     "",
-    "1. Extracted source totals from JL113, JL108, JL110, JL111, and expected JL104 fields with pdfplumber.",
+    sampleInputMode === "pdf"
+      ? "1. Extracted source totals from JL113, JL108, JL110, JL111, and expected JL104 fields with pdfplumber."
+      : "1. Loaded the versioned PDF extraction baseline from test-data/sample-regression-extracted.json; no source PDF was available in this clean checkout.",
     "2. Built a temporary runtime database with periods 12, 13, and 14. Period 12 is only the previous cumulative base needed by periods 13 and 14.",
     "3. Started server.js on an isolated local port and called the same payment APIs used by the website.",
     "4. Used isolated runtime, security, and rule databases without modifying production data.",

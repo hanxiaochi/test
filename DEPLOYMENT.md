@@ -253,6 +253,8 @@ curl -fsS http://127.0.0.1:3100/api/health
 
 仓库内的 `.github/workflows/quality-gate.yml` 会在每次推送、Pull Request 和人工触发时，使用 Node.js 24 执行 `npm ci` 与同一套 `npm run test:all`。合并或部署前必须同时满足本地门禁和 GitHub Actions `Quality Gate` 成功；CI 失败时不得只凭本地一次通过继续发布。
 
+`sample:regression` 支持两种可审计输入。存在 `SAMPLE_REGRESSION_ROOT/p13` 与 `p14` 时，它使用 `CODEX_PYTHON`（非 Windows 默认 `python3`）和 `pdfplumber` 从原始 PDF 实时抽取；干净克隆没有这两个目录时，使用已纳入 Git 版本管理的 `test-data/sample-regression-extracted.json`。只存在一个期次目录时会直接失败，避免把不完整 PDF 输入静默替换成基准数据。测试报告中的 `sampleInputMode` 会明确记录本次采用 `pdf` 还是 `committed-extraction`。
+
 `npm audit` 依赖 npm 官方在线审计接口。若命令因 TLS、超时或接口不可用而失败，应记录为“依赖审计未完成”并重试，不能写成“未发现漏洞”；只有命令正常返回且报告为零时，才能作为依赖安全通过证据。
 
 人工门禁：
