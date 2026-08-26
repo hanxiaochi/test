@@ -8,7 +8,7 @@ const engine = require("../costEngine");
 
 const ROOT = path.resolve(__dirname, "..");
 const BASE_URL = process.env.APP_BASE_URL || "http://localhost:3100";
-const CONTRACTS_PATH = path.resolve(ROOT, "..", "..", "work", "page_contracts.json");
+const CONTRACTS_PATH = path.join(ROOT, "test-data", "page-contracts.json");
 let authCookieHeader = "";
 
 function authenticatedOptions(options = {}) {
