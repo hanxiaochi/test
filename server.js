@@ -3,6 +3,7 @@ const path = require("path");
 const crypto = require("crypto");
 const express = require("express");
 const multer = require("multer");
+const Decimal = require("decimal.js");
 const appStore = require("./lib/app-store");
 const businessContext = require("./lib/business-state-context");
 const authCore = require("./lib/security/auth-core");
@@ -17,6 +18,8 @@ const fidicCore = require("./lib/international/fidic-core");
 const internationalSettingsService = require("./lib/international/project-settings");
 const internationalCertificateRegister = require("./lib/international/certificate-register");
 const internationalCertificateApplication = require("./lib/international/certificate-application");
+const internationalContractEvent = require("./lib/international/contract-event-register");
+const internationalContractEventAllocation = require("./lib/international/contract-event-allocation");
 const internationalCertificateExport = require("./lib/international/certificate-export");
 const { mapClientConfig } = require("./lib/client-config");
 const { AttachmentStore } = require("./lib/attachments/attachment-store");
@@ -24,7 +27,7 @@ const { scanAttachmentConsistency } = require("./lib/attachments/attachment-cons
 const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
 const { readinessReport } = require("./lib/runtime/readiness");
 const { browserMutationGuard, securityHeaders } = require("./lib/security/http-security");
-const { WorkflowError, WorkflowStore, certificateApplicationDefinition, defaultDefinition } = require("./lib/workflow/workflow-store");
+const { WorkflowError, WorkflowStore, certificateApplicationDefinition, contractEventDefinition, defaultDefinition } = require("./lib/workflow/workflow-store");
 const workflowCoordinator = require("./lib/workflow/workflow-coordinator");
 const { scanWorkflowConsistency } = require("./lib/workflow/workflow-consistency");
 const engine = require("./costEngine");
@@ -70,10 +73,15 @@ const measureImportUpload = multer({
 }).single("file");
 const ruleStore = new RuleStore(process.env.APP_RULE_DB_PATH || authService.securityFile);
 const workflowStore = new WorkflowStore(process.env.APP_WORKFLOW_DB_PATH || authService.securityFile);
-const workflowModules = ["billmeasure", "meterialdiasmeasure", "meterialinmeasure", "manualmeasure", "varyapplication", "engineeringcontactbill", "internationalcertificate"];
+const workflowModules = ["billmeasure", "meterialdiasmeasure", "meterialinmeasure", "manualmeasure", "varyapplication", "engineeringcontactbill", "internationalcertificate", "internationalcontractevent"];
+function workflowDefinitionForModule(module) {
+  if (module === "internationalcertificate") return certificateApplicationDefinition();
+  if (module === "internationalcontractevent") return contractEventDefinition();
+  return defaultDefinition();
+}
 workflowModules.forEach((module) => {
   if (!workflowStore.getActive("default", "*", module)) {
-    workflowStore.createVersion({ tenantId: "default", projectId: "*", module, definition: module === "internationalcertificate" ? certificateApplicationDefinition() : defaultDefinition(), changeReason: "初始化标准审批流程" });
+    workflowStore.createVersion({ tenantId: "default", projectId: "*", module, definition: workflowDefinitionForModule(module), changeReason: "初始化标准审批流程" });
   }
 });
 const initializedRuleTenants = new Set();
@@ -116,6 +124,10 @@ function requiredPermission(req) {
   if (legacyResourceId === "9041") return "international:read";
   if (req.path === "/international/certificates_page") return "international:read";
   if (req.path === "/api/international/certificate/calculate") return "international:calculate";
+  if (req.path === "/api/international/contract_events" && req.method === "GET") return "international:read";
+  if (req.path === "/api/international/contract_events" && req.method === "POST") return "international:submit";
+  if (/^\/api\/international\/contract_events\/[^/]+\/(?:approve|return)$/.test(req.path) && req.method === "POST") return "international:review";
+  if (/^\/api\/international\/contract_events\/[^/]+$/.test(req.path) && req.method === "GET") return "international:read";
   if (req.path === "/api/international/certificate_applications" && req.method === "GET") return "international:read";
   if (req.path === "/api/international/certificate_applications" && req.method === "POST") return "international:submit";
   if (/^\/api\/international\/certificate_applications\/[^/]+\/(?:approve|return)$/.test(req.path) && req.method === "POST") return "international:review";
@@ -465,12 +477,13 @@ function submitInternationalCertificateApplication(req) {
       submittedBy: req.authUser.account,
       submittedByUserId: req.authUser.id
     });
+    const allocation = internationalContractEventAllocation.validateCertificateEventAllocations(engine.db, created.record.request, { excludeApplicationId: created.record.id });
     if (created.replay) {
       const replayed = internationalCertificateApplication.findApplication(engine.db, created.record.id);
-      return { ...created, record: replayed, workflow: replayed.workflowInstanceKey ? workflowStore.getInstance(req.authUser.tenantId, req.businessContext.projectId, "internationalcertificate", replayed.workflowInstanceKey) : null };
+      return { ...created, record: replayed, allocation, workflow: replayed.workflowInstanceKey ? workflowStore.getInstance(req.authUser.tenantId, req.businessContext.projectId, "internationalcertificate", replayed.workflowInstanceKey) : null };
     }
     const transition = executeWorkflowBatchTransition(req, "internationalcertificate", [created.record.id], "submit");
-    return { ...created, record: internationalCertificateApplication.findApplication(engine.db, created.record.id), workflow: transition.results[0].instance };
+    return { ...created, record: internationalCertificateApplication.findApplication(engine.db, created.record.id), allocation, workflow: transition.results[0].instance };
   } catch (error) {
     if (previous === undefined) delete engine.db[internationalCertificateApplication.STORAGE_KEY];
     else engine.db[internationalCertificateApplication.STORAGE_KEY] = previous;
@@ -489,6 +502,51 @@ function reviewInternationalCertificateApplication(req, action) {
     remark: req.body.remark
   });
   return { record: internationalCertificateApplication.findApplication(engine.db, application.id), workflow: transition.results[0].instance };
+}
+
+function submitInternationalContractEvent(req) {
+  const previous = engine.db[internationalContractEvent.STORAGE_KEY];
+  try {
+    const created = internationalContractEvent.createEvent(engine.db, req.body, {
+      submittedBy: req.authUser.account,
+      submittedByUserId: req.authUser.id
+    });
+    if (created.replay) {
+      const replayed = internationalContractEvent.findEvent(engine.db, created.record.id);
+      return { ...created, record: replayed, workflow: replayed.workflowInstanceKey ? workflowStore.getInstance(req.authUser.tenantId, req.businessContext.projectId, "internationalcontractevent", replayed.workflowInstanceKey) : null };
+    }
+    const transition = executeWorkflowBatchTransition(req, "internationalcontractevent", [created.record.id], "submit");
+    return { ...created, record: internationalContractEvent.findEvent(engine.db, created.record.id), workflow: transition.results[0].instance };
+  } catch (error) {
+    if (previous === undefined) delete engine.db[internationalContractEvent.STORAGE_KEY];
+    else engine.db[internationalContractEvent.STORAGE_KEY] = previous;
+    if (error.code !== "SQLITE_RUNTIME_CONFLICT") {
+      try { appStore.save(engine.db, { actor: req.authUser.account, action: "international-contract-event:rollback", checkpoint: true }); } catch (rollbackError) { error.rollbackError = rollbackError.message; }
+    }
+    throw error;
+  }
+}
+
+function reviewInternationalContractEvent(req, action) {
+  const event = internationalContractEvent.findEvent(engine.db, req.params.identifier);
+  if (Number(event.submittedByUserId) === Number(req.authUser.id)) throw Object.assign(new Error("contract events require a different reviewer"), { status: 409 });
+  const decisionReason = String(req.body.decisionReason || req.body.remark || "").trim();
+  const transition = executeWorkflowBatchTransition(req, "internationalcontractevent", [event.id], action, {
+    expectedRevision: req.body.expectedRevision,
+    remark: decisionReason,
+    mutateRows: action === "approve" ? (targets) => {
+      const approved = internationalContractEvent.approveRecord(targets[0].row, {
+        approvedAmount: req.body.approvedAmount,
+        approvedTimeImpactDays: req.body.approvedTimeImpactDays,
+        decisionReason
+      }, {
+        approvedBy: req.authUser.account,
+        approvedByUserId: req.authUser.id
+      });
+      Object.assign(targets[0].row, approved);
+    } : undefined
+  });
+  return { record: internationalContractEvent.findEvent(engine.db, event.id), workflow: transition.results[0].instance };
 }
 
 function issueInternationalCertificate(req) {
@@ -2237,7 +2295,7 @@ function workflowManagementHtml(req) {
   const selectedModule = workflowModules.includes(String(req.query.module || "")) ? String(req.query.module) : workflowModules[0];
   const labels = {
     billmeasure: "清单计量", meterialdiasmeasure: "材料补差", meterialinmeasure: "材料到场",
-    manualmeasure: "手动计量", varyapplication: "工程变更", engineeringcontactbill: "工程联系单", internationalcertificate: "国际证书申请"
+    manualmeasure: "手动计量", varyapplication: "工程变更", engineeringcontactbill: "工程联系单", internationalcertificate: "国际证书申请", internationalcontractevent: "国际合同事件"
   };
   ensureWorkflowDefinition(req.authUser.tenantId, selectedModule);
   const projectId = req.businessContext.projectId;
@@ -2665,6 +2723,34 @@ function internationalSettingsHtml(req, options = {}) {
       <td>${actions.length ? `<div class="core-tools">${actions.join("")}</div>` : "-"}</td>
     </tr>`;
   }).join("");
+  const contractEvents = internationalContractEvent.listEvents(engine.db, { limit: 100 }).rows;
+  const contractEventRows = contractEvents.map((item) => {
+    const workflow = item.workflowInstanceKey ? workflowStore.getInstance(currentTenantId, req.businessContext.projectId, "internationalcontractevent", item.workflowInstanceKey) : null;
+    const isOwn = Number(item.submittedByUserId) === currentUserId;
+    const stateKey = item.states === "待审核" ? "international.pending" : item.states === "已批准" ? "international.approved" : item.states === "已退回" ? "international.returned" : "international.status";
+    const stateText = stateKey === "international.status" ? item.states : t(stateKey);
+    const typeText = t(item.request.eventType === "variation" ? "international.variation" : "international.claim");
+    const usage = item.decisionChecksum ? internationalContractEventAllocation.eventUsage(engine.db, item.id) : null;
+    const remainingAmount = usage ? Decimal.max(0, new Decimal(item.approvedAmount).minus(usage.used)).toString() : "";
+    const actions = [];
+    if (item.states === "待审核" && canReview && !isOwn) {
+      actions.push(`<button type="button" class="layui-btn layui-btn-xs review-international-event" data-action="approve" data-id="${htmlEscape(item.id)}" data-revision="${workflow ? workflow.revision : ""}" data-amount="${htmlEscape(item.request.claimedAmount)}" data-days="${item.request.claimedTimeImpactDays}">${htmlEscape(t("international.approve"))}</button>`);
+      actions.push(`<button type="button" class="layui-btn layui-btn-xs layui-btn-danger review-international-event" data-action="return" data-id="${htmlEscape(item.id)}" data-revision="${workflow ? workflow.revision : ""}">${htmlEscape(t("international.return"))}</button>`);
+    }
+    if (item.states === "已退回" && canSubmit && isOwn) {
+      actions.push(`<button type="button" class="layui-btn layui-btn-xs layui-btn-primary replace-international-event" data-id="${htmlEscape(item.id)}" data-no="${htmlEscape(item.eventNo)}" data-type="${htmlEscape(item.request.eventType)}" data-title="${htmlEscape(item.request.title)}" data-date="${htmlEscape(item.request.noticeDate)}" data-currency="${htmlEscape(item.request.currency)}" data-amount="${htmlEscape(item.request.claimedAmount)}" data-days="${item.request.claimedTimeImpactDays}" data-clause="${htmlEscape(item.request.contractClause)}" data-description="${htmlEscape(item.request.description)}">${htmlEscape(t("international.submitEvent"))}</button>`);
+    }
+    if (item.states === "已批准" && canSubmit && new Decimal(remainingAmount || 0).gt(0)) {
+      actions.push(`<button type="button" class="layui-btn layui-btn-xs layui-btn-normal add-international-event-line" data-id="${htmlEscape(item.id)}" data-no="${htmlEscape(item.eventNo)}" data-title="${htmlEscape(item.request.title)}" data-category="${item.request.eventType === "variation" ? "variation" : "claims"}" data-currency="${htmlEscape(item.request.currency)}" data-amount="${htmlEscape(remainingAmount)}" data-checksum="${htmlEscape(item.decisionChecksum)}">${htmlEscape(t("international.remainingAmount"))}</button>`);
+    }
+    return `<tr data-contract-event-id="${htmlEscape(item.id)}">
+      <td>${htmlEscape(item.eventNo)}</td><td>${htmlEscape(typeText)}</td><td>${htmlEscape(item.request.title)}</td><td>${htmlEscape(item.request.noticeDate)}</td>
+      <td>${htmlEscape(item.request.claimedAmount)} ${htmlEscape(item.request.currency)}</td><td>${item.decisionChecksum ? `${htmlEscape(item.approvedAmount)} ${htmlEscape(item.request.currency)}<br>${htmlEscape(t("international.remainingAmount"))}: ${htmlEscape(remainingAmount)}` : "-"}</td>
+      <td>${item.request.claimedTimeImpactDays} / ${item.decisionChecksum ? item.approvedTimeImpactDays : "-"}</td><td>${htmlEscape(item.submittedBy)}</td><td>${htmlEscape(stateText)}</td>
+      <td title="${htmlEscape(item.decisionChecksum || item.submissionChecksum)}"><code>${htmlEscape((item.decisionChecksum || item.submissionChecksum).slice(0, 12))}</code></td>
+      <td>${actions.length ? `<div class="core-tools">${actions.join("")}</div>` : "-"}</td>
+    </tr>`;
+  }).join("");
   const certificates = internationalCertificateRegister.listCertificateSummaries(engine.db, { limit: 100 }).rows;
   const latestActiveCertificate = certificates.find((item) => item.status === "issued") || null;
   const previousRetention = latestActiveCertificate ? latestActiveCertificate.closingRetention : "0";
@@ -2712,6 +2798,18 @@ function internationalSettingsHtml(req, options = {}) {
     <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.openingBalanceReason"))}</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-opening-balance-reason" maxlength="500" rows="2"${latestActiveCertificate ? " disabled" : ""}></textarea></div></div>
     <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.remarks"))}</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-certificate-remarks" maxlength="500" rows="3"></textarea></div></div>
     <div class="core-tools"><button class="layui-btn layui-btn-sm" type="button" id="fidic-submit-application">${htmlEscape(t("international.submitApplication"))}</button></div>` : "";
+  const contractEventPanel = canSubmit ? `<div class="core-panel" style="margin-top:12px;">
+    <h3>${htmlEscape(t("international.submitEvent"))}</h3>
+    <input id="contract-event-supersedes-id" type="hidden">
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.eventNo"))}</label><div class="layui-input-block"><input class="layui-input" id="contract-event-no" maxlength="64" required></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.eventType"))}</label><div class="layui-input-block"><select class="layui-select" id="contract-event-type"><option value="variation">${htmlEscape(t("international.variation"))}</option><option value="claim">${htmlEscape(t("international.claim"))}</option></select></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.description"))}</label><div class="layui-input-block"><input class="layui-input" id="contract-event-title" maxlength="200" required><textarea class="layui-textarea" id="contract-event-description" maxlength="2000" rows="3"></textarea></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.noticeDate"))}</label><div class="layui-input-block"><input class="layui-input" id="contract-event-notice-date" type="date" value="${currentDate}" required></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.claimedAmount"))}</label><div class="layui-input-block"><input class="layui-input" id="contract-event-claimed-amount" type="number" min="0" step="0.01" value="0"><input class="layui-input" id="contract-event-currency" maxlength="3" value="${htmlEscape(settings.baseCurrency)}"></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.timeImpact"))}</label><div class="layui-input-block"><input class="layui-input" id="contract-event-time-impact" type="number" min="0" max="36500" step="1" value="0"></div></div>
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.contractClause"))}</label><div class="layui-input-block"><input class="layui-input" id="contract-event-clause" maxlength="100"></div></div>
+    <div class="core-tools"><button class="layui-btn layui-btn-sm" type="button" id="contract-event-submit">${htmlEscape(t("international.submitEvent"))}</button></div>
+  </div>` : "";
   const historyPanel = manageSettings ? `<div class="core-panel" style="margin-top:12px;overflow:auto;">
     <h3>合同参数版本历史</h3>
     <table class="layui-table" lay-size="sm"><thead><tr><th>版本</th><th>状态</th><th>语言</th><th>基础币种</th><th>证书标准</th><th>指数调价</th><th>变更原因</th><th>创建人</th><th>创建时间</th><th>最近启用</th><th>校验和</th><th>操作</th></tr></thead><tbody id="international-settings-history">${historyRows}</tbody></table>
@@ -2741,7 +2839,12 @@ function internationalSettingsHtml(req, options = {}) {
           ${applicationPanel}
         </div>
       </div>
+      ${contractEventPanel}
       ${historyPanel}
+      <div class="core-panel" style="margin-top:12px;overflow:auto;">
+        <h3>${htmlEscape(t("international.contractEvents"))}</h3>
+        <table class="layui-table" lay-size="sm"><thead><tr><th>${htmlEscape(t("international.eventNo"))}</th><th>${htmlEscape(t("international.eventType"))}</th><th>${htmlEscape(t("international.description"))}</th><th>${htmlEscape(t("international.noticeDate"))}</th><th>${htmlEscape(t("international.claimedAmount"))}</th><th>${htmlEscape(t("international.approvedAmount"))}</th><th>${htmlEscape(t("international.timeImpact"))}</th><th>${htmlEscape(t("international.applicant"))}</th><th>${htmlEscape(t("international.status"))}</th><th>SHA-256</th><th>${htmlEscape(t("international.action"))}</th></tr></thead><tbody id="international-contract-event-register">${contractEventRows || `<tr><td colspan="11" class="core-empty">${htmlEscape(t("international.noEvents"))}</td></tr>`}</tbody></table>
+      </div>
       <div class="core-panel" style="margin-top:12px;overflow:auto;">
         <h3>${htmlEscape(t("international.applications"))}</h3>
         <table class="layui-table" lay-size="sm"><thead><tr><th>${htmlEscape(t("international.applicationNo"))}</th><th>${htmlEscape(t("international.certificateNo"))}</th><th>${htmlEscape(t("international.periodStart"))} / ${htmlEscape(t("international.periodEnd"))}</th><th>${htmlEscape(t("international.applicant"))}</th><th>${htmlEscape(t("international.status"))}</th><th>SHA-256</th><th>${htmlEscape(t("international.action"))}</th></tr></thead><tbody id="international-application-register">${applicationRows || `<tr><td colspan="7" class="core-empty">${htmlEscape(t("international.applications"))}: 0</td></tr>`}</tbody></table>
@@ -2753,15 +2856,20 @@ function internationalSettingsHtml(req, options = {}) {
     </div>
     <script>(function(){
       var root=document.querySelector('[data-core-page="international-settings"]');if(!root)return;
-      var form=root.querySelector('#international-settings-form'),message=root.querySelector('#international-settings-message'),totals=root.querySelector('#fidic-totals'),calculateButton=root.querySelector('#fidic-calculate'),submitButton=root.querySelector('#fidic-submit-application'),pendingSubmit=null;
+      var form=root.querySelector('#international-settings-form'),message=root.querySelector('#international-settings-message'),totals=root.querySelector('#fidic-totals'),calculateButton=root.querySelector('#fidic-calculate'),submitButton=root.querySelector('#fidic-submit-application'),eventSubmitButton=root.querySelector('#contract-event-submit'),pendingSubmit=null,pendingEvent=null;
       function escapeHtml(value){var node=document.createElement('div');node.textContent=String(value==null?'':value);return node.innerHTML}
       function request(url,body){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json().then(function(result){if(!response.ok||result.code!==1)throw new Error(result.msg||'操作失败');return result.data})})}
       function certificateInput(){return {lines:JSON.parse(root.querySelector('#fidic-lines').value||'[]'),previousRetention:root.querySelector('#fidic-previous-retention').value,previousCumulativeCertified:root.querySelector('#fidic-previous-cumulative').value,retentionRelease:root.querySelector('#fidic-retention-release').value,priceAdjustment:JSON.parse(root.querySelector('#fidic-price-adjustment').value||'{}')}}
       function newApplicationKey(){return window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():('application-'+Date.now()+'-'+Math.random().toString(16).slice(2))}
+      function newEventKey(){return window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():('event-'+Date.now()+'-'+Math.random().toString(16).slice(2))}
       if(form)form.addEventListener('submit',function(event){event.preventDefault();var data=new FormData(form),payload={changeReason:data.get('changeReason'),locale:data.get('locale'),baseCurrency:data.get('baseCurrency'),certificateStandard:data.get('certificateStandard'),moneyDigits:Number(data.get('moneyDigits')),retentionRate:data.get('retentionRate'),retentionLimitAmount:data.get('retentionLimitAmount'),minimumCertificateAmount:data.get('minimumCertificateAmount')};try{payload.exchangeRates=JSON.parse(data.get('exchangeRates')||'{}');payload.currencyDigits=JSON.parse(data.get('currencyDigits')||'{}');payload.priceAdjustmentRule=JSON.parse(data.get('priceAdjustmentRule')||'{}')}catch(error){message.textContent='JSON: '+error.message;return}request('/api/admin/international_settings',payload).then(function(result){message.textContent=${JSON.stringify(t("international.saved"))}+' v'+result.version.version+'，正在刷新...';setTimeout(function(){location.reload()},500)}).catch(function(error){message.textContent=error.message})});
       Array.prototype.forEach.call(root.querySelectorAll('.activate-settings-version'),function(button){button.addEventListener('click',function(){var row=button.closest('tr'),input=row.querySelector('.activation-reason'),reason=String(input.value||'').trim(),version=button.getAttribute('data-version');if(!reason){message.textContent='请填写 V'+version+' 的启用原因';input.focus();return}if(!window.confirm('确认启用合同参数 V'+version+'？'))return;button.disabled=true;request('/api/admin/international_settings/'+encodeURIComponent(version)+'/activate',{projectId:${JSON.stringify(req.businessContext.projectId)},changeReason:reason}).then(function(){message.textContent='V'+version+' 已启用，正在刷新...';setTimeout(function(){location.reload()},500)}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
       if(calculateButton)calculateButton.addEventListener('click',function(){var payload;try{payload=certificateInput()}catch(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>';return}request('/api/international/certificate/calculate',payload).then(function(result){var order=['grossCertified','lineDeductions','currentRetention','retentionRelease','netCertified','payableNow','carriedForward','cumulativeCertified'],adjustment=result.priceAdjustment&&result.priceAdjustment.enabled?'<tr><th>priceAdjustmentFactor</th><td>'+escapeHtml(result.priceAdjustment.factor)+'</td></tr><tr><th>priceAdjustment</th><td>'+escapeHtml(result.priceAdjustment.adjustment)+' '+escapeHtml(result.baseCurrency)+'</td></tr>':'';totals.innerHTML=adjustment+order.map(function(key){return '<tr><th>'+escapeHtml(key)+'</th><td>'+escapeHtml(result.totals[key])+' '+escapeHtml(result.baseCurrency)+'</td></tr>'}).join('')}).catch(function(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>'})});
       if(submitButton)submitButton.addEventListener('click',function(){var payload;try{payload={applicationNo:root.querySelector('#fidic-application-no').value,supersedesApplicationId:root.querySelector('#fidic-supersedes-application-id').value,certificateNo:root.querySelector('#fidic-certificate-no').value,periodStart:root.querySelector('#fidic-period-start').value,periodEnd:root.querySelector('#fidic-period-end').value,applicationReference:root.querySelector('#fidic-application-reference').value,openingBalanceReason:root.querySelector('#fidic-opening-balance-reason').value,remarks:root.querySelector('#fidic-certificate-remarks').value,calculationInput:certificateInput()}}catch(error){message.textContent=error.message;return}if(!payload.applicationNo||!payload.certificateNo||!payload.periodStart||!payload.periodEnd){message.textContent=${JSON.stringify(t("international.applicationNo"))}+' / '+${JSON.stringify(t("international.certificateNo"))}+' / '+${JSON.stringify(t("international.periodStart"))}+' / '+${JSON.stringify(t("international.periodEnd"))};return}if(!window.confirm(${JSON.stringify(t("international.submitApplication"))}+' '+payload.applicationNo+'?'))return;var signature=JSON.stringify(payload);if(!pendingSubmit||pendingSubmit.signature!==signature)pendingSubmit={signature:signature,key:newApplicationKey()};payload.idempotencyKey=pendingSubmit.key;submitButton.disabled=true;request('/api/international/certificate_applications',payload).then(function(result){pendingSubmit=null;message.textContent=${JSON.stringify(t("international.pending"))}+'：'+result.record.applicationNo+' / '+result.record.submissionChecksum.slice(0,12);setTimeout(function(){location.reload()},500)}).catch(function(error){submitButton.disabled=false;message.textContent=error.message})});
+      if(eventSubmitButton)eventSubmitButton.addEventListener('click',function(){var payload={eventNo:root.querySelector('#contract-event-no').value,supersedesEventId:root.querySelector('#contract-event-supersedes-id').value,eventType:root.querySelector('#contract-event-type').value,title:root.querySelector('#contract-event-title').value,noticeDate:root.querySelector('#contract-event-notice-date').value,currency:root.querySelector('#contract-event-currency').value,claimedAmount:root.querySelector('#contract-event-claimed-amount').value,claimedTimeImpactDays:Number(root.querySelector('#contract-event-time-impact').value),contractClause:root.querySelector('#contract-event-clause').value,description:root.querySelector('#contract-event-description').value};if(!payload.eventNo||!payload.title||!payload.noticeDate){message.textContent=${JSON.stringify(t("international.eventNo"))}+' / '+${JSON.stringify(t("international.description"))}+' / '+${JSON.stringify(t("international.noticeDate"))};return}if(!window.confirm(${JSON.stringify(t("international.submitEvent"))}+' '+payload.eventNo+'?'))return;var signature=JSON.stringify(payload);if(!pendingEvent||pendingEvent.signature!==signature)pendingEvent={signature:signature,key:newEventKey()};payload.idempotencyKey=pendingEvent.key;eventSubmitButton.disabled=true;request('/api/international/contract_events',payload).then(function(result){pendingEvent=null;message.textContent=${JSON.stringify(t("international.pending"))}+'：'+result.record.eventNo+' / '+result.record.submissionChecksum.slice(0,12);setTimeout(function(){location.reload()},500)}).catch(function(error){eventSubmitButton.disabled=false;message.textContent=error.message})});
+      Array.prototype.forEach.call(root.querySelectorAll('.review-international-event'),function(button){button.addEventListener('click',function(){var action=button.getAttribute('data-action'),id=button.getAttribute('data-id'),payload={expectedRevision:Number(button.getAttribute('data-revision'))};if(action==='approve'){var amount=window.prompt(${JSON.stringify(t("international.approvedAmount"))},button.getAttribute('data-amount')),days=window.prompt(${JSON.stringify(t("international.timeImpact"))},button.getAttribute('data-days')),reason=window.prompt(${JSON.stringify(t("international.decisionReason"))});if(amount===null||days===null||!reason)return;payload.approvedAmount=amount;payload.approvedTimeImpactDays=Number(days);payload.decisionReason=reason}else{var remark=window.prompt(${JSON.stringify(t("international.return"))});if(!remark)return;payload.remark=remark}button.disabled=true;request('/api/international/contract_events/'+encodeURIComponent(id)+'/'+action,payload).then(function(){message.textContent=action==='approve'?${JSON.stringify(t("international.approved"))}:${JSON.stringify(t("international.returned"))};setTimeout(function(){location.reload()},500)}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
+      Array.prototype.forEach.call(root.querySelectorAll('.replace-international-event'),function(button){button.addEventListener('click',function(){var values={"#contract-event-supersedes-id":button.getAttribute('data-id'),"#contract-event-no":button.getAttribute('data-no')+'-R',"#contract-event-type":button.getAttribute('data-type'),"#contract-event-title":button.getAttribute('data-title'),"#contract-event-notice-date":button.getAttribute('data-date'),"#contract-event-currency":button.getAttribute('data-currency'),"#contract-event-claimed-amount":button.getAttribute('data-amount'),"#contract-event-time-impact":button.getAttribute('data-days'),"#contract-event-clause":button.getAttribute('data-clause'),"#contract-event-description":button.getAttribute('data-description')};Object.keys(values).forEach(function(selector){var element=root.querySelector(selector);if(element)element.value=values[selector]});var eventNo=root.querySelector('#contract-event-no');if(eventNo)eventNo.focus();message.textContent=${JSON.stringify(t("international.returned"))}+'：'+button.getAttribute('data-no')})});
+      Array.prototype.forEach.call(root.querySelectorAll('.add-international-event-line'),function(button){button.addEventListener('click',function(){var linesElement=root.querySelector('#fidic-lines'),lines;try{lines=JSON.parse(linesElement.value||'[]');if(!Array.isArray(lines))throw new Error('lines')}catch(error){message.textContent='JSON: '+error.message;return}var id=button.getAttribute('data-id');if(lines.some(function(line){return line&&line.contractEventId===id})){message.textContent=button.getAttribute('data-no')+' already added';return}var baseCode='EVENT-'+button.getAttribute('data-no'),code=baseCode,index=2;while(lines.some(function(line){return line&&line.code===code}))code=baseCode+'-'+index++;lines.push({code:code,description:button.getAttribute('data-title'),category:button.getAttribute('data-category'),amount:button.getAttribute('data-amount'),currency:button.getAttribute('data-currency'),contractEventId:id,contractEventDecisionChecksum:button.getAttribute('data-checksum')});linesElement.value=JSON.stringify(lines,null,2);message.textContent=${JSON.stringify(t("international.remainingAmount"))}+'：'+button.getAttribute('data-no')+' / '+button.getAttribute('data-amount');linesElement.focus()})});
       Array.prototype.forEach.call(root.querySelectorAll('.review-international-application'),function(button){button.addEventListener('click',function(){var action=button.getAttribute('data-action'),id=button.getAttribute('data-id'),remark=window.prompt(action==='approve'?${JSON.stringify(t("international.approve"))}:${JSON.stringify(t("international.return"))});if(!remark)return;button.disabled=true;request('/api/international/certificate_applications/'+encodeURIComponent(id)+'/'+action,{expectedRevision:Number(button.getAttribute('data-revision')),remark:remark}).then(function(){message.textContent=action==='approve'?${JSON.stringify(t("international.approved"))}:${JSON.stringify(t("international.returned"))};setTimeout(function(){location.reload()},500)}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
       Array.prototype.forEach.call(root.querySelectorAll('.issue-international-application'),function(button){button.addEventListener('click',function(){var id=button.getAttribute('data-id');if(!window.confirm(${JSON.stringify(t("international.issue"))}+' '+button.getAttribute('data-no')+'?'))return;button.disabled=true;request('/api/international/certificate_applications/'+encodeURIComponent(id)+'/issue',{}).then(function(result){message.textContent=${JSON.stringify(t("international.issued"))}+'：'+result.record.certificateNo+' / '+result.record.issueChecksum.slice(0,12);setTimeout(function(){location.reload()},500)}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
       Array.prototype.forEach.call(root.querySelectorAll('.replace-international-application'),function(button){button.addEventListener('click',function(){var supersedes=root.querySelector('#fidic-supersedes-application-id'),applicationNo=root.querySelector('#fidic-application-no'),certificateNo=root.querySelector('#fidic-certificate-no');if(!supersedes||!applicationNo||!certificateNo)return;supersedes.value=button.getAttribute('data-id');applicationNo.value=button.getAttribute('data-no')+'-R';certificateNo.value=button.getAttribute('data-certificate-no');applicationNo.focus();message.textContent=${JSON.stringify(t("international.returned"))}+'：'+button.getAttribute('data-no')})});
@@ -8233,7 +8341,8 @@ function workflowDashboardRows() {
     { module: "manualmeasure", label: "手动计量", rows: engine.manualMeasureRows(), idField: "manualId", noField: "measureNo", titleField: "billName", moneyField: "measureMoney", trackUrl: "/manualMeasure/record_page", adjustUrl: "/manualMeasure/adjust_page", returnUrl: "/manualMeasure/return_order_page" },
     { module: "varyapplication", label: "工程变更", rows: engine.variationRows(), idField: "varyId", noField: "varyNo", titleField: "varyReason", moneyField: "varyMoney", trackUrl: "/vary_measure/track_page", adjustUrl: "/vary_measure/adjust_page", returnUrl: "/vary_measure/return_order_page" },
     { module: "engineeringcontactbill", label: "工程联系单", rows: engine.db.contactBills || [], idField: "contactId", noField: "contactNo", titleField: "title", moneyField: "", trackUrl: "/engineering_contact_bill/track_engineering_contact_bill_page", adjustUrl: "/engineering_contact_bill/edit_page", returnUrl: "/engineering_contact_bill/return_order_page" },
-    { module: "internationalcertificate", label: "国际证书申请", rows: engine.db[internationalCertificateApplication.STORAGE_KEY] || [], idField: "id", noField: "applicationNo", titleField: "applicationNo", moneyField: "", trackUrl: "/international/certificates_page", adjustUrl: "/international/certificates_page", returnUrl: "/international/certificates_page" }
+    { module: "internationalcertificate", label: "国际证书申请", rows: engine.db[internationalCertificateApplication.STORAGE_KEY] || [], idField: "id", noField: "applicationNo", titleField: "applicationNo", moneyField: "", trackUrl: "/international/certificates_page", adjustUrl: "/international/certificates_page", returnUrl: "/international/certificates_page" },
+    { module: "internationalcontractevent", label: "国际合同事件", rows: engine.db[internationalContractEvent.STORAGE_KEY] || [], idField: "id", noField: "eventNo", titleField: "eventNo", moneyField: "approvedAmount", trackUrl: "/international/certificates_page", adjustUrl: "/international/certificates_page", returnUrl: "/international/certificates_page" }
   ];
   return configs.flatMap((config) => config.rows.map((row) => {
     const rawId = row[config.idField] || row.id || 0;
@@ -12893,7 +13002,8 @@ function workflowConfig(type) {
     manualmeasure: { rows: engine.db.manualMeasures, key: "manualId", no: "measureNo", title: "手动计量" },
     varyapplication: { rows: engine.db.variations, key: "varyId", no: "varyNo", title: "工程变更" },
     engineeringcontactbill: { rows: engine.db.contactBills, key: "contactId", no: "contactNo", title: "工程联系单" },
-    internationalcertificate: { rows: engine.db[internationalCertificateApplication.STORAGE_KEY] || [], key: "id", no: "applicationNo", title: "国际证书申请" }
+    internationalcertificate: { rows: engine.db[internationalCertificateApplication.STORAGE_KEY] || [], key: "id", no: "applicationNo", title: "国际证书申请" },
+    internationalcontractevent: { rows: engine.db[internationalContractEvent.STORAGE_KEY] || [], key: "id", no: "eventNo", title: "国际合同事件" }
   };
   return configs[String(type || "").toLowerCase()] || configs.billmeasure;
 }
@@ -12912,7 +13022,7 @@ function ensureWorkflowDefinition(tenantId, module) {
       tenantId,
       projectId: "*",
       module: normalizedModule,
-      definition: normalizedModule === "internationalcertificate" ? certificateApplicationDefinition() : defaultDefinition(),
+      definition: workflowDefinitionForModule(normalizedModule),
       changeReason: "初始化标准审批流程"
     });
   }
@@ -13114,7 +13224,9 @@ function normalizeWorkflowType(value) {
     engineeringcontactbill: "engineeringcontactbill",
     contactbill: "engineeringcontactbill",
     internationalcertificate: "internationalcertificate",
-    certificateapplication: "internationalcertificate"
+    certificateapplication: "internationalcertificate",
+    internationalcontractevent: "internationalcontractevent",
+    contractevent: "internationalcontractevent"
   };
   return aliases[text] || text;
 }
@@ -14861,6 +14973,52 @@ app.post("/api/international/certificate/calculate", (req, res) => {
     operationOk(res, calculateInternationalCertificate(req.body));
   } catch (error) {
     res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.get("/api/international/contract_events", (req, res) => {
+  try {
+    operationOk(res, internationalContractEvent.listEvents(engine.db, { offset: req.query.offset, limit: req.query.limit }));
+  } catch (error) {
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.get("/api/international/contract_events/:identifier", (req, res) => {
+  try {
+    const record = internationalContractEvent.findEvent(engine.db, req.params.identifier);
+    const workflow = record.workflowInstanceKey ? workflowStore.getInstance(req.authUser.tenantId, req.businessContext.projectId, "internationalcontractevent", record.workflowInstanceKey) : null;
+    operationOk(res, { record, workflow, events: workflow ? workflowStore.events({ tenantId: req.authUser.tenantId, projectId: req.businessContext.projectId, module: "internationalcontractevent", businessId: record.workflowInstanceKey, limit: 100 }) : [] });
+  } catch (error) {
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/international/contract_events", (req, res) => {
+  try {
+    const result = submitInternationalContractEvent(req);
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_contract_event.submit", result: "success", targetType: "international_contract_event", targetId: result.record.id, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { eventNo: result.record.eventNo, eventType: result.record.request.eventType, replay: result.replay, submissionChecksum: result.record.submissionChecksum } });
+    operationOk(res, result);
+  } catch (error) {
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_contract_event.submit", result: "failure", targetType: "project", targetId: req.businessContext.projectId, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { eventNo: req.body.eventNo, message: error.message } });
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/international/contract_events/:identifier/approve", (req, res) => {
+  try {
+    const result = reviewInternationalContractEvent(req, "approve");
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_contract_event.approve", result: "success", targetType: "international_contract_event", targetId: result.record.id, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { eventNo: result.record.eventNo, approvedAmount: result.record.approvedAmount, approvedTimeImpactDays: result.record.approvedTimeImpactDays, decisionChecksum: result.record.decisionChecksum } });
+    operationOk(res, result);
+  } catch (error) {
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_contract_event.approve", result: "failure", targetType: "international_contract_event", targetId: req.params.identifier, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { message: error.message } });
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/international/contract_events/:identifier/return", (req, res) => {
+  try {
+    const result = reviewInternationalContractEvent(req, "return");
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_contract_event.return", result: "success", targetType: "international_contract_event", targetId: result.record.id, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { eventNo: result.record.eventNo, remark: req.body.remark } });
+    operationOk(res, result);
+  } catch (error) {
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_contract_event.return", result: "failure", targetType: "international_contract_event", targetId: req.params.identifier, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { message: error.message } });
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
   }
 });
 app.get("/api/international/certificate_applications", (req, res) => {

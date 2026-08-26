@@ -406,6 +406,21 @@ async function verifyAuthorizationFlow() {
   assert.strictEqual(editorApplication.json.data.record.states, "待审核", "submission should enter the dedicated pending-review state");
   const editorReviewDenied = await postJson(`/api/international/certificate_applications/${editorApplication.json.data.record.id}/approve`, { projectId: "certificate-rbac-project", expectedRevision: 1, remark: "self review" });
   assert.strictEqual(editorReviewDenied.response.status, 403, "application makers must not receive review authority");
+  const editorContractEvent = await postJson("/api/international/contract_events", {
+    projectId: "certificate-rbac-project",
+    eventNo: "VO-RBAC-001",
+    eventType: "variation",
+    title: "RBAC foundation variation",
+    noticeDate: "2026-01-10",
+    currency: "CNY",
+    claimedAmount: "50000",
+    claimedTimeImpactDays: 5,
+    contractClause: "13.3",
+    description: "Independent contract event review fixture",
+    idempotencyKey: "event-rbac-001"
+  });
+  assert.strictEqual(editorContractEvent.response.status, 200, "editor should submit a frozen contract event");
+  assert.strictEqual(editorContractEvent.json.data.record.states, "待审核", "contract event submission should enter pending review");
 
   authCookieHeader = "";
   const approverLogin = await requestJson("/dologin", {
@@ -416,12 +431,21 @@ async function verifyAuthorizationFlow() {
   authCookieHeader = approverLogin.response.headers.get("set-cookie").split(";")[0];
   const approverWorkbench = await requestText("/international/certificates_page?projectId=certificate-rbac-project");
   assert.strictEqual(approverWorkbench.response.status, 200, "certificate approver should open the operational workbench");
-  assert.ok(approverWorkbench.text.includes("APP-RBAC-001") && approverWorkbench.text.includes('data-action="approve"') && !approverWorkbench.text.includes('id="fidic-submit-application"') && !approverWorkbench.text.includes('id="international-settings-form"'), "approver workbench should expose review without application or administrative settings controls");
+  assert.ok(approverWorkbench.text.includes("APP-RBAC-001") && approverWorkbench.text.includes("VO-RBAC-001") && approverWorkbench.text.includes('data-action="approve"') && !approverWorkbench.text.includes('id="fidic-submit-application"') && !approverWorkbench.text.includes('id="contract-event-submit"') && !approverWorkbench.text.includes('id="international-settings-form"'), "approver workbench should expose application and event review without submission or administrative settings controls");
   assert.doesNotThrow(() => [...approverWorkbench.text.matchAll(/<script>([\s\S]*?)<\/script>/gi)].forEach((match) => new Function(match[1])), "approver workbench inline scripts should compile");
   const approverAdminDenied = await requestJson("/api/admin/international_settings?projectId=certificate-rbac-project");
   assert.strictEqual(approverAdminDenied.response.status, 403, "certificate approver should not administer contract parameters");
   const approverBusinessWriteDenied = await postJson("/bill_measure/save?projectId=certificate-rbac-project", { measureNo: "APPROVER-FORBIDDEN-WRITE" });
   assert.strictEqual(approverBusinessWriteDenied.response.status, 403, "certificate approver should not receive unrelated business write authority");
+  const excessiveEventApproval = await postJson(`/api/international/contract_events/${editorContractEvent.json.data.record.id}/approve`, { projectId: "certificate-rbac-project", expectedRevision: 1, approvedAmount: "50000.01", approvedTimeImpactDays: 5, decisionReason: "Exceeds submitted entitlement" });
+  assert.strictEqual(excessiveEventApproval.response.status, 400, "contract event approval must reject an amount above the immutable claim");
+  const eventAfterRejectedApproval = await requestJson(`/api/international/contract_events/${editorContractEvent.json.data.record.id}?projectId=certificate-rbac-project`);
+  assert.strictEqual(eventAfterRejectedApproval.json.data.record.states, "待审核", "failed contract event approval must roll back the business state");
+  assert.strictEqual(eventAfterRejectedApproval.json.data.workflow.revision, 1, "failed contract event approval must roll back the workflow revision");
+  const approvedContractEvent = await postJson(`/api/international/contract_events/${editorContractEvent.json.data.record.id}/approve`, { projectId: "certificate-rbac-project", expectedRevision: 1, approvedAmount: "48000", approvedTimeImpactDays: 4, decisionReason: "Independent evaluation" });
+  assert.strictEqual(approvedContractEvent.response.status, 200, "certificate approver should approve another user's contract event");
+  assert.strictEqual(approvedContractEvent.json.data.record.approvedAmount, "48000", "event approval should preserve the evaluated amount");
+  assert.strictEqual(approvedContractEvent.json.data.record.decisionChecksum.length, 64, "event approval should create an immutable decision checksum");
   const approverApproved = await postJson(`/api/international/certificate_applications/${editorApplication.json.data.record.id}/approve`, { projectId: "certificate-rbac-project", expectedRevision: 1, remark: "Independent RBAC review" });
   assert.strictEqual(approverApproved.response.status, 200, "certificate approver should approve another user's application");
   assert.strictEqual(approverApproved.json.data.record.states, "已批准", "approved applications should persist their business state");
@@ -434,6 +458,8 @@ async function verifyAuthorizationFlow() {
   assert.strictEqual(approverVoided.json.data.record.status, "voided", "certificate approver should void with a reason inside the assigned project");
 
   authCookieHeader = adminCookie;
+  const contractEventAudits = await requestJson("/api/admin/security_audit/query?action=international_contract_event.approve&limit=20");
+  assert.ok(contractEventAudits.json.data.rows.some((row) => row.result === "failure") && contractEventAudits.json.data.rows.some((row) => row.result === "success"), "failed and successful contract event approvals should both be audited");
   const projects = await requestJson("/api/admin/projects");
   assert.ok(projects.json.data.some((row) => row.projectId === "1") && projects.json.data.some((row) => row.projectId === "regression-project-2"), "admin should list tenant-scoped projects");
   const page = await requestText("/admin/users_page");
@@ -474,7 +500,7 @@ async function verifyAuthorizationFlow() {
   const retentionAudit = await requestJson("/api/admin/security_audit/query?action=security.audit.retention");
   assert.ok(retentionAudit.json.data.rows.some((row) => row.user_id === adminUserId && row.result === "success"), "audit retention should record the responsible administrator");
   assert.ok(retentionAudit.json.data.rows.some((row) => row.result === "failure"), "rejected audit retention should be recorded as a failure");
-  const audit = await requestJson("/api/admin/security_audit?limit=50");
+  const audit = await requestJson("/api/admin/security_audit?limit=200");
   assert.ok(audit.json.data.some((row) => row.action === "login" && row.result === "denied"), "security audit should retain failed login attempts");
   const mutationAudit = audit.json.data.find((row) => row.action === "http.mutation" && row.target_id === "POST /api/admin/projects");
   assert.ok(mutationAudit, "business audit should record authenticated mutation endpoints");
@@ -646,9 +672,9 @@ async function verifyDataExchangeFlow() {
 async function verifyInternationalContractFlow() {
   const page = await requestText("/admin/international_settings_page");
   assert.strictEqual(page.response.status, 200, "international contract settings page should load");
-  assert.ok(page.text.includes("国际合同设置") && page.text.includes("付款证书试算") && page.text.includes("certificateStandard"), "international settings page should expose project settings and certificate calculation controls");
+  assert.ok(page.text.includes("国际合同设置") && page.text.includes("付款证书试算") && page.text.includes("合同变更与索赔台账") && page.text.includes("certificateStandard"), "international settings page should expose project settings, contract events and certificate calculation controls");
   assert.ok(page.text.includes("priceAdjustmentRule") && page.text.includes("fidic-price-adjustment"), "international settings page should expose index adjustment rule and current-index inputs");
-  assert.ok(page.text.includes('id="fidic-submit-application"') && page.text.includes('id="international-application-register"') && page.text.includes('id="international-certificate-register"'), "international settings page should expose application submission and immutable application/certificate registers");
+  assert.ok(page.text.includes('id="contract-event-submit"') && page.text.includes('id="international-contract-event-register"') && page.text.includes('id="fidic-submit-application"') && page.text.includes('id="international-application-register"') && page.text.includes('id="international-certificate-register"'), "international settings page should expose contract event and certificate application workflows with immutable registers");
   const catalog = await requestJson("/api/admin/international_settings/catalog");
   assert.strictEqual(catalog.json.data.locales.length, 6, "international catalog should expose six initial locales");
   assert.ok(catalog.json.data.certificateStandards.includes("FIDIC_RED_2017"), "international catalog should expose FIDIC contract profiles");
@@ -684,7 +710,7 @@ async function verifyInternationalContractFlow() {
   assert.deepStrictEqual(projectSettings.json.data.exchangeRates, { "CNY:USD": "0.14" }, "project should read back normalized contract exchange rates");
   const englishPage = await requestText(`/admin/international_settings_page?projectId=${projectId}`);
   assert.ok(englishPage.text.includes("International Contract Settings") && englishPage.text.includes('lang="en-US"') && englishPage.text.includes('dir="ltr"'), "English project should render the international settings page in English and LTR");
-  assert.ok(englishPage.text.includes("Payment certificate register") && englishPage.text.includes("Certificate applications") && englishPage.text.includes("Submit certificate application"), "English project should localize application and certificate controls");
+  assert.ok(englishPage.text.includes("Variations and claims register") && englishPage.text.includes("Payment certificate register") && englishPage.text.includes("Certificate applications") && englishPage.text.includes("Submit certificate application"), "English project should localize contract event, application and certificate controls");
   const englishSession = await requestJson(`/api/session/projects?projectId=${projectId}`);
   assert.strictEqual(englishSession.json.data.internationalSettings.locale, "en-US", "session context should expose the selected project's locale");
   assert.strictEqual(englishSession.json.data.translations["shell.logout"], "Sign out", "session context should expose shell translations");
@@ -731,6 +757,27 @@ async function verifyInternationalContractFlow() {
   });
   const checkerCookie = checkerLogin.response.headers.get("set-cookie").split(";")[0];
   authCookieHeader = adminCookie;
+  const variationEvent = await postJson("/api/international/contract_events", {
+    projectId,
+    eventNo: "VO-REG-001",
+    eventType: "variation",
+    title: "International variation regression",
+    noticeDate: "2026-06-20",
+    currency: "CNY",
+    claimedAmount: "1000",
+    claimedTimeImpactDays: 0,
+    contractClause: "13.3",
+    description: "Approved variation linked to IPC-REG-001",
+    idempotencyKey: "event-vo-reg-001"
+  });
+  assert.strictEqual(variationEvent.response.status, 200, "certificate regression should submit its variation entitlement first");
+  authCookieHeader = checkerCookie;
+  const approvedVariationEvent = await postJson(`/api/international/contract_events/${variationEvent.json.data.record.id}/approve`, { projectId, expectedRevision: 1, approvedAmount: "1000", approvedTimeImpactDays: 0, decisionReason: "Variation entitlement verified" });
+  assert.strictEqual(approvedVariationEvent.response.status, 200, "independent checker should approve the variation entitlement");
+  authCookieHeader = adminCookie;
+  const variationLine = certificateInput.lines.find((line) => line.code === "VO-CNY");
+  variationLine.contractEventId = approvedVariationEvent.json.data.record.id;
+  variationLine.contractEventDecisionChecksum = approvedVariationEvent.json.data.record.decisionChecksum;
   async function submitApproveIssue(applicationNo, payload, verifySelfReview = false) {
     authCookieHeader = adminCookie;
     const submitted = await postJson("/api/international/certificate_applications", { applicationNo, ...payload });
@@ -760,6 +807,8 @@ async function verifyInternationalContractFlow() {
   };
   const firstFlow = await submitApproveIssue("APP-REG-001", issuePayload, true);
   const issued = firstFlow.issued;
+  assert.strictEqual(firstFlow.submitted.json.data.allocation.count, 1, "certificate application should bind one approved variation event");
+  assert.strictEqual(firstFlow.submitted.json.data.allocation.bindings[0].remainingAfterRequest, "0", "certificate application should reserve the full approved variation entitlement");
   assert.strictEqual(issued.response.status, 200, "authorized users should issue a calculated international certificate");
   assert.strictEqual(issued.json.data.replay, false, "first certificate issue should persist a new immutable record");
   assert.strictEqual(issued.json.data.record.calculationResult.totals.netCertified, "1047.25", "issued record should freeze the exact calculated totals");
@@ -813,6 +862,24 @@ async function verifyInternationalContractFlow() {
       currentIndices: { LABOR: "100", PLANT: "200" }
     }
   };
+  const overbookedEvent = await postJson("/api/international/certificate_applications", {
+    projectId,
+    applicationNo: "APP-REG-OVERBOOKED",
+    certificateNo: "IPC-REG-OVERBOOKED",
+    periodStart: "2026-08-01",
+    periodEnd: "2026-08-31",
+    idempotencyKey: "ipc-reg-overbooked",
+    calculationInput: {
+      ...secondInput,
+      lines: [...secondInput.lines, {
+        code: "VO-CNY-OVERBOOKED", category: "variation", amount: "1", currency: "CNY",
+        contractEventId: approvedVariationEvent.json.data.record.id,
+        contractEventDecisionChecksum: approvedVariationEvent.json.data.record.decisionChecksum
+      }]
+    }
+  });
+  assert.strictEqual(overbookedEvent.response.status, 400, "a later certificate application must not overbook an approved variation event");
+  assert.ok(overbookedEvent.json.msg.includes("remaining approved amount 0 CNY"), "event overbooking rejection should expose the exact remaining entitlement");
   const badContinuation = await postJson("/api/international/certificate_applications", {
     projectId,
     applicationNo: "APP-REG-BAD-RETENTION",
@@ -935,7 +1002,7 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(openingIssued.json.data.record.openingBalanceReason, "Audited legacy balance migration", "the immutable certificate should retain its opening balance reason");
   const arabicPage = await requestText(`/admin/international_settings_page?projectId=${arabicProjectId}`);
   assert.ok(arabicPage.text.includes("إعدادات العقود الدولية") && arabicPage.text.includes('lang="ar-SA"') && arabicPage.text.includes('dir="rtl"'), "Arabic project should render localized RTL administration markup");
-  assert.ok(arabicPage.text.includes("سجل شهادات الدفع") && arabicPage.text.includes("طلبات الشهادات") && arabicPage.text.includes("تقديم طلب الشهادة"), "Arabic project should localize application and certificate controls");
+  assert.ok(arabicPage.text.includes("سجل التغييرات والمطالبات") && arabicPage.text.includes("سجل شهادات الدفع") && arabicPage.text.includes("طلبات الشهادات") && arabicPage.text.includes("تقديم طلب الشهادة"), "Arabic project should localize contract event, application and certificate controls");
   assert.ok(arabicPage.text.includes('id="international-settings-history"') && arabicPage.text.includes('data-settings-version="1"'), "international administration page should render project version history");
   const versionedPage = await requestText(`/admin/international_settings_page?projectId=${projectId}`);
   assert.ok(versionedPage.text.includes("activation-reason") && versionedPage.text.includes("activate-settings-version"), "international administration page should expose reasoned historical activation controls");
@@ -4404,7 +4471,7 @@ async function verifyWorkflowConsistencyInspectionLoop() {
   assert.strictEqual(response.response.status, 200, "workflow consistency API should load");
   assert.strictEqual(response.json.data.tenantId, "default", "workflow consistency API should remain tenant scoped");
   assert.strictEqual(response.json.data.projectId, "1", "workflow consistency API should remain project scoped");
-  assert.strictEqual(response.json.data.totals.modules, 7, "workflow consistency API should inspect all workflow modules including international certificate applications");
+  assert.strictEqual(response.json.data.totals.modules, 8, "workflow consistency API should inspect all workflow modules including international contract events and certificate applications");
   assert.strictEqual(response.json.data.counts.error, 0, `verified workflow data should have no consistency errors: ${JSON.stringify(response.json.data.issues)}`);
 }
 

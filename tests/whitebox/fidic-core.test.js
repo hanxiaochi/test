@@ -55,6 +55,19 @@ test("multi-currency lines use direct, shorthand, explicit, and inverse rates", 
   assert.deepEqual(result.originalCurrencyTotals.map((row) => row.currency), ["AED", "CNY", "EUR", "GBP", "USD"]);
 });
 
+test("contract event references survive calculation snapshots and reject malformed metadata", () => {
+  const checksum = "a".repeat(64);
+  const result = fidic.calculateCertificate({ lines: [{
+    code: "VO-LINKED", category: "variation", amount: 100, currency: "USD",
+    contractEventId: "event-1", contractEventDecisionChecksum: checksum
+  }] }, { baseCurrency: "USD" });
+  assert.equal(result.lines[0].contractEventId, "event-1");
+  assert.equal(result.lines[0].contractEventDecisionChecksum, checksum);
+  assert.equal(Object.prototype.hasOwnProperty.call(fidic.calculateCertificate({ lines: [{ code: "WORK", category: "work", amount: 1, currency: "USD" }] }, { baseCurrency: "USD" }).lines[0], "contractEventId"), false);
+  assert.throws(() => fidic.calculateCertificate({ lines: [{ code: "BAD-ID", category: "variation", amount: 1, currency: "USD", contractEventId: "x".repeat(65), contractEventDecisionChecksum: checksum }] }, { baseCurrency: "USD" }), /event id is invalid/);
+  assert.throws(() => fidic.calculateCertificate({ lines: [{ code: "BAD-CHECKSUM", category: "claims", amount: 1, currency: "USD", contractEventId: "event-1", contractEventDecisionChecksum: "bad" }] }, { baseCurrency: "USD" }), /decision checksum is invalid/);
+});
+
 test("currency digits and minimum-certificate carry forward are deterministic", () => {
   const result = fidic.calculateCertificate({ lines: [
     { code: "JP-WORK", category: "work", amount: "100.5", currency: "JPY" }

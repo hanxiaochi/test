@@ -5,7 +5,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const test = require("node:test");
-const { WorkflowStore, certificateApplicationDefinition, defaultDefinition, normalizeDefinition } = require("../../lib/workflow/workflow-store");
+const { WorkflowStore, certificateApplicationDefinition, contractEventDefinition, defaultDefinition, normalizeDefinition } = require("../../lib/workflow/workflow-store");
 
 function withStore(run) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "workflow-store-"));
@@ -78,6 +78,15 @@ test("certificate applications use a dedicated maker-checker workflow", () => wi
   const approved = store.transition({ tenantId: "tenant-a", projectId: "project-a", module: "internationalcertificate", businessId: "application-1", action: "approve", actorAccount: "approver", permissions: ["international:review"], remark: "checked" });
   assert.equal(approved.toState, "approved");
 }));
+
+test("international contract events use an independent maker-checker definition", () => {
+  const definition = contractEventDefinition();
+  assert.equal(definition.initialState, "draft");
+  assert.deepEqual(definition.transitions.map((item) => [item.action, item.permission]), [
+    ["submit", "international:submit"], ["approve", "international:review"], ["return", "international:review"]
+  ]);
+  assert.match(definition.transitions.find((item) => item.action === "approve").label, /合同事件/);
+});
 
 test("workflow transition enforces state, permission, remarks, revision and event identity", () => withStore((store) => {
   createDefault(store);
