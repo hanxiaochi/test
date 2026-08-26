@@ -36,13 +36,19 @@ SQLite 是默认模式，不需要 MySQL 或 PostgreSQL。账号、RBAC、租户
 
 “签发并留档”会在当前租户和项目的 SQLite 业务状态中保存不可变付款证书台账。每张证书冻结原始计算输入、完整计算结果、合同参数版本、输入 SHA-256、结果 SHA-256 和签发 SHA-256；证书编号不可重复，客户端幂等键可安全重试而不会重复签发。签发后不允许修改或删除，只能填写原因作废；作废保留原签发快照并生成独立作废 SHA-256。签发、重复/冲突请求、作废成功和失败均进入安全审计。
 
+国际合同事件把变更和索赔作为独立 maker-checker 业务处理。提交人申报事件编号、通知日期、币种、金额、工期影响和合同条款后，事件进入待审核状态；另一名具备审批权限的用户才能审定或退回。已批准金额可绑定到付款证书行，待审核或已批准证书申请会预占额度，防止重复使用同一审定权益。
+
+待审核事件的原提交人可上传或删除证据附件，审批人和只读用户可在授权项目内查看、下载。批准前服务器会从附件对象库重新读取每个文件并复核大小与 SHA-256；任一对象缺失或损坏都会返回 HTTP `409`，事件状态和工作流修订不会前进。审批成功会冻结规范化证据清单、证据清单 SHA-256 和独立审定 SHA-256，批准后不得补传或删除。旧版 schema v1 事件继续按原校验规则读取，新事件使用 schema v2，升级不会改写历史数据。
+
 有效付款证书按期间形成不可跳改的财务连续链。新一期开始日必须晚于最近一期结束日，基础币种必须一致，“上期保留金”必须等于前序证书的期末保留金，“上期累计签证额”必须等于前序证书的累计签证额；管理页面会自动带入这两个数值，并在台账中保存前序证书 ID 和签发 SHA-256。首次上线迁移历史余额时，可以在第一张有效证书填写“开账余额原因”；期初保留金或累计签证额非零而没有原因会拒绝签发，形成有效前序证书后则禁止再填写开账原因。证书只能按链条倒序作废：存在有效后继的前序证书会返回 HTTP `409`，必须先作废最新一期，再逐期向前处理。
 
 付款证书台账可直接下载 XLSX、PDF 和 DOCX，也可通过 `GET /api/international/certificates/{id}/export?format=all` 下载完整 ZIP。导出前会重新验证输入、结果和签发三层 SHA-256，不会使用当前参数重新计算。XLSX 分为证书信息、计价行、合计、指数调价和完整性工作表；完整 ZIP 的 `manifest.json` 固定证书 ID、签发 SHA-256，并记录每个文件的字节数和 SHA-256。导出成功、非法格式和校验失败都会写入 `international_certificate.export` 安全审计。
 
+已批准合同事件可通过 `GET /api/international/contract_events/{id}/export?format=xlsx|pdf|docx|all` 导出六语言审定单。导出内容包括证据数量、证据清单 SHA-256 和规范证据清单；ZIP 的 `manifest.json` 同时固定申报、证据和审定三层校验值，并记录每个生成文件的字节数与 SHA-256。
+
 正式 XLSX、PDF、DOCX 按证书签发时冻结的 `locale` 输出简体中文、英语、西班牙语、法语、巴西葡萄牙语或阿拉伯语；后续修改项目界面语言不会改变旧证书的导出语言。阿拉伯语文件启用 RTL 工作表、段落和 PDF 双栏排版，PDF 使用项目随附的 `assets/fonts/NotoSansArabic-VF.ttf` 嵌入字体，许可文本为 `assets/fonts/OFL-NotoSansArabic.txt`。部署包必须保留这两个文件以及 `assets/fonts/NotoSansSC-VF.ttf`，否则对应语言的 PDF 导出会失败。
 
-国际证书采用独立职责权限：`international:read`、`international:calculate`、`international:export`、`international:issue`、`international:void`。内置“只读用户”和“业务编辑者”可以查看、试算和导出，但不能签发或作废；内置“国际证书签发人”可以执行完整证书生命周期，但没有合同参数后台或其他业务写权限；系统管理员保留全部权限。操作人员使用 `/international/certificates_page`，管理员使用 `/admin/international_settings_page` 维护不可变参数版本。旧菜单兼容地址与标准地址执行相同权限检查，不能通过页面 ID 绕过。
+国际模块采用独立职责权限：`international:read`、`international:calculate`、`international:submit`、`international:review`、`international:export`、`international:issue`、`international:void`。业务编辑者可试算、提交证书申请和合同事件，并管理本人待审核事件的证据，但不能审批、签发或作废；国际证书审批人可审阅他人申请与事件、签发和作废，但不能审批自己的申请/事件，也没有合同参数后台或其他业务写权限；系统管理员保留全部权限。操作人员使用 `/international/certificates_page`，管理员使用 `/admin/international_settings_page` 维护不可变参数版本。旧菜单兼容地址与标准地址执行相同权限检查，不能通过页面 ID 绕过。
 
 当前 SQLite 部署应保持一个 Node.js 写入实例，不要启用 Node cluster 或同时启动多个 systemd 副本。存储层带版本化乐观并发保护：意外重复实例或外部写入不会静默覆盖数据，陈旧表单会收到 HTTP `409`，服务端会重新加载已提交状态，用户刷新后可重试。需要水平扩展时，应先升级为共享数据库和跨实例事务架构。
 
