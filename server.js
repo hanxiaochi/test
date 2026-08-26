@@ -16,6 +16,7 @@ const paymentReportExport = require("./lib/reports/payment-report-export");
 const fidicCore = require("./lib/international/fidic-core");
 const internationalSettingsService = require("./lib/international/project-settings");
 const internationalCertificateRegister = require("./lib/international/certificate-register");
+const internationalCertificateApplication = require("./lib/international/certificate-application");
 const internationalCertificateExport = require("./lib/international/certificate-export");
 const { mapClientConfig } = require("./lib/client-config");
 const { AttachmentStore } = require("./lib/attachments/attachment-store");
@@ -23,7 +24,7 @@ const { scanAttachmentConsistency } = require("./lib/attachments/attachment-cons
 const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
 const { readinessReport } = require("./lib/runtime/readiness");
 const { browserMutationGuard, securityHeaders } = require("./lib/security/http-security");
-const { WorkflowError, WorkflowStore, defaultDefinition } = require("./lib/workflow/workflow-store");
+const { WorkflowError, WorkflowStore, certificateApplicationDefinition, defaultDefinition } = require("./lib/workflow/workflow-store");
 const workflowCoordinator = require("./lib/workflow/workflow-coordinator");
 const { scanWorkflowConsistency } = require("./lib/workflow/workflow-consistency");
 const engine = require("./costEngine");
@@ -69,10 +70,10 @@ const measureImportUpload = multer({
 }).single("file");
 const ruleStore = new RuleStore(process.env.APP_RULE_DB_PATH || authService.securityFile);
 const workflowStore = new WorkflowStore(process.env.APP_WORKFLOW_DB_PATH || authService.securityFile);
-const workflowModules = ["billmeasure", "meterialdiasmeasure", "meterialinmeasure", "manualmeasure", "varyapplication", "engineeringcontactbill"];
+const workflowModules = ["billmeasure", "meterialdiasmeasure", "meterialinmeasure", "manualmeasure", "varyapplication", "engineeringcontactbill", "internationalcertificate"];
 workflowModules.forEach((module) => {
   if (!workflowStore.getActive("default", "*", module)) {
-    workflowStore.createVersion({ tenantId: "default", projectId: "*", module, definition: defaultDefinition(), changeReason: "初始化标准审批流程" });
+    workflowStore.createVersion({ tenantId: "default", projectId: "*", module, definition: module === "internationalcertificate" ? certificateApplicationDefinition() : defaultDefinition(), changeReason: "初始化标准审批流程" });
   }
 });
 const initializedRuleTenants = new Set();
@@ -115,6 +116,11 @@ function requiredPermission(req) {
   if (legacyResourceId === "9041") return "international:read";
   if (req.path === "/international/certificates_page") return "international:read";
   if (req.path === "/api/international/certificate/calculate") return "international:calculate";
+  if (req.path === "/api/international/certificate_applications" && req.method === "GET") return "international:read";
+  if (req.path === "/api/international/certificate_applications" && req.method === "POST") return "international:submit";
+  if (/^\/api\/international\/certificate_applications\/[^/]+\/(?:approve|return)$/.test(req.path) && req.method === "POST") return "international:review";
+  if (/^\/api\/international\/certificate_applications\/[^/]+\/issue$/.test(req.path) && req.method === "POST") return "international:issue";
+  if (/^\/api\/international\/certificate_applications\/[^/]+$/.test(req.path) && req.method === "GET") return "international:read";
   if (req.path === "/api/international/certificates" && req.method === "GET") return "international:read";
   if (req.path === "/api/international/certificates/issue" && req.method === "POST") return "international:issue";
   if (/^\/api\/international\/certificates\/[^/]+\/export$/.test(req.path) && req.method === "GET") return "international:export";
@@ -432,33 +438,78 @@ function calculateInternationalCertificate(input) {
   };
 }
 
-function issueInternationalCertificate(req) {
+function submitInternationalCertificateApplication(req) {
   const calculationInput = req.body && req.body.calculationInput;
   const calculationResult = calculateInternationalCertificate(calculationInput);
-  const previous = engine.db[internationalCertificateRegister.STORAGE_KEY];
+  const previous = engine.db[internationalCertificateApplication.STORAGE_KEY];
   try {
-    const result = internationalCertificateRegister.issueCertificate(engine.db, {
-      certificateNo: req.body.certificateNo,
-      periodStart: req.body.periodStart,
-      periodEnd: req.body.periodEnd,
-      applicationReference: req.body.applicationReference,
-      remarks: req.body.remarks,
-      openingBalanceReason: req.body.openingBalanceReason,
-      idempotencyKey: req.body.idempotencyKey,
-      calculationInput,
-      calculationResult
-    }, { issuedBy: req.authUser.account });
-    if (result.replay) return { ...result, storage: null };
-    const storage = appStore.save(engine.db, {
-      actor: req.authUser.account,
-      action: `international-certificate:issue:${result.record.certificateNo}`,
-      checkpoint: true
+    if (req.body.supersedesApplicationId) {
+      const superseded = internationalCertificateApplication.findApplication(engine.db, req.body.supersedesApplicationId);
+      if (superseded.states !== "已退回") throw new Error("only a returned certificate application can be superseded");
+    }
+    const created = internationalCertificateApplication.createApplication(engine.db, {
+      applicationNo: req.body.applicationNo,
+      supersedesApplicationId: req.body.supersedesApplicationId,
+      certificateRequest: {
+        certificateNo: req.body.certificateNo,
+        periodStart: req.body.periodStart,
+        periodEnd: req.body.periodEnd,
+        applicationReference: req.body.applicationReference,
+        remarks: req.body.remarks,
+        openingBalanceReason: req.body.openingBalanceReason,
+        idempotencyKey: req.body.idempotencyKey,
+        calculationInput,
+        calculationResult
+      }
+    }, {
+      submittedBy: req.authUser.account,
+      submittedByUserId: req.authUser.id
     });
-    return { ...result, storage };
+    if (created.replay) {
+      const replayed = internationalCertificateApplication.findApplication(engine.db, created.record.id);
+      return { ...created, record: replayed, workflow: replayed.workflowInstanceKey ? workflowStore.getInstance(req.authUser.tenantId, req.businessContext.projectId, "internationalcertificate", replayed.workflowInstanceKey) : null };
+    }
+    const transition = executeWorkflowBatchTransition(req, "internationalcertificate", [created.record.id], "submit");
+    return { ...created, record: internationalCertificateApplication.findApplication(engine.db, created.record.id), workflow: transition.results[0].instance };
+  } catch (error) {
+    if (previous === undefined) delete engine.db[internationalCertificateApplication.STORAGE_KEY];
+    else engine.db[internationalCertificateApplication.STORAGE_KEY] = previous;
+    if (error.code !== "SQLITE_RUNTIME_CONFLICT") {
+      try { appStore.save(engine.db, { actor: req.authUser.account, action: "international-certificate-application:rollback", checkpoint: true }); } catch (rollbackError) { error.rollbackError = rollbackError.message; }
+    }
+    throw error;
+  }
+}
+
+function reviewInternationalCertificateApplication(req, action) {
+  const application = internationalCertificateApplication.findApplication(engine.db, req.params.identifier);
+  if (Number(application.submittedByUserId) === Number(req.authUser.id)) throw Object.assign(new Error("certificate applications require a different reviewer"), { status: 409 });
+  const transition = executeWorkflowBatchTransition(req, "internationalcertificate", [application.id], action, {
+    expectedRevision: req.body.expectedRevision,
+    remark: req.body.remark
+  });
+  return { record: internationalCertificateApplication.findApplication(engine.db, application.id), workflow: transition.results[0].instance };
+}
+
+function issueInternationalCertificate(req) {
+  const applicationId = req.params.identifier || req.body.applicationId;
+  if (!applicationId) throw new Error("an approved certificate application is required");
+  const application = internationalCertificateApplication.findApplication(engine.db, applicationId);
+  if (Number(application.submittedByUserId) === Number(req.authUser.id)) throw Object.assign(new Error("certificate applications require a different issuer"), { status: 409 });
+  const instance = application.workflowInstanceKey ? workflowStore.getInstance(req.authUser.tenantId, req.businessContext.projectId, "internationalcertificate", application.workflowInstanceKey) : null;
+  if (!instance || instance.currentState !== "approved") throw Object.assign(new Error("certificate application must be approved before issue"), { status: 409 });
+  const previousCertificates = engine.db[internationalCertificateRegister.STORAGE_KEY];
+  const previousApplications = engine.db[internationalCertificateApplication.STORAGE_KEY];
+  try {
+    const result = internationalCertificateRegister.issueCertificate(engine.db, application.request, { issuedBy: req.authUser.account });
+    const linked = internationalCertificateApplication.markIssued(engine.db, application.id, result.record);
+    if (result.replay && application.certificateId === linked.certificateId) return { ...result, application: linked, workflow: instance, storage: null };
+    const storage = appStore.save(engine.db, { actor: req.authUser.account, action: `international-certificate:issue:${result.record.certificateNo}`, checkpoint: true });
+    return { ...result, application: linked, workflow: instance, storage };
   } catch (error) {
     if (error.code !== "SQLITE_RUNTIME_CONFLICT") {
-      if (previous === undefined) delete engine.db[internationalCertificateRegister.STORAGE_KEY];
-      else engine.db[internationalCertificateRegister.STORAGE_KEY] = previous;
+      if (previousCertificates === undefined) delete engine.db[internationalCertificateRegister.STORAGE_KEY]; else engine.db[internationalCertificateRegister.STORAGE_KEY] = previousCertificates;
+      if (previousApplications === undefined) delete engine.db[internationalCertificateApplication.STORAGE_KEY]; else engine.db[internationalCertificateApplication.STORAGE_KEY] = previousApplications;
     }
     throw error;
   }
@@ -487,6 +538,7 @@ function voidInternationalCertificate(req) {
 }
 
 function internationalCertificateErrorStatus(error) {
+  if (Number.isInteger(error.status)) return error.status;
   if (error.code === "SQLITE_RUNTIME_CONFLICT") return 409;
   if (/does not exist/.test(error.message)) return 404;
   if (/already|idempotency key|active successor/.test(error.message)) return 409;
@@ -2185,7 +2237,7 @@ function workflowManagementHtml(req) {
   const selectedModule = workflowModules.includes(String(req.query.module || "")) ? String(req.query.module) : workflowModules[0];
   const labels = {
     billmeasure: "清单计量", meterialdiasmeasure: "材料补差", meterialinmeasure: "材料到场",
-    manualmeasure: "手动计量", varyapplication: "工程变更", engineeringcontactbill: "工程联系单"
+    manualmeasure: "手动计量", varyapplication: "工程变更", engineeringcontactbill: "工程联系单", internationalcertificate: "国际证书申请"
   };
   ensureWorkflowDefinition(req.authUser.tenantId, selectedModule);
   const projectId = req.businessContext.projectId;
@@ -2559,6 +2611,8 @@ function internationalSettingsHtml(req, options = {}) {
   const permissions = req.currentSession ? req.currentSession.user.permissions : [];
   const manageSettings = options.manageSettings !== false && authCore.hasPermission(permissions, "admin:access");
   const canCalculate = authCore.hasPermission(permissions, "international:calculate");
+  const canSubmit = authCore.hasPermission(permissions, "international:submit");
+  const canReview = authCore.hasPermission(permissions, "international:review");
   const canIssue = authCore.hasPermission(permissions, "international:issue");
   const canVoid = authCore.hasPermission(permissions, "international:void");
   const canExport = authCore.hasPermission(permissions, "international:export");
@@ -2582,6 +2636,33 @@ function internationalSettingsHtml(req, options = {}) {
       <td>${activated}</td>
       <td title="${htmlEscape(item.checksum)}"><code>${htmlEscape(item.checksum.slice(0, 12))}</code></td>
       <td>${isActive ? "-" : `<div class="core-tools"><input class="layui-input activation-reason" maxlength="500" placeholder="填写启用原因" aria-label="V${item.version} 启用原因"><button type="button" class="layui-btn layui-btn-xs activate-settings-version" data-version="${item.version}">启用</button></div>`}</td>
+    </tr>`;
+  }).join("");
+  const currentUserId = Number((req.authUser && req.authUser.id) || (req.currentSession && req.currentSession.user && req.currentSession.user.id) || 0);
+  const currentTenantId = (req.authUser && req.authUser.tenantId) || (req.currentSession && req.currentSession.user && req.currentSession.user.tenantId) || "default";
+  const applications = internationalCertificateApplication.listApplications(engine.db, { limit: 100 }).rows;
+  const applicationRows = applications.map((item) => {
+    const workflow = item.workflowInstanceKey ? workflowStore.getInstance(currentTenantId, req.businessContext.projectId, "internationalcertificate", item.workflowInstanceKey) : null;
+    const isOwn = Number(item.submittedByUserId) === currentUserId;
+    const stateKey = item.states === "待审核" ? "international.pending" : item.states === "已批准" ? "international.approved" : item.states === "已退回" ? "international.returned" : "international.status";
+    const stateText = stateKey === "international.status" ? item.states : t(stateKey);
+    const actions = [];
+    if (item.states === "待审核" && canReview && !isOwn) {
+      actions.push(`<button type="button" class="layui-btn layui-btn-xs review-international-application" data-action="approve" data-id="${htmlEscape(item.id)}" data-revision="${workflow ? workflow.revision : ""}">${htmlEscape(t("international.approve"))}</button>`);
+      actions.push(`<button type="button" class="layui-btn layui-btn-xs layui-btn-danger review-international-application" data-action="return" data-id="${htmlEscape(item.id)}" data-revision="${workflow ? workflow.revision : ""}">${htmlEscape(t("international.return"))}</button>`);
+    }
+    if (item.states === "已批准" && canIssue && !isOwn && !item.certificateId) {
+      actions.push(`<button type="button" class="layui-btn layui-btn-xs issue-international-application" data-id="${htmlEscape(item.id)}" data-no="${htmlEscape(item.applicationNo)}">${htmlEscape(t("international.issue"))}</button>`);
+    }
+    if (item.states === "已退回" && canSubmit && isOwn && !item.certificateId) {
+      actions.push(`<button type="button" class="layui-btn layui-btn-xs layui-btn-primary replace-international-application" data-id="${htmlEscape(item.id)}" data-no="${htmlEscape(item.applicationNo)}" data-certificate-no="${htmlEscape(item.request.certificateNo)}">${htmlEscape(t("international.submitApplication"))}</button>`);
+    }
+    if (item.certificateId) actions.push(`<code>${htmlEscape(item.certificateNo)}</code>`);
+    return `<tr data-application-id="${htmlEscape(item.id)}">
+      <td>${htmlEscape(item.applicationNo)}</td><td>${htmlEscape(item.request.certificateNo)}</td>
+      <td>${htmlEscape(item.request.periodStart)} - ${htmlEscape(item.request.periodEnd)}</td><td>${htmlEscape(item.submittedBy)}<br>${htmlEscape(item.submittedAt)}</td>
+      <td>${htmlEscape(stateText)}</td><td title="${htmlEscape(item.submissionChecksum)}"><code>${htmlEscape(item.submissionChecksum.slice(0, 12))}</code></td>
+      <td>${actions.length ? `<div class="core-tools">${actions.join("")}</div>` : "-"}</td>
     </tr>`;
   }).join("");
   const certificates = internationalCertificateRegister.listCertificateSummaries(engine.db, { limit: 100 }).rows;
@@ -2621,14 +2702,16 @@ function internationalSettingsHtml(req, options = {}) {
     <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.priceAdjustmentRule"))}</label><div class="layui-input-block"><textarea class="layui-textarea" name="priceAdjustmentRule" rows="9">${htmlEscape(JSON.stringify(settings.priceAdjustmentRule, null, 2))}</textarea></div></div>
     <div class="core-tools"><button class="layui-btn layui-btn-sm" type="submit">${htmlEscape(t("international.save"))}</button></div>
   </form>` : "";
-  const issuePanel = canIssue ? `<h4>${htmlEscape(t("international.issue"))}</h4>
+  const applicationPanel = canSubmit ? `<h4>${htmlEscape(t("international.submitApplication"))}</h4>
+    <input id="fidic-supersedes-application-id" type="hidden">
+    <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.applicationNo"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-application-no" maxlength="64" required></div></div>
     <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.certificateNo"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-certificate-no" maxlength="64" required></div></div>
     <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.periodStart"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-period-start" type="date" value="${suggestedPeriodStart}" required></div></div>
     <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.periodEnd"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-period-end" type="date" value="${suggestedPeriodEnd}" required></div></div>
     <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.applicationReference"))}</label><div class="layui-input-block"><input class="layui-input" id="fidic-application-reference" maxlength="100"></div></div>
     <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.openingBalanceReason"))}</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-opening-balance-reason" maxlength="500" rows="2"${latestActiveCertificate ? " disabled" : ""}></textarea></div></div>
     <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.remarks"))}</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-certificate-remarks" maxlength="500" rows="3"></textarea></div></div>
-    <div class="core-tools"><button class="layui-btn layui-btn-sm" type="button" id="fidic-issue">${htmlEscape(t("international.issue"))}</button></div>` : "";
+    <div class="core-tools"><button class="layui-btn layui-btn-sm" type="button" id="fidic-submit-application">${htmlEscape(t("international.submitApplication"))}</button></div>` : "";
   const historyPanel = manageSettings ? `<div class="core-panel" style="margin-top:12px;overflow:auto;">
     <h3>合同参数版本历史</h3>
     <table class="layui-table" lay-size="sm"><thead><tr><th>版本</th><th>状态</th><th>语言</th><th>基础币种</th><th>证书标准</th><th>指数调价</th><th>变更原因</th><th>创建人</th><th>创建时间</th><th>最近启用</th><th>校验和</th><th>操作</th></tr></thead><tbody id="international-settings-history">${historyRows}</tbody></table>
@@ -2655,10 +2738,14 @@ function internationalSettingsHtml(req, options = {}) {
           <div class="layui-form-item"><label class="layui-form-label">${htmlEscape(t("international.priceAdjustmentInput"))}</label><div class="layui-input-block"><textarea class="layui-textarea" id="fidic-price-adjustment" rows="7">${htmlEscape(JSON.stringify({ eligibleAmount: "100000", currentIndices: Object.fromEntries(settings.priceAdjustmentRule.components.map((component) => [component.code, component.baseIndex])) }, null, 2))}</textarea></div></div>
           <div class="core-tools"><button class="layui-btn layui-btn-sm layui-btn-normal" type="button" id="fidic-calculate">${htmlEscape(t("international.calculate"))}</button></div>
           <table class="layui-table" lay-size="sm"><tbody id="fidic-totals"><tr><td class="core-empty">${htmlEscape(t("international.notCalculated"))}</td></tr></tbody></table>
-          ${issuePanel}
+          ${applicationPanel}
         </div>
       </div>
       ${historyPanel}
+      <div class="core-panel" style="margin-top:12px;overflow:auto;">
+        <h3>${htmlEscape(t("international.applications"))}</h3>
+        <table class="layui-table" lay-size="sm"><thead><tr><th>${htmlEscape(t("international.applicationNo"))}</th><th>${htmlEscape(t("international.certificateNo"))}</th><th>${htmlEscape(t("international.periodStart"))} / ${htmlEscape(t("international.periodEnd"))}</th><th>${htmlEscape(t("international.applicant"))}</th><th>${htmlEscape(t("international.status"))}</th><th>SHA-256</th><th>${htmlEscape(t("international.action"))}</th></tr></thead><tbody id="international-application-register">${applicationRows || `<tr><td colspan="7" class="core-empty">${htmlEscape(t("international.applications"))}: 0</td></tr>`}</tbody></table>
+      </div>
       <div class="core-panel" style="margin-top:12px;overflow:auto;">
         <h3>${htmlEscape(t("international.register"))}</h3>
         <table class="layui-table" lay-size="sm"><thead><tr><th>${htmlEscape(t("international.certificateNo"))}</th><th>${htmlEscape(t("international.periodStart"))} / ${htmlEscape(t("international.periodEnd"))}</th><th>${htmlEscape(t("international.status"))}</th><th>Net certified</th><th>${htmlEscape(t("international.predecessor"))}</th><th>${htmlEscape(t("international.settingsTrace"))}</th><th>${htmlEscape(t("international.issuedBy"))}</th><th>SHA-256</th><th>${htmlEscape(t("international.action"))}</th></tr></thead><tbody id="international-certificate-register">${certificateRows || `<tr><td colspan="9" class="core-empty">${htmlEscape(t("international.noCertificates"))}</td></tr>`}</tbody></table>
@@ -2666,15 +2753,18 @@ function internationalSettingsHtml(req, options = {}) {
     </div>
     <script>(function(){
       var root=document.querySelector('[data-core-page="international-settings"]');if(!root)return;
-      var form=root.querySelector('#international-settings-form'),message=root.querySelector('#international-settings-message'),totals=root.querySelector('#fidic-totals'),calculateButton=root.querySelector('#fidic-calculate'),issueButton=root.querySelector('#fidic-issue'),pendingIssue=null;
+      var form=root.querySelector('#international-settings-form'),message=root.querySelector('#international-settings-message'),totals=root.querySelector('#fidic-totals'),calculateButton=root.querySelector('#fidic-calculate'),submitButton=root.querySelector('#fidic-submit-application'),pendingSubmit=null;
       function escapeHtml(value){var node=document.createElement('div');node.textContent=String(value==null?'':value);return node.innerHTML}
       function request(url,body){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body)}).then(function(response){return response.json().then(function(result){if(!response.ok||result.code!==1)throw new Error(result.msg||'操作失败');return result.data})})}
       function certificateInput(){return {lines:JSON.parse(root.querySelector('#fidic-lines').value||'[]'),previousRetention:root.querySelector('#fidic-previous-retention').value,previousCumulativeCertified:root.querySelector('#fidic-previous-cumulative').value,retentionRelease:root.querySelector('#fidic-retention-release').value,priceAdjustment:JSON.parse(root.querySelector('#fidic-price-adjustment').value||'{}')}}
-      function newIssueKey(){return window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():('issue-'+Date.now()+'-'+Math.random().toString(16).slice(2))}
+      function newApplicationKey(){return window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():('application-'+Date.now()+'-'+Math.random().toString(16).slice(2))}
       if(form)form.addEventListener('submit',function(event){event.preventDefault();var data=new FormData(form),payload={changeReason:data.get('changeReason'),locale:data.get('locale'),baseCurrency:data.get('baseCurrency'),certificateStandard:data.get('certificateStandard'),moneyDigits:Number(data.get('moneyDigits')),retentionRate:data.get('retentionRate'),retentionLimitAmount:data.get('retentionLimitAmount'),minimumCertificateAmount:data.get('minimumCertificateAmount')};try{payload.exchangeRates=JSON.parse(data.get('exchangeRates')||'{}');payload.currencyDigits=JSON.parse(data.get('currencyDigits')||'{}');payload.priceAdjustmentRule=JSON.parse(data.get('priceAdjustmentRule')||'{}')}catch(error){message.textContent='JSON: '+error.message;return}request('/api/admin/international_settings',payload).then(function(result){message.textContent=${JSON.stringify(t("international.saved"))}+' v'+result.version.version+'，正在刷新...';setTimeout(function(){location.reload()},500)}).catch(function(error){message.textContent=error.message})});
       Array.prototype.forEach.call(root.querySelectorAll('.activate-settings-version'),function(button){button.addEventListener('click',function(){var row=button.closest('tr'),input=row.querySelector('.activation-reason'),reason=String(input.value||'').trim(),version=button.getAttribute('data-version');if(!reason){message.textContent='请填写 V'+version+' 的启用原因';input.focus();return}if(!window.confirm('确认启用合同参数 V'+version+'？'))return;button.disabled=true;request('/api/admin/international_settings/'+encodeURIComponent(version)+'/activate',{projectId:${JSON.stringify(req.businessContext.projectId)},changeReason:reason}).then(function(){message.textContent='V'+version+' 已启用，正在刷新...';setTimeout(function(){location.reload()},500)}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
       if(calculateButton)calculateButton.addEventListener('click',function(){var payload;try{payload=certificateInput()}catch(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>';return}request('/api/international/certificate/calculate',payload).then(function(result){var order=['grossCertified','lineDeductions','currentRetention','retentionRelease','netCertified','payableNow','carriedForward','cumulativeCertified'],adjustment=result.priceAdjustment&&result.priceAdjustment.enabled?'<tr><th>priceAdjustmentFactor</th><td>'+escapeHtml(result.priceAdjustment.factor)+'</td></tr><tr><th>priceAdjustment</th><td>'+escapeHtml(result.priceAdjustment.adjustment)+' '+escapeHtml(result.baseCurrency)+'</td></tr>':'';totals.innerHTML=adjustment+order.map(function(key){return '<tr><th>'+escapeHtml(key)+'</th><td>'+escapeHtml(result.totals[key])+' '+escapeHtml(result.baseCurrency)+'</td></tr>'}).join('')}).catch(function(error){totals.innerHTML='<tr><td>'+escapeHtml(error.message)+'</td></tr>'})});
-      if(issueButton)issueButton.addEventListener('click',function(){var payload;try{payload={certificateNo:root.querySelector('#fidic-certificate-no').value,periodStart:root.querySelector('#fidic-period-start').value,periodEnd:root.querySelector('#fidic-period-end').value,applicationReference:root.querySelector('#fidic-application-reference').value,openingBalanceReason:root.querySelector('#fidic-opening-balance-reason').value,remarks:root.querySelector('#fidic-certificate-remarks').value,calculationInput:certificateInput()}}catch(error){message.textContent=error.message;return}if(!payload.certificateNo||!payload.periodStart||!payload.periodEnd){message.textContent=${JSON.stringify(t("international.certificateNo"))}+' / '+${JSON.stringify(t("international.periodStart"))}+' / '+${JSON.stringify(t("international.periodEnd"))};return}if(!window.confirm(${JSON.stringify(t("international.issue"))}+' '+payload.certificateNo+'?'))return;var signature=JSON.stringify(payload);if(!pendingIssue||pendingIssue.signature!==signature)pendingIssue={signature:signature,key:newIssueKey()};payload.idempotencyKey=pendingIssue.key;issueButton.disabled=true;request('/api/international/certificates/issue',payload).then(function(result){pendingIssue=null;message.textContent=${JSON.stringify(t("international.issued"))}+'：'+result.record.certificateNo+' / '+result.record.issueChecksum.slice(0,12);setTimeout(function(){location.reload()},500)}).catch(function(error){issueButton.disabled=false;message.textContent=error.message})});
+      if(submitButton)submitButton.addEventListener('click',function(){var payload;try{payload={applicationNo:root.querySelector('#fidic-application-no').value,supersedesApplicationId:root.querySelector('#fidic-supersedes-application-id').value,certificateNo:root.querySelector('#fidic-certificate-no').value,periodStart:root.querySelector('#fidic-period-start').value,periodEnd:root.querySelector('#fidic-period-end').value,applicationReference:root.querySelector('#fidic-application-reference').value,openingBalanceReason:root.querySelector('#fidic-opening-balance-reason').value,remarks:root.querySelector('#fidic-certificate-remarks').value,calculationInput:certificateInput()}}catch(error){message.textContent=error.message;return}if(!payload.applicationNo||!payload.certificateNo||!payload.periodStart||!payload.periodEnd){message.textContent=${JSON.stringify(t("international.applicationNo"))}+' / '+${JSON.stringify(t("international.certificateNo"))}+' / '+${JSON.stringify(t("international.periodStart"))}+' / '+${JSON.stringify(t("international.periodEnd"))};return}if(!window.confirm(${JSON.stringify(t("international.submitApplication"))}+' '+payload.applicationNo+'?'))return;var signature=JSON.stringify(payload);if(!pendingSubmit||pendingSubmit.signature!==signature)pendingSubmit={signature:signature,key:newApplicationKey()};payload.idempotencyKey=pendingSubmit.key;submitButton.disabled=true;request('/api/international/certificate_applications',payload).then(function(result){pendingSubmit=null;message.textContent=${JSON.stringify(t("international.pending"))}+'：'+result.record.applicationNo+' / '+result.record.submissionChecksum.slice(0,12);setTimeout(function(){location.reload()},500)}).catch(function(error){submitButton.disabled=false;message.textContent=error.message})});
+      Array.prototype.forEach.call(root.querySelectorAll('.review-international-application'),function(button){button.addEventListener('click',function(){var action=button.getAttribute('data-action'),id=button.getAttribute('data-id'),remark=window.prompt(action==='approve'?${JSON.stringify(t("international.approve"))}:${JSON.stringify(t("international.return"))});if(!remark)return;button.disabled=true;request('/api/international/certificate_applications/'+encodeURIComponent(id)+'/'+action,{expectedRevision:Number(button.getAttribute('data-revision')),remark:remark}).then(function(){message.textContent=action==='approve'?${JSON.stringify(t("international.approved"))}:${JSON.stringify(t("international.returned"))};setTimeout(function(){location.reload()},500)}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
+      Array.prototype.forEach.call(root.querySelectorAll('.issue-international-application'),function(button){button.addEventListener('click',function(){var id=button.getAttribute('data-id');if(!window.confirm(${JSON.stringify(t("international.issue"))}+' '+button.getAttribute('data-no')+'?'))return;button.disabled=true;request('/api/international/certificate_applications/'+encodeURIComponent(id)+'/issue',{}).then(function(result){message.textContent=${JSON.stringify(t("international.issued"))}+'：'+result.record.certificateNo+' / '+result.record.issueChecksum.slice(0,12);setTimeout(function(){location.reload()},500)}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
+      Array.prototype.forEach.call(root.querySelectorAll('.replace-international-application'),function(button){button.addEventListener('click',function(){var supersedes=root.querySelector('#fidic-supersedes-application-id'),applicationNo=root.querySelector('#fidic-application-no'),certificateNo=root.querySelector('#fidic-certificate-no');if(!supersedes||!applicationNo||!certificateNo)return;supersedes.value=button.getAttribute('data-id');applicationNo.value=button.getAttribute('data-no')+'-R';certificateNo.value=button.getAttribute('data-certificate-no');applicationNo.focus();message.textContent=${JSON.stringify(t("international.returned"))}+'：'+button.getAttribute('data-no')})});
       Array.prototype.forEach.call(root.querySelectorAll('.void-international-certificate'),function(button){button.addEventListener('click',function(){var reason=window.prompt(${JSON.stringify(t("international.voidReason"))});if(!reason||!window.confirm(${JSON.stringify(t("international.void"))}+' '+button.getAttribute('data-no')+'?'))return;button.disabled=true;request('/api/international/certificates/'+encodeURIComponent(button.getAttribute('data-id'))+'/void',{reason:reason}).then(function(){message.textContent=${JSON.stringify(t("international.voided"))};setTimeout(function(){location.reload()},500)}).catch(function(error){button.disabled=false;message.textContent=error.message})})});
     })();</script>
   </div>`;
@@ -8142,10 +8232,12 @@ function workflowDashboardRows() {
     { module: "meterialinmeasure", label: "材料到场", rows: engine.materialArrivalRows(), idField: "arrivalId", noField: "measureNo", titleField: "materialName", moneyField: "money", trackUrl: "/meterialInMeasure/record_page", adjustUrl: "/meterialInMeasure/adjust_page", returnUrl: "/meterialInMeasure/return_order_page" },
     { module: "manualmeasure", label: "手动计量", rows: engine.manualMeasureRows(), idField: "manualId", noField: "measureNo", titleField: "billName", moneyField: "measureMoney", trackUrl: "/manualMeasure/record_page", adjustUrl: "/manualMeasure/adjust_page", returnUrl: "/manualMeasure/return_order_page" },
     { module: "varyapplication", label: "工程变更", rows: engine.variationRows(), idField: "varyId", noField: "varyNo", titleField: "varyReason", moneyField: "varyMoney", trackUrl: "/vary_measure/track_page", adjustUrl: "/vary_measure/adjust_page", returnUrl: "/vary_measure/return_order_page" },
-    { module: "engineeringcontactbill", label: "工程联系单", rows: engine.db.contactBills || [], idField: "contactId", noField: "contactNo", titleField: "title", moneyField: "", trackUrl: "/engineering_contact_bill/track_engineering_contact_bill_page", adjustUrl: "/engineering_contact_bill/edit_page", returnUrl: "/engineering_contact_bill/return_order_page" }
+    { module: "engineeringcontactbill", label: "工程联系单", rows: engine.db.contactBills || [], idField: "contactId", noField: "contactNo", titleField: "title", moneyField: "", trackUrl: "/engineering_contact_bill/track_engineering_contact_bill_page", adjustUrl: "/engineering_contact_bill/edit_page", returnUrl: "/engineering_contact_bill/return_order_page" },
+    { module: "internationalcertificate", label: "国际证书申请", rows: engine.db[internationalCertificateApplication.STORAGE_KEY] || [], idField: "id", noField: "applicationNo", titleField: "applicationNo", moneyField: "", trackUrl: "/international/certificates_page", adjustUrl: "/international/certificates_page", returnUrl: "/international/certificates_page" }
   ];
   return configs.flatMap((config) => config.rows.map((row) => {
-    const id = Number(row[config.idField] || row.id || 0);
+    const rawId = row[config.idField] || row.id || 0;
+    const id = Number.isFinite(Number(rawId)) && String(rawId).trim() !== "" ? Number(rawId) : String(rawId);
     const states = cleanBusinessText(row.states || row.state || "", "待处理");
     const title = cleanBusinessText(row[config.titleField] || row.billName || row.materialName || row.contactContent || row.varyContent || config.label, config.label);
     const businessNo = cleanBusinessText(row[config.noField] || row.skillNo || row.meetingNo || String(id), String(id));
@@ -12800,7 +12892,8 @@ function workflowConfig(type) {
     meterialinmeasure: { rows: engine.db.materialArrivals, key: "arrivalId", no: "measureNo", title: "材料到场" },
     manualmeasure: { rows: engine.db.manualMeasures, key: "manualId", no: "measureNo", title: "手动计量" },
     varyapplication: { rows: engine.db.variations, key: "varyId", no: "varyNo", title: "工程变更" },
-    engineeringcontactbill: { rows: engine.db.contactBills, key: "contactId", no: "contactNo", title: "工程联系单" }
+    engineeringcontactbill: { rows: engine.db.contactBills, key: "contactId", no: "contactNo", title: "工程联系单" },
+    internationalcertificate: { rows: engine.db[internationalCertificateApplication.STORAGE_KEY] || [], key: "id", no: "applicationNo", title: "国际证书申请" }
   };
   return configs[String(type || "").toLowerCase()] || configs.billmeasure;
 }
@@ -12819,7 +12912,7 @@ function ensureWorkflowDefinition(tenantId, module) {
       tenantId,
       projectId: "*",
       module: normalizedModule,
-      definition: defaultDefinition(),
+      definition: normalizedModule === "internationalcertificate" ? certificateApplicationDefinition() : defaultDefinition(),
       changeReason: "初始化标准审批流程"
     });
   }
@@ -12894,9 +12987,10 @@ function executeWorkflowBatchTransition(req, moduleValue, businessIds, action, o
           target.row.workflowInstanceKey = target.instanceKey;
           target.row.states = transition.toStateLabel;
           if (transition.action === "return") target.row.measureState = 0;
+          const rawBusinessId = target.row[target.config.key] || target.row.id || 0;
           logIds.push(addWorkflowLog({
             module,
-            businessId: Number(target.row[target.config.key] || target.row.id || 0),
+            businessId: Number.isFinite(Number(rawBusinessId)) && String(rawBusinessId).trim() !== "" ? Number(rawBusinessId) : String(rawBusinessId),
             businessNo: workflowLabel(target.row, target.config.key),
             action: options.logAction || transition.action,
             result: transition.toStateLabel,
@@ -13018,7 +13112,9 @@ function normalizeWorkflowType(value) {
     varymeasure: "varyapplication",
     variation: "varyapplication",
     engineeringcontactbill: "engineeringcontactbill",
-    contactbill: "engineeringcontactbill"
+    contactbill: "engineeringcontactbill",
+    internationalcertificate: "internationalcertificate",
+    certificateapplication: "internationalcertificate"
   };
   return aliases[text] || text;
 }
@@ -14765,6 +14861,62 @@ app.post("/api/international/certificate/calculate", (req, res) => {
     operationOk(res, calculateInternationalCertificate(req.body));
   } catch (error) {
     res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.get("/api/international/certificate_applications", (req, res) => {
+  try {
+    operationOk(res, internationalCertificateApplication.listApplications(engine.db, { offset: req.query.offset, limit: req.query.limit }));
+  } catch (error) {
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.get("/api/international/certificate_applications/:identifier", (req, res) => {
+  try {
+    const record = internationalCertificateApplication.findApplication(engine.db, req.params.identifier);
+    const workflow = record.workflowInstanceKey ? workflowStore.getInstance(req.authUser.tenantId, req.businessContext.projectId, "internationalcertificate", record.workflowInstanceKey) : null;
+    operationOk(res, { record, workflow, events: workflow ? workflowStore.events({ tenantId: req.authUser.tenantId, projectId: req.businessContext.projectId, module: "internationalcertificate", businessId: record.workflowInstanceKey, limit: 100 }) : [] });
+  } catch (error) {
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/international/certificate_applications", (req, res) => {
+  try {
+    const result = submitInternationalCertificateApplication(req);
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_certificate_application.submit", result: "success", targetType: "international_certificate_application", targetId: result.record.id, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { applicationNo: result.record.applicationNo, certificateNo: result.record.request.certificateNo, replay: result.replay, submissionChecksum: result.record.submissionChecksum } });
+    operationOk(res, result);
+  } catch (error) {
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_certificate_application.submit", result: "failure", targetType: "project", targetId: req.businessContext.projectId, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { applicationNo: req.body.applicationNo, certificateNo: req.body.certificateNo, message: error.message } });
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/international/certificate_applications/:identifier/approve", (req, res) => {
+  try {
+    const result = reviewInternationalCertificateApplication(req, "approve");
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_certificate_application.approve", result: "success", targetType: "international_certificate_application", targetId: result.record.id, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { applicationNo: result.record.applicationNo, revision: result.workflow.revision, remark: req.body.remark } });
+    operationOk(res, result);
+  } catch (error) {
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_certificate_application.approve", result: "failure", targetType: "international_certificate_application", targetId: req.params.identifier, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { message: error.message } });
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/international/certificate_applications/:identifier/return", (req, res) => {
+  try {
+    const result = reviewInternationalCertificateApplication(req, "return");
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_certificate_application.return", result: "success", targetType: "international_certificate_application", targetId: result.record.id, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { applicationNo: result.record.applicationNo, revision: result.workflow.revision, remark: req.body.remark } });
+    operationOk(res, result);
+  } catch (error) {
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_certificate_application.return", result: "failure", targetType: "international_certificate_application", targetId: req.params.identifier, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { message: error.message } });
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/international/certificate_applications/:identifier/issue", (req, res) => {
+  try {
+    const result = issueInternationalCertificate(req);
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_certificate.issue", result: "success", targetType: "international_certificate", targetId: result.record.id, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { applicationId: result.application.id, certificateNo: result.record.certificateNo, replay: result.replay, issueChecksum: result.record.issueChecksum } });
+    operationOk(res, result);
+  } catch (error) {
+    authService.store.audit({ tenantId: req.authUser.tenantId, userId: req.authUser.id, action: "international_certificate.issue", result: "failure", targetType: "international_certificate_application", targetId: req.params.identifier, ipAddress: req.ip, userAgent: req.headers["user-agent"], details: { message: error.message } });
+    res.status(internationalCertificateErrorStatus(error)).json({ code: 0, msg: error.message, data: null });
   }
 });
 app.get("/api/international/certificates", (_req, res) => {

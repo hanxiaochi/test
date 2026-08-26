@@ -44,7 +44,7 @@ test("security migration repairs certificate roles for every existing tenant", (
     assert.deepEqual(reopened.listRoles("legacy-tenant").map((role) => role.code), ["admin", "certificate_approver", "editor", "viewer"]);
     assert.ok(reopened.listRoles("legacy-tenant").find((role) => role.code === "viewer").permissions.includes("international:export"));
     assert.ok(reopened.listRoles("legacy-tenant").find((role) => role.code === "certificate_approver").permissions.includes("international:issue"));
-    assert.ok(reopened.db.prepare("SELECT 1 FROM security_migrations WHERE version = 4").get());
+    assert.ok(reopened.db.prepare("SELECT 1 FROM security_migrations WHERE version = 5").get());
   } finally {
     reopened.close();
   }
@@ -184,10 +184,12 @@ test("user creation validates password and roles transactionally", () => withSto
   assert.equal(store.authorize(viewerLogin.token, "admin:access"), null);
 
   const approver = store.createUser({ account: "approver", password: "Approver-Pass-42!", roleCodes: ["certificate_approver"] });
-  assert.deepEqual(approver.permissions, ["data:read", "international:calculate", "international:export", "international:issue", "international:read", "international:void"]);
+  assert.deepEqual(approver.permissions, ["data:read", "international:calculate", "international:export", "international:issue", "international:read", "international:review", "international:void"]);
   const approverLogin = store.authenticate({ account: "approver", password: "Approver-Pass-42!" });
   assert.ok(store.authorize(approverLogin.token, "international:issue"));
   assert.ok(store.authorize(approverLogin.token, "international:void"));
+  assert.ok(store.authorize(approverLogin.token, "international:review"));
+  assert.equal(store.authorize(approverLogin.token, "international:submit"), null);
   assert.equal(store.authorize(approverLogin.token, "data:write"), null);
 }));
 
@@ -205,7 +207,8 @@ test("administration lists users, changes roles, disables users, and revokes ses
   const admin = store.bootstrap({ account: "ys1", password: "000000" });
   assert.deepStrictEqual(store.listRoles().map((role) => role.code), ["admin", "certificate_approver", "editor", "viewer"]);
   assert.deepStrictEqual(store.listRoles().find((role) => role.code === "viewer").permissions, ["data:read", "international:calculate", "international:export", "international:read"]);
-  assert.deepStrictEqual(store.listRoles().find((role) => role.code === "certificate_approver").permissions, ["data:read", "international:calculate", "international:export", "international:issue", "international:read", "international:void"]);
+  assert.deepStrictEqual(store.listRoles().find((role) => role.code === "editor").permissions, ["data:read", "data:write", "international:calculate", "international:export", "international:read", "international:submit"]);
+  assert.deepStrictEqual(store.listRoles().find((role) => role.code === "certificate_approver").permissions, ["data:read", "international:calculate", "international:export", "international:issue", "international:read", "international:review", "international:void"]);
   const created = store.createUser({ account: "worker", password: "Worker-Pass-42!", roleCodes: ["editor"] });
   assert.deepEqual(store.listUsers().map((user) => user.account), ["worker", "ys1"]);
   const login = store.authenticate({ account: "worker", password: "Worker-Pass-42!" });

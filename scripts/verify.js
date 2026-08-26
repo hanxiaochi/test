@@ -359,7 +359,7 @@ async function verifyAuthorizationFlow() {
   const adminUserId = users.json.data.find((user) => user.account === "ys1").id;
   const roles = await requestJson("/api/admin/roles");
   assert.deepStrictEqual(roles.json.data.map((role) => role.code), ["admin", "certificate_approver", "editor", "viewer"], "admin should list the four built-in roles including certificate approver");
-  assert.deepStrictEqual(roles.json.data.find((role) => role.code === "certificate_approver").permissions, ["data:read", "international:calculate", "international:export", "international:issue", "international:read", "international:void"], "certificate approver should receive only certificate lifecycle grants plus base read access");
+  assert.deepStrictEqual(roles.json.data.find((role) => role.code === "certificate_approver").permissions, ["data:read", "international:calculate", "international:export", "international:issue", "international:read", "international:review", "international:void"], "certificate approver should receive review and certificate lifecycle grants plus base read access");
   const certificateProject = await postJson("/api/admin/projects", { projectKey: "certificate-rbac-project", name: "证书职责分离项目" });
   assert.strictEqual(certificateProject.response.status, 200, "admin should create an isolated certificate RBAC project");
   const editorUser = await postJson("/api/admin/users", {
@@ -392,7 +392,20 @@ async function verifyAuthorizationFlow() {
   assert.strictEqual(editorIssueDenied.response.status, 403, "ordinary business editors must not inherit certificate issuance authority");
   assert.strictEqual(editorIssueDenied.json.requiredPermission, "international:issue", "editor certificate denial should expose the dedicated issue grant");
   const editorWorkbench = await requestText("/international/certificates_page?projectId=certificate-rbac-project");
-  assert.ok(!editorWorkbench.text.includes('id="fidic-issue"'), "editor workbench should not render issuance controls");
+  assert.ok(editorWorkbench.text.includes('id="fidic-submit-application"') && !editorWorkbench.text.includes('class="layui-btn layui-btn-xs issue-international-application"'), "editor workbench should render application submission without issuance controls");
+  const editorApplication = await postJson("/api/international/certificate_applications", {
+    projectId: "certificate-rbac-project",
+    applicationNo: "APP-RBAC-001",
+    certificateNo: "IPC-RBAC-001",
+    periodStart: "2026-01-01",
+    periodEnd: "2026-01-31",
+    idempotencyKey: "ipc-rbac-001-request",
+    calculationInput: { previousRetention: 0, previousCumulativeCertified: 0, lines: [{ code: "RBAC-WORK", category: "work", amount: 100, currency: "CNY" }] }
+  });
+  assert.strictEqual(editorApplication.response.status, 200, "editor should submit a frozen certificate application");
+  assert.strictEqual(editorApplication.json.data.record.states, "待审核", "submission should enter the dedicated pending-review state");
+  const editorReviewDenied = await postJson(`/api/international/certificate_applications/${editorApplication.json.data.record.id}/approve`, { projectId: "certificate-rbac-project", expectedRevision: 1, remark: "self review" });
+  assert.strictEqual(editorReviewDenied.response.status, 403, "application makers must not receive review authority");
 
   authCookieHeader = "";
   const approverLogin = await requestJson("/dologin", {
@@ -403,21 +416,18 @@ async function verifyAuthorizationFlow() {
   authCookieHeader = approverLogin.response.headers.get("set-cookie").split(";")[0];
   const approverWorkbench = await requestText("/international/certificates_page?projectId=certificate-rbac-project");
   assert.strictEqual(approverWorkbench.response.status, 200, "certificate approver should open the operational workbench");
-  assert.ok(approverWorkbench.text.includes('id="fidic-issue"') && !approverWorkbench.text.includes('id="international-settings-form"'), "approver workbench should expose issuance without administrative settings");
+  assert.ok(approverWorkbench.text.includes("APP-RBAC-001") && approverWorkbench.text.includes('data-action="approve"') && !approverWorkbench.text.includes('id="fidic-submit-application"') && !approverWorkbench.text.includes('id="international-settings-form"'), "approver workbench should expose review without application or administrative settings controls");
   assert.doesNotThrow(() => [...approverWorkbench.text.matchAll(/<script>([\s\S]*?)<\/script>/gi)].forEach((match) => new Function(match[1])), "approver workbench inline scripts should compile");
   const approverAdminDenied = await requestJson("/api/admin/international_settings?projectId=certificate-rbac-project");
   assert.strictEqual(approverAdminDenied.response.status, 403, "certificate approver should not administer contract parameters");
   const approverBusinessWriteDenied = await postJson("/bill_measure/save?projectId=certificate-rbac-project", { measureNo: "APPROVER-FORBIDDEN-WRITE" });
   assert.strictEqual(approverBusinessWriteDenied.response.status, 403, "certificate approver should not receive unrelated business write authority");
-  const approverIssued = await postJson("/api/international/certificates/issue", {
-    projectId: "certificate-rbac-project",
-    certificateNo: "IPC-RBAC-001",
-    periodStart: "2026-01-01",
-    periodEnd: "2026-01-31",
-    idempotencyKey: "ipc-rbac-001-request",
-    calculationInput: { previousRetention: 0, previousCumulativeCertified: 0, lines: [{ code: "RBAC-WORK", category: "work", amount: 100, currency: "CNY" }] }
-  });
+  const approverApproved = await postJson(`/api/international/certificate_applications/${editorApplication.json.data.record.id}/approve`, { projectId: "certificate-rbac-project", expectedRevision: 1, remark: "Independent RBAC review" });
+  assert.strictEqual(approverApproved.response.status, 200, "certificate approver should approve another user's application");
+  assert.strictEqual(approverApproved.json.data.record.states, "已批准", "approved applications should persist their business state");
+  const approverIssued = await postJson(`/api/international/certificate_applications/${editorApplication.json.data.record.id}/issue`, { projectId: "certificate-rbac-project" });
   assert.strictEqual(approverIssued.response.status, 200, "certificate approver should issue inside the assigned project");
+  assert.strictEqual(approverIssued.json.data.application.submissionChecksum, editorApplication.json.data.record.submissionChecksum, "issuance should retain the maker's frozen submission checksum");
   const approverExport = await requestBuffer(`/api/international/certificates/${approverIssued.json.data.record.id}/export?projectId=certificate-rbac-project&format=xlsx`);
   assert.ok(approverExport.buffer.subarray(0, 2).equals(Buffer.from("PK")), "certificate approver should export the immutable certificate");
   const approverVoided = await postJson(`/api/international/certificates/${approverIssued.json.data.record.id}/void`, { projectId: "certificate-rbac-project", reason: "RBAC regression unwind" });
@@ -638,7 +648,7 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(page.response.status, 200, "international contract settings page should load");
   assert.ok(page.text.includes("国际合同设置") && page.text.includes("付款证书试算") && page.text.includes("certificateStandard"), "international settings page should expose project settings and certificate calculation controls");
   assert.ok(page.text.includes("priceAdjustmentRule") && page.text.includes("fidic-price-adjustment"), "international settings page should expose index adjustment rule and current-index inputs");
-  assert.ok(page.text.includes('id="fidic-issue"') && page.text.includes('id="international-certificate-register"'), "international settings page should expose certificate issuance and immutable register controls");
+  assert.ok(page.text.includes('id="fidic-submit-application"') && page.text.includes('id="international-application-register"') && page.text.includes('id="international-certificate-register"'), "international settings page should expose application submission and immutable application/certificate registers");
   const catalog = await requestJson("/api/admin/international_settings/catalog");
   assert.strictEqual(catalog.json.data.locales.length, 6, "international catalog should expose six initial locales");
   assert.ok(catalog.json.data.certificateStandards.includes("FIDIC_RED_2017"), "international catalog should expose FIDIC contract profiles");
@@ -674,7 +684,7 @@ async function verifyInternationalContractFlow() {
   assert.deepStrictEqual(projectSettings.json.data.exchangeRates, { "CNY:USD": "0.14" }, "project should read back normalized contract exchange rates");
   const englishPage = await requestText(`/admin/international_settings_page?projectId=${projectId}`);
   assert.ok(englishPage.text.includes("International Contract Settings") && englishPage.text.includes('lang="en-US"') && englishPage.text.includes('dir="ltr"'), "English project should render the international settings page in English and LTR");
-  assert.ok(englishPage.text.includes("Payment certificate register") && englishPage.text.includes("Issue and archive"), "English project should localize certificate register controls");
+  assert.ok(englishPage.text.includes("Payment certificate register") && englishPage.text.includes("Certificate applications") && englishPage.text.includes("Submit certificate application"), "English project should localize application and certificate controls");
   const englishSession = await requestJson(`/api/session/projects?projectId=${projectId}`);
   assert.strictEqual(englishSession.json.data.internationalSettings.locale, "en-US", "session context should expose the selected project's locale");
   assert.strictEqual(englishSession.json.data.translations["shell.logout"], "Sign out", "session context should expose shell translations");
@@ -703,6 +713,41 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(certificate.json.data.settingsVersion, 1, "certificate should identify the immutable project settings version");
   assert.strictEqual(certificate.json.data.settingsSchemaVersion, 2, "certificate should identify the settings checksum schema used for calculation");
   assert.strictEqual(certificate.json.data.settingsChecksum.length, 64, "certificate should expose the settings checksum used for calculation");
+  const adminCookie = authCookieHeader;
+  const checkerUser = await postJson("/api/admin/users", {
+    account: "international_checker",
+    displayName: "International certificate checker",
+    password: "Checker-Pass-42!",
+    mustChangePassword: false,
+    roleCodes: ["certificate_approver"],
+    projectIds: [projectId, "exchange-roundtrip-project"]
+  });
+  assert.strictEqual(checkerUser.response.status, 200, "international regression should create an independent checker");
+  authCookieHeader = "";
+  const checkerLogin = await requestJson("/dologin", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ user_account: "international_checker", password: "Checker-Pass-42!", remember_me: "false" }).toString()
+  });
+  const checkerCookie = checkerLogin.response.headers.get("set-cookie").split(";")[0];
+  authCookieHeader = adminCookie;
+  async function submitApproveIssue(applicationNo, payload, verifySelfReview = false) {
+    authCookieHeader = adminCookie;
+    const submitted = await postJson("/api/international/certificate_applications", { applicationNo, ...payload });
+    assert.strictEqual(submitted.response.status, 200, `${applicationNo} should submit successfully`);
+    assert.strictEqual(submitted.json.data.record.states, "待审核", `${applicationNo} should enter pending review`);
+    if (verifySelfReview) {
+      const selfReview = await postJson(`/api/international/certificate_applications/${submitted.json.data.record.id}/approve`, { projectId: payload.projectId, expectedRevision: 1, remark: "self review must fail" });
+      assert.strictEqual(selfReview.response.status, 409, "a certificate applicant must not approve their own application even with an admin grant");
+    }
+    authCookieHeader = checkerCookie;
+    const approved = await postJson(`/api/international/certificate_applications/${submitted.json.data.record.id}/approve`, { projectId: payload.projectId, expectedRevision: 1, remark: "Independent certificate review" });
+    assert.strictEqual(approved.response.status, 200, `${applicationNo} should be approved by an independent checker`);
+    const issued = await postJson(`/api/international/certificate_applications/${submitted.json.data.record.id}/issue`, { projectId: payload.projectId });
+    authCookieHeader = adminCookie;
+    assert.strictEqual(issued.response.status, 200, `${applicationNo} should issue only after approval`);
+    return { submitted, approved, issued };
+  }
   const issuePayload = {
     projectId,
     certificateNo: "IPC-REG-001",
@@ -713,19 +758,23 @@ async function verifyInternationalContractFlow() {
     idempotencyKey: "ipc-reg-001-request",
     calculationInput: certificateInput
   };
-  const issued = await postJson("/api/international/certificates/issue", issuePayload);
+  const firstFlow = await submitApproveIssue("APP-REG-001", issuePayload, true);
+  const issued = firstFlow.issued;
   assert.strictEqual(issued.response.status, 200, "authorized users should issue a calculated international certificate");
   assert.strictEqual(issued.json.data.replay, false, "first certificate issue should persist a new immutable record");
   assert.strictEqual(issued.json.data.record.calculationResult.totals.netCertified, "1047.25", "issued record should freeze the exact calculated totals");
   assert.strictEqual(issued.json.data.record.settingsVersion, 1, "issued record should pin the active settings version");
   assert.strictEqual(issued.json.data.record.issueChecksum.length, 64, "issued record should expose an immutable issue checksum");
-  const replayed = await postJson("/api/international/certificates/issue", issuePayload);
+  authCookieHeader = adminCookie;
+  const replayedApplication = await postJson("/api/international/certificate_applications", { applicationNo: "APP-REG-001", ...issuePayload });
+  assert.strictEqual(replayedApplication.json.data.replay, true, "an exact application retry should return the frozen application");
+  authCookieHeader = checkerCookie;
+  const replayed = await postJson(`/api/international/certificate_applications/${firstFlow.submitted.json.data.record.id}/issue`, { projectId });
+  authCookieHeader = adminCookie;
   assert.strictEqual(replayed.json.data.replay, true, "an exact idempotent retry should return the original certificate");
   assert.strictEqual(replayed.json.data.record.id, issued.json.data.record.id, "an idempotent retry must not create a second certificate id");
-  const conflictingReplay = await postJson("/api/international/certificates/issue", { ...issuePayload, remarks: "conflicting retry" });
+  const conflictingReplay = await postJson("/api/international/certificate_applications", { applicationNo: "APP-REG-001", ...issuePayload, remarks: "conflicting retry" });
   assert.strictEqual(conflictingReplay.response.status, 409, "a conflicting reuse of an idempotency key should fail closed");
-  const duplicateNo = await postJson("/api/international/certificates/issue", { ...issuePayload, idempotencyKey: "ipc-reg-001-second-key" });
-  assert.strictEqual(duplicateNo.response.status, 409, "a duplicate certificate number should fail closed");
   const register = await requestJson(`/api/international/certificates?projectId=${projectId}`);
   assert.strictEqual(register.json.data.total, 1, "certificate register should count one record after retries are deduplicated");
   assert.deepStrictEqual(register.json.data.rows.map((row) => row.id), [issued.json.data.record.id], "certificate register should return a paged lightweight summary");
@@ -764,8 +813,9 @@ async function verifyInternationalContractFlow() {
       currentIndices: { LABOR: "100", PLANT: "200" }
     }
   };
-  const badContinuation = await postJson("/api/international/certificates/issue", {
+  const badContinuation = await postJson("/api/international/certificate_applications", {
     projectId,
+    applicationNo: "APP-REG-BAD-RETENTION",
     certificateNo: "IPC-REG-BAD-RETENTION",
     periodStart: "2026-08-01",
     periodEnd: "2026-08-31",
@@ -774,8 +824,9 @@ async function verifyInternationalContractFlow() {
   });
   assert.strictEqual(badContinuation.response.status, 400, "a second certificate must reject a mismatched predecessor closing retention");
   assert.ok(badContinuation.json.msg.includes("57.75"), "continuity rejection should expose the exact expected retention");
-  const overlap = await postJson("/api/international/certificates/issue", {
+  const overlap = await postJson("/api/international/certificate_applications", {
     projectId,
+    applicationNo: "APP-REG-BAD-PERIOD",
     certificateNo: "IPC-REG-BAD-PERIOD",
     periodStart: "2026-07-31",
     periodEnd: "2026-08-31",
@@ -785,7 +836,7 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(overlap.response.status, 400, "a new certificate period must not overlap its active predecessor");
   const afterRejectedContinuity = await requestJson(`/api/international/certificates?projectId=${projectId}`);
   assert.strictEqual(afterRejectedContinuity.json.data.total, 1, "failed continuity checks must not mutate the certificate register");
-  const secondIssued = await postJson("/api/international/certificates/issue", {
+  const secondFlow = await submitApproveIssue("APP-REG-002", {
     projectId,
     certificateNo: "IPC-REG-002",
     periodStart: "2026-08-01",
@@ -795,6 +846,7 @@ async function verifyInternationalContractFlow() {
     idempotencyKey: "ipc-reg-002-request",
     calculationInput: secondInput
   });
+  const secondIssued = secondFlow.issued;
   assert.strictEqual(secondIssued.response.status, 200, "a correctly continued second certificate should issue");
   assert.strictEqual(secondIssued.json.data.record.calculationResult.totals.currentRetention, "5.00", "second certificate should calculate its current retention independently");
   assert.strictEqual(secondIssued.json.data.record.calculationResult.totals.netCertified, "95.00", "second certificate should calculate its net certified amount");
@@ -820,7 +872,9 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(versionHistory.json.data[0].changeReason, "Regression contract settings", "international settings history should preserve change reasons");
   const secondVersion = await postJson("/api/admin/international_settings", { projectId, changeReason: "Regression locale update", locale: "fr-FR" });
   assert.strictEqual(secondVersion.json.data.version.version, 2, "international settings updates should create consecutive versions");
-  const replayAfterSettingsUpdate = await postJson("/api/international/certificates/issue", issuePayload);
+  authCookieHeader = checkerCookie;
+  const replayAfterSettingsUpdate = await postJson(`/api/international/certificate_applications/${firstFlow.submitted.json.data.record.id}/issue`, { projectId });
+  authCookieHeader = adminCookie;
   assert.strictEqual(replayAfterSettingsUpdate.json.data.replay, true, "an idempotent retry after a settings change should return the first frozen certificate");
   assert.strictEqual(replayAfterSettingsUpdate.json.data.record.settingsVersion, 1, "a retry must not silently recalculate an issued certificate under newer settings");
   const missingActivationReason = await postJson("/api/admin/international_settings/1/activate", { projectId });
@@ -857,8 +911,9 @@ async function verifyInternationalContractFlow() {
     previousCumulativeCertified: "200",
     lines: [{ code: "OPEN-WORK-001", category: "work", amount: "100", currency: "CNY" }]
   };
-  const missingOpeningReason = await postJson("/api/international/certificates/issue", {
+  const missingOpeningReason = await postJson("/api/international/certificate_applications", {
     projectId: arabicProjectId,
+    applicationNo: "APP-OPEN-BAD",
     certificateNo: "IPC-OPEN-BAD",
     periodStart: "2026-01-01",
     periodEnd: "2026-01-31",
@@ -866,7 +921,7 @@ async function verifyInternationalContractFlow() {
     calculationInput: openingInput
   });
   assert.strictEqual(missingOpeningReason.response.status, 400, "a non-zero first-certificate opening balance should require a migration reason through the HTTP API");
-  const openingIssued = await postJson("/api/international/certificates/issue", {
+  const openingFlow = await submitApproveIssue("APP-OPEN-001", {
     projectId: arabicProjectId,
     certificateNo: "IPC-OPEN-001",
     periodStart: "2026-01-01",
@@ -875,19 +930,22 @@ async function verifyInternationalContractFlow() {
     idempotencyKey: "ipc-opening-001-request",
     calculationInput: openingInput
   });
+  const openingIssued = openingFlow.issued;
   assert.strictEqual(openingIssued.response.status, 200, "an explained legacy opening balance should issue through the HTTP API");
   assert.strictEqual(openingIssued.json.data.record.openingBalanceReason, "Audited legacy balance migration", "the immutable certificate should retain its opening balance reason");
   const arabicPage = await requestText(`/admin/international_settings_page?projectId=${arabicProjectId}`);
   assert.ok(arabicPage.text.includes("إعدادات العقود الدولية") && arabicPage.text.includes('lang="ar-SA"') && arabicPage.text.includes('dir="rtl"'), "Arabic project should render localized RTL administration markup");
-  assert.ok(arabicPage.text.includes("سجل شهادات الدفع") && arabicPage.text.includes("إصدار وأرشفة"), "Arabic project should localize certificate register controls");
+  assert.ok(arabicPage.text.includes("سجل شهادات الدفع") && arabicPage.text.includes("طلبات الشهادات") && arabicPage.text.includes("تقديم طلب الشهادة"), "Arabic project should localize application and certificate controls");
   assert.ok(arabicPage.text.includes('id="international-settings-history"') && arabicPage.text.includes('data-settings-version="1"'), "international administration page should render project version history");
   const versionedPage = await requestText(`/admin/international_settings_page?projectId=${projectId}`);
   assert.ok(versionedPage.text.includes("activation-reason") && versionedPage.text.includes("activate-settings-version"), "international administration page should expose reasoned historical activation controls");
   const audit = await requestJson("/api/admin/security_audit?limit=200");
   assert.ok(audit.json.data.some((row) => row.action === "international_settings.update" && row.result === "success"), "successful international settings updates should be audited");
   assert.ok(audit.json.data.some((row) => row.action === "international_settings.update" && row.result === "failure"), "failed international settings updates should be audited");
+  assert.ok(audit.json.data.some((row) => row.action === "international_certificate_application.submit" && row.result === "success"), "successful international certificate applications should be audited");
+  assert.ok(audit.json.data.some((row) => row.action === "international_certificate_application.submit" && row.result === "failure"), "failed international certificate applications should be audited");
+  assert.ok(audit.json.data.some((row) => row.action === "international_certificate_application.approve" && row.result === "failure"), "rejected self-review attempts should be audited");
   assert.ok(audit.json.data.some((row) => row.action === "international_certificate.issue" && row.result === "success"), "successful international certificate issues should be audited");
-  assert.ok(audit.json.data.some((row) => row.action === "international_certificate.issue" && row.result === "failure"), "failed international certificate issues should be audited");
   assert.ok(audit.json.data.some((row) => row.action === "international_certificate.void" && row.result === "success"), "successful international certificate voids should be audited");
   assert.ok(audit.json.data.some((row) => row.action === "international_certificate.void" && row.result === "failure"), "failed international certificate voids should be audited");
   assert.ok(audit.json.data.some((row) => row.action === "international_certificate.export" && row.result === "success"), "successful international certificate exports should be audited");
@@ -4346,7 +4404,7 @@ async function verifyWorkflowConsistencyInspectionLoop() {
   assert.strictEqual(response.response.status, 200, "workflow consistency API should load");
   assert.strictEqual(response.json.data.tenantId, "default", "workflow consistency API should remain tenant scoped");
   assert.strictEqual(response.json.data.projectId, "1", "workflow consistency API should remain project scoped");
-  assert.strictEqual(response.json.data.totals.modules, 6, "workflow consistency API should inspect all workflow modules");
+  assert.strictEqual(response.json.data.totals.modules, 7, "workflow consistency API should inspect all workflow modules including international certificate applications");
   assert.strictEqual(response.json.data.counts.error, 0, `verified workflow data should have no consistency errors: ${JSON.stringify(response.json.data.issues)}`);
 }
 

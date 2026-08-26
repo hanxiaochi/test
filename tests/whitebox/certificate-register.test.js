@@ -60,6 +60,7 @@ const issueMetadata = { id: "cert-1", issuedAt: "2026-08-01T00:00:00.000Z", issu
 
 test("issues an immutable checksummed certificate and lists exact snapshots", () => {
   const state = {};
+  assert.deepEqual(register.validateCertificateRequest(state, request()), register.normalizedRequest(request()));
   const result = register.issueCertificate(state, request(), issueMetadata);
   assert.equal(result.replay, false);
   assert.equal(result.record.status, "issued");

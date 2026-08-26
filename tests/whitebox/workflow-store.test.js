@@ -5,7 +5,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const test = require("node:test");
-const { WorkflowStore, defaultDefinition, normalizeDefinition } = require("../../lib/workflow/workflow-store");
+const { WorkflowStore, certificateApplicationDefinition, defaultDefinition, normalizeDefinition } = require("../../lib/workflow/workflow-store");
 
 function withStore(run) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "workflow-store-"));
@@ -63,6 +63,20 @@ test("definitions are normalized, versioned, activated, inherited and isolated",
   assert.equal(store.getActive("tenant-a", "project-z", "billmeasure").projectId, "*");
   assert.equal(store.getActive("tenant-b", "project-z", "billmeasure"), null);
   assert.throws(() => store.activate({ id: first.id, tenantId: "tenant-b", projectId: "project-a", module: "manualmeasure" }), (error) => error.code === "WORKFLOW_DEFINITION_NOT_FOUND" && error.status === 404);
+}));
+
+test("certificate applications use a dedicated maker-checker workflow", () => withStore((store) => {
+  const definition = certificateApplicationDefinition();
+  assert.deepEqual(definition.states.map((state) => state.code), ["draft", "pending", "approved", "returned"]);
+  assert.deepEqual(definition.transitions.map((item) => [item.action, item.permission]), [
+    ["submit", "international:submit"], ["approve", "international:review"], ["return", "international:review"]
+  ]);
+  store.createVersion({ tenantId: "tenant-a", projectId: "project-a", module: "internationalcertificate", definition });
+  const submitted = store.transition({ tenantId: "tenant-a", projectId: "project-a", module: "internationalcertificate", businessId: "application-1", action: "submit", actorAccount: "editor", permissions: ["international:submit"] });
+  assert.equal(submitted.toState, "pending");
+  assert.throws(() => store.transition({ tenantId: "tenant-a", projectId: "project-a", module: "internationalcertificate", businessId: "application-1", action: "approve", actorAccount: "editor", permissions: ["international:submit"], remark: "self approve" }), /permission/);
+  const approved = store.transition({ tenantId: "tenant-a", projectId: "project-a", module: "internationalcertificate", businessId: "application-1", action: "approve", actorAccount: "approver", permissions: ["international:review"], remark: "checked" });
+  assert.equal(approved.toState, "approved");
 }));
 
 test("workflow transition enforces state, permission, remarks, revision and event identity", () => withStore((store) => {
