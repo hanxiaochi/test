@@ -13,14 +13,16 @@ function approvedEvent() {
     eventNo: "VO-EXPORT-001",
     eventType: "variation",
     title: "Additional foundation work",
+    occurredDate: "2026-07-10",
     noticeDate: "2026-08-01",
+    lateNoticeReason: "",
     currency: "USD",
     claimedAmount: "12500.75",
     claimedTimeImpactDays: 12,
     contractClause: "13.3",
     description: "Engineer instructed additional foundation work.",
     idempotencyKey: "event-export-001"
-  }, { id: "event-export-1", submittedAt: "2026-08-02T00:00:00.000Z", submittedBy: "editor", submittedByUserId: 10 }).record;
+  }, { id: "event-export-1", submittedAt: "2026-08-02T00:00:00.000Z", submittedBy: "editor", submittedByUserId: 10, settingsVersion: 2, settingsSchemaVersion: 3, settingsChecksum: "c".repeat(64), noticeRule: { enabled: true, variationNoticeDays: 28, claimNoticeDays: 28, requireLateReason: true } }).record;
   const workflowApproved = { ...created, states: "已批准", workflowInstanceKey: "wf-event-export-1" };
   return events.approveRecord(workflowApproved, {
     approvedAmount: "12000.50",
@@ -36,10 +38,12 @@ test("builds one localized model from a verified approved determination", () => 
   assert.equal(model.locale, "zh-CN");
   assert.equal(model.direction, "ltr");
   assert.ok(model.eventRows.some(([key, value]) => key === "事件类型" && value === "变更"));
+  assert.ok(model.eventRows.some(([key, value]) => key === "通知截止日期" && value === "2026-08-07"));
   assert.ok(model.determinationRows.some(([key, value]) => key === "审定金额" && value === "12000.5"));
   assert.ok(model.integrityRows.some(([key, value]) => key === "审定 SHA-256" && value === record.decisionChecksum));
   assert.ok(model.integrityRows.some(([key, value]) => key === "证据文件数" && value === 0));
   assert.ok(model.integrityRows.some(([key, value]) => key === "证据清单 SHA-256" && value === record.evidenceChecksum));
+  assert.ok(model.integrityRows.some(([key, value]) => key === "通知参数 SHA-256" && value === "c".repeat(64)));
   assert.equal(exporter.text(null), "");
   assert.equal(exporter.reportText("unknown", "title"), "Contract Event Determination");
   assert.equal(exporter.reportText("en-US", "unknown.key"), "unknown.key");
@@ -61,6 +65,20 @@ test("builds one localized model from a verified approved determination", () => 
   const tampered = structuredClone(record);
   tampered.approvedAmount = "99999";
   assert.throws(() => exporter.contractEventModel(tampered), /exceeds the claim|checksum mismatch/);
+});
+
+test("keeps schema v2 determinations exportable without invented notice fields", () => {
+  const legacy = structuredClone(approvedEvent());
+  legacy.schemaVersion = 2;
+  delete legacy.request.occurredDate;
+  delete legacy.request.lateNoticeReason;
+  delete legacy.request.noticeAssessment;
+  legacy.submissionChecksum = events.recordChecksum(events.submissionPayload(legacy));
+  legacy.decisionChecksum = events.recordChecksum(events.decisionPayload(legacy));
+  const model = exporter.contractEventModel(legacy, { locale: "en-US" });
+  assert.equal(model.record.schemaVersion, 2);
+  assert.equal(model.eventRows.some(([key]) => key === "Occurrence date"), false);
+  assert.equal(model.integrityRows.some(([key]) => key === "Notice settings SHA-256"), false);
 });
 
 test("localizes every supported report with complete labels", () => {

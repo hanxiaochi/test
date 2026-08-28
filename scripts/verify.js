@@ -413,7 +413,9 @@ async function verifyAuthorizationFlow() {
     eventNo: "VO-RBAC-001",
     eventType: "variation",
     title: "RBAC foundation variation",
+    occurredDate: "2026-01-01",
     noticeDate: "2026-01-10",
+    lateNoticeReason: "",
     currency: "CNY",
     claimedAmount: "50000",
     claimedTimeImpactDays: 5,
@@ -773,7 +775,8 @@ async function verifyInternationalContractFlow() {
         { code: "LABOR", label: "Labour", weight: "0.5", baseIndex: "100" },
         { code: "PLANT", label: "Plant", weight: "0.35", baseIndex: "200" }
       ]
-    }
+    },
+    contractEventNoticeRule: { enabled: true, variationNoticeDays: 28, claimNoticeDays: 14, requireLateReason: true }
   });
   assert.strictEqual(saved.json.data.settings.locale, "en-US", "project should persist its own locale");
   assert.strictEqual(saved.json.data.settings.baseCurrency, "USD", "project should persist its own base currency");
@@ -808,7 +811,7 @@ async function verifyInternationalContractFlow() {
   assert.strictEqual(certificate.json.data.totals.currentRetention, "57.75", "certificate should apply project retention rules after conversion and index adjustment");
   assert.strictEqual(certificate.json.data.totals.netCertified, "1047.25", "certificate should close additions, deductions, adjustment, and retention exactly");
   assert.strictEqual(certificate.json.data.settingsVersion, 1, "certificate should identify the immutable project settings version");
-  assert.strictEqual(certificate.json.data.settingsSchemaVersion, 2, "certificate should identify the settings checksum schema used for calculation");
+  assert.strictEqual(certificate.json.data.settingsSchemaVersion, 3, "certificate should identify the settings checksum schema used for calculation");
   assert.strictEqual(certificate.json.data.settingsChecksum.length, 64, "certificate should expose the settings checksum used for calculation");
   const adminCookie = authCookieHeader;
   const checkerUser = await postJson("/api/admin/users", {
@@ -833,7 +836,9 @@ async function verifyInternationalContractFlow() {
     eventNo: "VO-REG-001",
     eventType: "variation",
     title: "International variation regression",
+    occurredDate: "2026-05-23",
     noticeDate: "2026-06-20",
+    lateNoticeReason: "",
     currency: "CNY",
     claimedAmount: "1000",
     claimedTimeImpactDays: 0,
@@ -842,6 +847,39 @@ async function verifyInternationalContractFlow() {
     idempotencyKey: "event-vo-reg-001"
   });
   assert.strictEqual(variationEvent.response.status, 200, "certificate regression should submit its variation entitlement first");
+  assert.strictEqual(variationEvent.json.data.record.request.noticeAssessment.status, "timely", "notice submitted on the configured deadline should remain timely");
+  assert.strictEqual(variationEvent.json.data.record.request.noticeAssessment.deadlineDate, "2026-06-20", "notice deadline should use deterministic UTC date arithmetic");
+  assert.strictEqual(variationEvent.json.data.record.request.noticeAssessment.settingsSchemaVersion, 3, "contract event should freeze the active settings schema");
+  const missingLateReason = await postJson("/api/international/contract_events", {
+    projectId,
+    eventNo: "CL-REG-LATE-001",
+    eventType: "claim",
+    title: "Late claim notice regression",
+    occurredDate: "2026-06-01",
+    noticeDate: "2026-06-16",
+    currency: "USD",
+    claimedAmount: "1",
+    claimedTimeImpactDays: 0,
+    description: "One day beyond the configured claim notice period",
+    idempotencyKey: "event-claim-late-missing-reason"
+  });
+  assert.strictEqual(missingLateReason.response.status, 400, "late notice without a required explanation should fail closed");
+  const explainedLateClaim = await postJson("/api/international/contract_events", {
+    projectId,
+    eventNo: "CL-REG-LATE-001",
+    eventType: "claim",
+    title: "Late claim notice regression",
+    occurredDate: "2026-06-01",
+    noticeDate: "2026-06-16",
+    lateNoticeReason: "The employer continued contemporaneous evaluation of the notified effect.",
+    currency: "USD",
+    claimedAmount: "1",
+    claimedTimeImpactDays: 0,
+    description: "One day beyond the configured claim notice period",
+    idempotencyKey: "event-claim-late-with-reason"
+  });
+  assert.strictEqual(explainedLateClaim.response.status, 200, "late notice with an explanation should be recorded as risk rather than automatically denied");
+  assert.strictEqual(explainedLateClaim.json.data.record.request.noticeAssessment.status, "late", "explained late notice should retain its deterministic risk status");
   authCookieHeader = checkerCookie;
   const approvedVariationEvent = await postJson(`/api/international/contract_events/${variationEvent.json.data.record.id}/approve`, { projectId, expectedRevision: 1, approvedAmount: "1000", approvedTimeImpactDays: 0, decisionReason: "Variation entitlement verified" });
   assert.strictEqual(approvedVariationEvent.response.status, 200, "independent checker should approve the variation entitlement");

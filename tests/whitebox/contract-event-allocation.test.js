@@ -13,7 +13,9 @@ function approvedEvent(state, overrides = {}) {
     eventNo: "VO-001",
     eventType: "variation",
     title: "Foundation variation",
+    occurredDate: "2026-07-10",
     noticeDate: "2026-08-01",
+    lateNoticeReason: "",
     currency: "USD",
     claimedAmount: "1000",
     claimedTimeImpactDays: 5,
@@ -21,7 +23,7 @@ function approvedEvent(state, overrides = {}) {
     contractClause: "13.3",
     idempotencyKey: "allocation-event-001",
     ...overrides
-  }, { id: "event-1", submittedAt: "2026-08-02T00:00:00.000Z", submittedBy: "editor", submittedByUserId: 7 });
+  }, { id: "event-1", submittedAt: "2026-08-02T00:00:00.000Z", submittedBy: "editor", submittedByUserId: 7, settingsVersion: 1, settingsSchemaVersion: 3, settingsChecksum: "c".repeat(64), noticeRule: { enabled: true, variationNoticeDays: 28, claimNoticeDays: 28, requireLateReason: true } });
   state.internationalContractEvents[0].states = "已批准";
   state.internationalContractEvents[0] = events.approveRecord(state.internationalContractEvents[0], {
     approvedAmount: overrides.approvedAmount || "1000",

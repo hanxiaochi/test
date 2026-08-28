@@ -10,11 +10,13 @@ function payload(overrides = {}) {
     eventNo: "VO-001",
     eventType: "variation",
     title: "Changed foundation depth",
+    occurredDate: "2026-07-10",
     noticeDate: "2026-08-01",
     currency: "usd",
     claimedAmount: "125000.50",
     claimedTimeImpactDays: 12,
     description: "Engineer instructed deeper foundations",
+    lateNoticeReason: "",
     contractClause: "3.5 / 13.3",
     idempotencyKey: "event-vo-001",
     ...overrides
@@ -27,6 +29,10 @@ function create(state, overrides = {}, metadata = {}) {
     submittedAt: "2026-08-02T00:00:00.000Z",
     submittedBy: "editor",
     submittedByUserId: 7,
+    settingsVersion: 2,
+    settingsSchemaVersion: 3,
+    settingsChecksum: "c".repeat(64),
+    noticeRule: { enabled: true, variationNoticeDays: 28, claimNoticeDays: 28, requireLateReason: true },
     ...metadata
   });
 }
@@ -37,7 +43,11 @@ test("creates, verifies, lists and replays an immutable contract event", () => {
   assert.equal(created.replay, false);
   assert.equal(created.record.request.currency, "USD");
   assert.equal(created.record.request.claimedAmount, "125000.5");
-  assert.equal(created.record.schemaVersion, 2);
+  assert.equal(created.record.schemaVersion, 3);
+  assert.equal(created.record.request.noticeAssessment.status, "timely");
+  assert.equal(created.record.request.noticeAssessment.deadlineDate, "2026-08-07");
+  assert.equal(created.record.request.noticeAssessment.elapsedDays, 22);
+  assert.equal(created.record.request.noticeAssessment.settingsChecksum, "c".repeat(64));
   assert.deepEqual(created.record.evidenceManifest, []);
   assert.equal(created.record.evidenceChecksum, "");
   assert.equal(created.record.submissionChecksum.length, 64);
@@ -84,12 +94,54 @@ test("schema v2 freezes an empty evidence manifest while schema v1 remains compa
   legacy.schemaVersion = 1;
   delete legacy.evidenceManifest;
   delete legacy.evidenceChecksum;
+  delete legacy.request.occurredDate;
+  delete legacy.request.lateNoticeReason;
+  delete legacy.request.noticeAssessment;
   legacy.submissionChecksum = events.recordChecksum(events.submissionPayload(legacy));
   assert.equal(events.eventView(legacy).schemaVersion, 1);
   legacy.states = "已批准";
   const legacyApproved = events.approveRecord(legacy, { approvedAmount: "1", approvedTimeImpactDays: 0, decisionReason: "Legacy determination" }, { approvedAt: "2026-08-03T00:00:00.000Z", approvedBy: "checker", approvedByUserId: 8 });
   assert.equal(legacyApproved.schemaVersion, 1);
   assert.equal(Object.prototype.hasOwnProperty.call(legacyApproved, "evidenceManifest"), false);
+
+  const schemaTwoState = {};
+  create(schemaTwoState, { eventNo: "VO-V2", idempotencyKey: "event-schema-v2" }, { id: "event-v2" });
+  const schemaTwo = schemaTwoState.internationalContractEvents[0];
+  schemaTwo.schemaVersion = 2;
+  delete schemaTwo.request.occurredDate;
+  delete schemaTwo.request.lateNoticeReason;
+  delete schemaTwo.request.noticeAssessment;
+  schemaTwo.submissionChecksum = events.recordChecksum(events.submissionPayload(schemaTwo));
+  assert.equal(events.eventView(schemaTwo).schemaVersion, 2);
+});
+
+test("assesses configured notice deadlines and freezes late explanations", () => {
+  const onDeadline = {};
+  const timely = create(onDeadline, { occurredDate: "2026-08-01", noticeDate: "2026-08-29" }).record;
+  assert.equal(timely.request.noticeAssessment.status, "timely");
+  assert.equal(timely.request.noticeAssessment.deadlineDate, "2026-08-29");
+  assert.equal(timely.request.noticeAssessment.elapsedDays, 28);
+
+  const lateState = {};
+  const late = create(lateState, { occurredDate: "2026-08-01", noticeDate: "2026-08-30", lateNoticeReason: "Employer continued evaluating the instructed work." }).record;
+  assert.equal(late.request.noticeAssessment.status, "late");
+  assert.equal(late.request.noticeAssessment.elapsedDays, 29);
+  assert.equal(late.request.lateNoticeReason, "Employer continued evaluating the instructed work.");
+  assert.throws(() => create({}, { occurredDate: "2026-08-01", noticeDate: "2026-08-30" }), /late notice reason is required/);
+
+  const disabled = create({}, { occurredDate: "2026-08-01", noticeDate: "2026-09-30" }, { noticeRule: { enabled: false, variationNoticeDays: 7, claimNoticeDays: 7, requireLateReason: true } }).record;
+  assert.equal(disabled.request.noticeAssessment.status, "not_applicable");
+  assert.equal(disabled.request.noticeAssessment.deadlineDate, "");
+  const claim = create({}, { eventType: "claim", occurredDate: "2026-08-01", noticeDate: "2026-08-16" }, { noticeRule: { enabled: true, variationNoticeDays: 28, claimNoticeDays: 14, requireLateReason: false } }).record;
+  assert.equal(claim.request.noticeAssessment.status, "late");
+  assert.equal(claim.request.noticeAssessment.applicablePeriodDays, 14);
+  assert.equal(claim.request.noticeAssessment.deadlineDate, "2026-08-15");
+  assert.throws(() => create({}, { occurredDate: "2026-08-02", noticeDate: "2026-08-01" }), /notice date cannot precede/);
+  assert.throws(() => create({}, { occurredDate: "bad-date" }), /occurrence date.*ISO/);
+  assert.throws(() => create({}, {}, { settingsChecksum: "bad" }), /settings checksum/);
+  const tampered = structuredClone(timely);
+  tampered.request.noticeAssessment.deadlineDate = "2026-08-30";
+  assert.throws(() => events.eventView(tampered), /notice assessment mismatch|submission checksum mismatch/);
 });
 
 test("supports one replacement only for a returned event", () => {
