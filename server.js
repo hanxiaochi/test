@@ -31,6 +31,7 @@ const { browserMutationGuard, securityHeaders } = require("./lib/security/http-s
 const { WorkflowError, WorkflowStore, certificateApplicationDefinition, contractEventDefinition, defaultDefinition } = require("./lib/workflow/workflow-store");
 const workflowCoordinator = require("./lib/workflow/workflow-coordinator");
 const { scanWorkflowConsistency } = require("./lib/workflow/workflow-consistency");
+const regionPackRegistry = require("./lib/regions/pack-registry").createRegistry();
 const engine = require("./costEngine");
 
 (engine.db.projects || []).forEach((project) => {
@@ -74,7 +75,10 @@ const measureImportUpload = multer({
 }).single("file");
 const ruleStore = new RuleStore(process.env.APP_RULE_DB_PATH || authService.securityFile);
 const workflowStore = new WorkflowStore(process.env.APP_WORKFLOW_DB_PATH || authService.securityFile);
-const workflowModules = ["billmeasure", "meterialdiasmeasure", "meterialinmeasure", "manualmeasure", "varyapplication", "engineeringcontactbill", "internationalcertificate", "internationalcontractevent"];
+const workflowModules = [
+  ...(regionPackRegistry.hasCapability("cn-measurement") ? ["billmeasure", "meterialdiasmeasure", "meterialinmeasure", "manualmeasure", "varyapplication", "engineeringcontactbill"] : []),
+  ...(regionPackRegistry.hasCapability("fidic-certificates") ? ["internationalcertificate", "internationalcontractevent"] : [])
+];
 function workflowDefinitionForModule(module) {
   if (module === "internationalcertificate") return certificateApplicationDefinition();
   if (module === "internationalcontractevent") return contractEventDefinition();
@@ -713,6 +717,15 @@ app.use((req, res, next) => {
       return;
     }
     res.redirect("/account/password_page");
+    return;
+  }
+  try {
+    regionPackRegistry.requireRoute(req.path);
+    const legacyResourceMatch = req.path.match(/^\/sbr\/sbr_com\/(\d+)\/?$/);
+    const regionalResourceId = (req.body && req.body.leftId) || req.query.leftId || (legacyResourceMatch && legacyResourceMatch[1]) || "";
+    if (regionalResourceId) regionPackRegistry.requireResource(regionalResourceId);
+  } catch (error) {
+    res.status(error.status || 404).json({ code: 0, msg: error.message, data: null, errorCode: error.code || "REGION_PACK_DISABLED" });
     return;
   }
   const required = requiredPermission(req);
@@ -14707,7 +14720,8 @@ app.get("/user/curr_user_info", (req, res) => {
     locale: internationalSettings.locale,
     direction: internationalSettings.direction,
     baseCurrency: internationalSettings.baseCurrency,
-    translations: internationalSettingsService.translationsFor(internationalSettings.locale)
+    translations: internationalSettingsService.translationsFor(internationalSettings.locale),
+    moduleManifest: regionPackRegistry.publicManifest({ hasPermission: (permission) => authCore.hasPermission(user.permissions, permission) })
   });
 });
 
@@ -14717,9 +14731,14 @@ app.get("/api/session/projects", (req, res) => {
     projects: authService.store.accessibleProjects(req.authUser.id, req.authUser.tenantId),
     currentProjectId: req.businessContext.projectId,
     internationalSettings,
-    translations: internationalSettingsService.translationsFor(internationalSettings.locale)
+    translations: internationalSettingsService.translationsFor(internationalSettings.locale),
+    moduleManifest: regionPackRegistry.publicManifest({ hasPermission: (permission) => authCore.hasPermission(req.authUser.permissions, permission) })
   });
 });
+
+app.get("/api/client/modules", (req, res) => operationOk(res, regionPackRegistry.publicManifest({
+  hasPermission: (permission) => authCore.hasPermission(req.authUser.permissions, permission)
+})));
 
 app.post("/api/session/project", (req, res) => {
   const projectId = String(req.body.projectId || "");
@@ -14781,10 +14800,10 @@ app.get("/js/ColResizable/colResizable-1.6.min.js", (req, res) => {
 
 app.post("/sbr/sbr_find", (req, res) => {
   if (req.body.type === "menu") {
-    operationOk(res, topMenuRaw);
+    operationOk(res, regionPackRegistry.filterMenu(topMenuRaw));
     return;
   }
-  operationOk(res, leftMenus.get(String(req.body.parentId || "")) || []);
+  operationOk(res, regionPackRegistry.filterMenu(leftMenus.get(String(req.body.parentId || "")) || []));
 });
 
 app.all("/workPosition/getWorkPositionPageTest", (req, res) => {

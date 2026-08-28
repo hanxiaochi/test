@@ -186,6 +186,12 @@ async function verifyLoginFlow() {
   assert.strictEqual(relogin.json.code, 1, "administrator should authenticate with the replacement password");
   assert.strictEqual(relogin.json.data.mustChangePassword, false, "replacement password should clear the forced-change flag");
   authCookieHeader = relogin.response.headers.get("set-cookie").split(";")[0];
+  const modules = await requestJson("/api/client/modules");
+  assert.strictEqual(modules.response.status, 200, "authenticated clients should receive the frontend module manifest");
+  assert.deepStrictEqual(modules.json.data.packs.map((pack) => pack.id), ["core-platform", "cn-mainland", "fidic-international"], "default deployment should assemble all commercial region packs in configured order");
+  assert.strictEqual(modules.json.data.checksum.length, 64, "frontend module manifest should expose a deterministic SHA-256");
+  const sessionProjects = await requestJson("/api/session/projects");
+  assert.strictEqual(sessionProjects.json.data.moduleManifest.checksum, modules.json.data.checksum, "project session and module endpoint should expose the same frontend assembly manifest");
 }
 
 async function verifyLoginRateLimit() {

@@ -25,6 +25,7 @@ GitHub：https://github.com/hanxiaochi/test/tree/codex/zwkjy-clone
 - `data/tenants/` 保存其他租户和项目的隔离业务数据库。
 - `data/backups/` 保存应用内创建或导入的项目级业务备份。
 - `data/runtime-db.json` 是旧版数据源，仅用于首次非破坏迁移和应急 JSON 回滚。
+- `lib/regions/packs/` 与 `config/region-profiles/` 组成地区版本装配流水线；同一模块清单控制前端展示、后端路由、能力和工作流。完整说明见 `REGION_MODULES.md`。
 
 SQLite 是默认模式，不需要 MySQL 或 PostgreSQL。账号、RBAC、租户/项目隔离、审计、规则版本、备份恢复和数据交换后台均已包含在当前版本中。
 
@@ -175,6 +176,8 @@ APP_ATTACHMENT_MAX_BYTES=20971520
 APP_MEASURE_IMPORT_MAX_BYTES=10485760
 APP_MEASURE_IMPORT_MAX_ROWS=5000
 APP_MEASURE_IMPORT_MAX_SHEETS=5
+# 国内商业版；国际版可改为 fidic-international-commercial.json
+APP_REGION_PROFILE_PATH=/opt/zwkjy-clone/config/region-profiles/cn-mainland-commercial.json
 # APP_AMAP_KEY=请在需要地图功能时填写并限制生产域名
 # APP_AMAP_SECURITY_CODE=请填写与 Key 配套的安全密钥
 EOF

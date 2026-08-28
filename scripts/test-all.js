@@ -13,6 +13,7 @@ const commands = [
   ["run", "test:login-rate-persistence"],
   ["run", "test:auth-config"],
   ["run", "test:client-config"],
+  ["run", "test:region-packs"],
   ["run", "test:http-security"],
   ["run", "test:runtime"],
   ["run", "test:readiness"],
@@ -41,7 +42,8 @@ const commands = [
   ["run", "test:payment-fixtures"],
   ["run", "sample:regression"],
   ["run", "verify"],
-  ["run", "verify:sqlite"]
+  ["run", "verify:sqlite"],
+  ["run", "verify:region-profile"]
 ];
 
 for (const args of commands) {

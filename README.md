@@ -23,12 +23,19 @@ http://localhost:3100
 ys1 / 000000
 ```
 
+## 地区模块装配
+
+系统由 `core-platform`、`cn-mainland` 和 `fidic-international` 模块装配。默认配置保留全部功能；国内版和国际版预置配置会使用同一注册表同步裁剪前端菜单/页面、后端路由、业务能力与审批工作流，关闭模块不能通过直接 URL 绕过。
+
+地区版本的配置、部署方式和新增客户模块流水线见 `REGION_MODULES.md`。
+
 ## 验证
 
 在 Windows PowerShell 中建议使用：
 
 ```bash
 npm.cmd run verify
+npm.cmd run verify:region-profile
 ```
 
 验证内容包括：运行健康检查、接口契约、页面动作接口、静态资源、核心造价公式、清单/变更/材料补差/手动计量闭环、材料到场/联系单/资料/工期闭环、流程定义版本/权限/并发冲突/处理记录闭环和中文数据质量。

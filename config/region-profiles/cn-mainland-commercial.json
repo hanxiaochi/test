@@ -1,0 +1,7 @@
+{
+  "profileId": "cn-mainland-commercial",
+  "packs": [
+    "core-platform",
+    "cn-mainland"
+  ]
+}
