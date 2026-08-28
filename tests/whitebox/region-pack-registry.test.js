@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const regions = require("../../lib/regions/pack-registry");
+const frontendMenu = require("../../lib/regions/frontend-menu");
 
 function registry(packs = ["core-platform", "cn-mainland", "fidic-international"]) {
   return new regions.RegionPackRegistry(regions.BUILTIN_PACKS, { profileId: "test-profile", packs });
@@ -24,6 +25,12 @@ test("builds a deterministic full frontend and backend module manifest", () => {
   assert.equal(first.routeOwner("/api/international/contract_events/1"), "fidic-international");
   assert.equal(first.routeOwner("/payment/jl_report_page"), "cn-mainland");
   assert.equal(first.routeOwner("/api/health"), null);
+  assert.deepEqual(first.workflowModules(), ["billmeasure", "meterialdiasmeasure", "meterialinmeasure", "manualmeasure", "varyapplication", "engineeringcontactbill", "internationalcertificate", "internationalcontractevent"]);
+  assert.deepEqual(first.assembledTopMenus("en-US").map((item) => [item.resourceId, item.resourceName]), [[9000, "Administration"]]);
+  const adminMenu = first.assembledMenu(9000);
+  assert.deepEqual(adminMenu.map((item) => item.resourceId), [9003, 9041, 9001, 9010, 9020, 9030, 9040, 9050, 9060]);
+  assert.deepEqual(adminMenu.find((item) => item.resourceId === 9001).sysBusinessResources.map((item) => item.resourceId), [9002, 9004]);
+  assert.equal(manifest.packs.find((pack) => pack.id === "core-platform").frontend.topMenus[0].name["en-US"], "Administration");
 });
 
 test("one profile filters matching frontend menus and backend routes together", () => {
@@ -48,6 +55,8 @@ test("one profile filters matching frontend menus and backend routes together", 
   assert.equal(domestic.hasCapability("multi-currency"), false);
   assert.equal(domestic.requireRoute("/api/health"), null);
   assert.deepEqual(domestic.publicManifest().packs.map((pack) => pack.id), ["core-platform", "cn-mainland"]);
+  assert.deepEqual(domestic.workflowModules(), ["billmeasure", "meterialdiasmeasure", "meterialinmeasure", "manualmeasure", "varyapplication", "engineeringcontactbill"]);
+  assert.deepEqual(domestic.assembledMenu(9000).map((item) => item.resourceId), [9003, 9001, 9010, 9020, 9030, 9050, 9060]);
 });
 
 test("profile and pack validation fail closed", () => {
@@ -85,6 +94,71 @@ test("international-only assembly rejects domestic routes and resources", () => 
   assert.throws(() => international.requireRoute("/admin/calculation_rules_page"), (error) => error.code === "REGION_PACK_DISABLED");
   assert.throws(() => international.requireResource(49), (error) => error.code === "REGION_PACK_DISABLED");
   assert.deepEqual(international.publicManifest().packs.map((pack) => pack.id), ["core-platform", "fidic-international"]);
+  assert.deepEqual(international.workflowModules(), ["internationalcertificate", "internationalcontractevent"]);
+  assert.deepEqual(international.assembledMenu(9000, "en-US").map((item) => item.resourceId), [9003, 9041, 9010, 9020, 9030, 9040, 9050, 9060]);
+});
+
+test("frontend menu declarations validate ownership, hierarchy and presentation", () => {
+  const valid = {
+    resourceId: 10,
+    parentId: 0,
+    order: 2,
+    resourceCode: "menu.10",
+    name: { "zh-CN": "菜单", "en-US": "Menu" },
+    description: { "zh-CN": "说明", "en-US": "Description" },
+    resourceUrl: "admin/page",
+    menuIcon: "layui-icon layui-icon-set",
+    resourceNo: "root",
+    children: [
+      {
+        resourceId: 11,
+        parentId: 10,
+        order: 1,
+        resourceCode: "menu.11",
+        name: { "zh-CN": "子项", "en-US": "Child" },
+        description: { "zh-CN": "子项说明", "en-US": "Child description" },
+        resourceUrl: "admin/child",
+        resourceNo: "model"
+      }
+    ]
+  };
+  const normalized = frontendMenu.normalizeMenuItem(valid, "test menu");
+  assert.deepEqual(frontendMenu.menuResourceIds(normalized), [10, 11]);
+  assert.equal(frontendMenu.selectLocale("ar"), "zh-CN");
+  assert.equal(frontendMenu.legacyMenuRow(normalized, "en-US").sysBusinessResources[0].resourceLevel, 1);
+  assert.deepEqual(frontendMenu.assembleMenu([normalized], 999), []);
+  assert.throws(() => frontendMenu.normalizeMenuItem(null, "test menu"), /must be an object/);
+  assert.throws(() => frontendMenu.normalizeMenuItem({ ...valid, resourceId: 0 }, "test menu"), /resource id/);
+  assert.throws(() => frontendMenu.normalizeMenuItem({ ...valid, parentId: -1 }, "test menu"), /parent id/);
+  assert.throws(() => frontendMenu.normalizeMenuItem({ ...valid, order: 1.5 }, "test menu"), /order/);
+  assert.throws(() => frontendMenu.normalizeMenuItem({ ...valid, resourceCode: "bad code" }, "test menu"), /resource code/);
+  assert.throws(() => frontendMenu.normalizeMenuItem({ ...valid, resourceUrl: "/absolute" }, "test menu"), /resource URL/);
+  assert.throws(() => frontendMenu.normalizeMenuItem({ ...valid, resourceNo: "invalid" }, "test menu"), /presentation/);
+  assert.throws(() => frontendMenu.normalizeMenuItem({ ...valid, name: { "zh-CN": "菜单" } }, "test menu"), /requires zh-CN and en-US/);
+  assert.throws(() => frontendMenu.normalizeMenuItem({ ...valid, description: [] }, "test menu"), /must be an object/);
+  assert.throws(() => frontendMenu.normalizeMenuItem({ ...valid, children: [{ ...valid.children[0], parentId: 9 }] }, "test menu"), /child parent id/);
+  assert.throws(() => frontendMenu.normalizeMenuItem({ ...valid, children: [valid.children[0], valid.children[0]] }, "test menu"), /duplicate child resources/);
+  assert.throws(() => frontendMenu.assembleMenu([normalized], -1), /parent id/);
+
+  const badTopOwner = structuredClone(regions.BUILTIN_PACKS[0]);
+  badTopOwner.frontend.topMenus[0].resourceId = 9999;
+  assert.throws(() => new regions.RegionPackRegistry([badTopOwner], { profileId: "test-profile", packs: ["core-platform"] }), /top menu ownership/);
+  const badItemOwner = structuredClone(regions.BUILTIN_PACKS[0]);
+  badItemOwner.frontend.menuItems[0].resourceId = 9998;
+  assert.throws(() => new regions.RegionPackRegistry([badItemOwner], { profileId: "test-profile", packs: ["core-platform"] }), /menu item ownership/);
+  const duplicateMenu = structuredClone(regions.BUILTIN_PACKS[0]);
+  duplicateMenu.frontend.menuItems.push(structuredClone(duplicateMenu.frontend.menuItems[0]));
+  assert.throws(() => new regions.RegionPackRegistry([duplicateMenu], { profileId: "test-profile", packs: ["core-platform"] }), /menu resources are duplicated/);
+  const invalidList = structuredClone(regions.BUILTIN_PACKS[0]);
+  invalidList.frontend.menuItems = {};
+  assert.throws(() => regions.normalizePack(invalidList), /menu items must be an array/);
+  const duplicateWorkflow = structuredClone(regions.BUILTIN_PACKS[2]);
+  duplicateWorkflow.id = "fidic-conflict";
+  duplicateWorkflow.frontend.resourceIds = [];
+  duplicateWorkflow.frontend.menuItems = [];
+  duplicateWorkflow.backend.exactRoutes = [];
+  duplicateWorkflow.backend.routePrefixes = [];
+  assert.throws(() => new regions.RegionPackRegistry([regions.BUILTIN_PACKS[0], regions.BUILTIN_PACKS[2], duplicateWorkflow], { profileId: "test-profile", packs: ["core-platform", "fidic-international"] }), /workflow module .* owned by multiple packs/);
 });
 
 test("loads the checked-in deployment profile and supports an explicit pack override", () => {

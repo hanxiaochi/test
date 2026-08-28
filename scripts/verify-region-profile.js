@@ -39,6 +39,9 @@ async function main() {
   const expectedPacks = profile === "fidic-international-commercial"
     ? ["core-platform", "fidic-international"]
     : ["core-platform", "cn-mainland"];
+  const expectedWorkflows = profile === "fidic-international-commercial"
+    ? ["internationalcertificate", "internationalcontractevent"]
+    : ["billmeasure", "meterialdiasmeasure", "meterialinmeasure", "manualmeasure", "varyapplication", "engineeringcontactbill"];
   await login("ys1", "000000");
   const changed = await request("/api/account/password", {
     method: "POST",
@@ -59,11 +62,15 @@ async function main() {
   assert.deepEqual(top.body.data.map((row) => Number(row.resourceId)), profile === "fidic-international-commercial" ? [9000] : [2, 3, 7, 409, 9000]);
   const admin = await request("/sbr/sbr_find", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "parentId=9000" });
   const ids = menuIds(admin.body.data);
+  const workflows = await request(`/api/admin/workflows?module=${expectedWorkflows[0]}`);
+  assert.equal(workflows.response.status, 200);
+  assert.deepEqual(workflows.body.data.modules, expectedWorkflows);
   if (profile === "fidic-international-commercial") {
     assert.equal(ids.includes(9004), false);
     assert.equal(ids.includes(9001), false);
     assert.ok(ids.includes(9040));
     assert.ok(ids.includes(9041));
+    assert.equal((await request("/api/admin/workflows?module=billmeasure")).response.status, 404);
     assert.equal((await request("/international/certificates_page")).response.status, 200);
     for (const url of ["/payment/jl_report_page", "/bill_measure/dashboard_page", "/api/cost/summary", "/admin/calculation_rules_page", "/sbr/sbr_com/49"]) {
       const disabled = await request(url);
@@ -75,6 +82,7 @@ async function main() {
     assert.ok(ids.includes(9001));
     assert.equal(ids.includes(9040), false);
     assert.equal(ids.includes(9041), false);
+    assert.equal((await request("/api/admin/workflows?module=internationalcertificate")).response.status, 404);
     for (const url of ["/international/certificates_page", "/sbr/sbr_com/9040"]) {
       const disabled = await request(url);
       assert.equal(disabled.response.status, 404);
