@@ -1642,23 +1642,22 @@ function allLeaves(items, out = []) {
   return out;
 }
 
-const topMenuRaw = readJson(path.join(dataDir, "api_menu_utf8.json"), { data: [] }).data || [];
-topMenuRaw.push(...regionPackRegistry.assembledTopMenus());
-const topMenu = topMenuRaw.map((item) => ({
-  id: item.resourceId,
-  title: item.resourceName,
-  href: item.resourceUrl || "",
-  icon: item.menuIcon || "layui-icon layui-icon-template-1",
-  children: [],
-  childrenCount: ({ 2: 8, 3: 3, 7: 6, 409: 1 })[item.resourceId] || 1
-}));
-
+const topMenuRaw = regionPackRegistry.assembledTopMenus();
 const leftMenus = new Map();
 for (const item of topMenuRaw) {
-  const raw = readJson(path.join(dataDir, `api_left_${item.resourceId}.json`), { data: [] }).data || [];
-  leftMenus.set(String(item.resourceId), raw);
+  leftMenus.set(String(item.resourceId), regionPackRegistry.assembledMenu(item.resourceId));
 }
-leftMenus.set("9000", regionPackRegistry.assembledMenu(9000));
+const topMenu = topMenuRaw.map((item) => {
+  const children = leftMenus.get(String(item.resourceId)) || [];
+  return {
+    id: item.resourceId,
+    title: item.resourceName,
+    href: item.resourceUrl || "",
+    icon: item.menuIcon || "layui-icon layui-icon-template-1",
+    children: [],
+    childrenCount: Math.max(1, allLeaves(children, []).length)
+  };
+});
 
 const leavesById = new Map();
 for (const raw of leftMenus.values()) {

@@ -26,11 +26,14 @@ test("builds a deterministic full frontend and backend module manifest", () => {
   assert.equal(first.routeOwner("/payment/jl_report_page"), "cn-mainland");
   assert.equal(first.routeOwner("/api/health"), null);
   assert.deepEqual(first.workflowModules(), ["billmeasure", "meterialdiasmeasure", "meterialinmeasure", "manualmeasure", "varyapplication", "engineeringcontactbill", "internationalcertificate", "internationalcontractevent"]);
-  assert.deepEqual(first.assembledTopMenus("en-US").map((item) => [item.resourceId, item.resourceName]), [[9000, "Administration"]]);
+  assert.deepEqual(first.assembledTopMenus("en-US").map((item) => item.resourceId), [2, 3, 7, 409, 9000]);
+  assert.equal(first.assembledTopMenus("en-US").find((item) => item.resourceId === 9000).resourceName, "Administration");
+  assert.deepEqual(first.assembledMenu(2).map((item) => item.resourceId), [28, 39, 46, 60]);
   const adminMenu = first.assembledMenu(9000);
   assert.deepEqual(adminMenu.map((item) => item.resourceId), [9003, 9041, 9001, 9010, 9020, 9030, 9040, 9050, 9060]);
   assert.deepEqual(adminMenu.find((item) => item.resourceId === 9001).sysBusinessResources.map((item) => item.resourceId), [9002, 9004]);
   assert.equal(manifest.packs.find((pack) => pack.id === "core-platform").frontend.topMenus[0].name["en-US"], "Administration");
+  assert.deepEqual(manifest.packs.find((pack) => pack.id === "cn-mainland").frontend.navigation.topMenuIds, [2, 3, 7, 409]);
 });
 
 test("one profile filters matching frontend menus and backend routes together", () => {
@@ -57,6 +60,7 @@ test("one profile filters matching frontend menus and backend routes together", 
   assert.deepEqual(domestic.publicManifest().packs.map((pack) => pack.id), ["core-platform", "cn-mainland"]);
   assert.deepEqual(domestic.workflowModules(), ["billmeasure", "meterialdiasmeasure", "meterialinmeasure", "manualmeasure", "varyapplication", "engineeringcontactbill"]);
   assert.deepEqual(domestic.assembledMenu(9000).map((item) => item.resourceId), [9003, 9001, 9010, 9020, 9030, 9050, 9060]);
+  assert.deepEqual(domestic.assembledTopMenus().map((item) => item.resourceId), [2, 3, 7, 409, 9000]);
 });
 
 test("profile and pack validation fail closed", () => {
@@ -96,6 +100,7 @@ test("international-only assembly rejects domestic routes and resources", () => 
   assert.deepEqual(international.publicManifest().packs.map((pack) => pack.id), ["core-platform", "fidic-international"]);
   assert.deepEqual(international.workflowModules(), ["internationalcertificate", "internationalcontractevent"]);
   assert.deepEqual(international.assembledMenu(9000, "en-US").map((item) => item.resourceId), [9003, 9041, 9010, 9020, 9030, 9040, 9050, 9060]);
+  assert.deepEqual(international.assembledTopMenus().map((item) => item.resourceId), [9000]);
 });
 
 test("frontend menu declarations validate ownership, hierarchy and presentation", () => {
@@ -140,6 +145,24 @@ test("frontend menu declarations validate ownership, hierarchy and presentation"
   assert.throws(() => frontendMenu.normalizeMenuItem({ ...valid, children: [valid.children[0], valid.children[0]] }, "test menu"), /duplicate child resources/);
   assert.throws(() => frontendMenu.assembleMenu([normalized], -1), /parent id/);
 
+  const legacy = {
+    resourceId: 20,
+    parentId: "",
+    resourceName: "旧菜单",
+    resourceUrl: "",
+    sysBusinessResources: [
+      { resourceId: 21, parentId: 20, resourceName: "旧子项", resourceUrl: "legacy/page", sysBusinessResources: [] }
+    ]
+  };
+  const normalizedLegacy = frontendMenu.normalizeLegacyMenuRow(legacy, "legacy menu", 0);
+  assert.deepEqual(frontendMenu.legacyMenuResourceIds(normalizedLegacy), [20, 21]);
+  assert.equal(normalizedLegacy.parentId, 0);
+  assert.equal(frontendMenu.normalizeLegacyMenuRow({ ...legacy, resourceUrl: "legacy/page?type=2" }, "legacy menu", 0).resourceUrl, "legacy/page?type=2");
+  assert.throws(() => frontendMenu.normalizeLegacyMenuRow({ ...legacy, resourceName: "" }, "legacy menu", 0), /resource name/);
+  assert.throws(() => frontendMenu.normalizeLegacyMenuRow({ ...legacy, resourceUrl: "/legacy" }, "legacy menu", 0), /resource URL/);
+  assert.throws(() => frontendMenu.normalizeLegacyMenuRow({ ...legacy, parentId: 2 }, "legacy menu", 0), /parent id/);
+  assert.throws(() => frontendMenu.normalizeLegacyMenuRow({ ...legacy, sysBusinessResources: {} }, "legacy menu", 0), /children/);
+
   const badTopOwner = structuredClone(regions.BUILTIN_PACKS[0]);
   badTopOwner.frontend.topMenus[0].resourceId = 9999;
   assert.throws(() => new regions.RegionPackRegistry([badTopOwner], { profileId: "test-profile", packs: ["core-platform"] }), /top menu ownership/);
@@ -159,6 +182,18 @@ test("frontend menu declarations validate ownership, hierarchy and presentation"
   duplicateWorkflow.backend.exactRoutes = [];
   duplicateWorkflow.backend.routePrefixes = [];
   assert.throws(() => new regions.RegionPackRegistry([regions.BUILTIN_PACKS[0], regions.BUILTIN_PACKS[2], duplicateWorkflow], { profileId: "test-profile", packs: ["core-platform", "fidic-international"] }), /workflow module .* owned by multiple packs/);
+  const invalidNavigation = structuredClone(regions.BUILTIN_PACKS[1]);
+  invalidNavigation.frontend.navigation = {};
+  assert.throws(() => regions.normalizePack(invalidNavigation), /top menus and groups must be arrays/);
+  const duplicateGroups = structuredClone(regions.BUILTIN_PACKS[1]);
+  duplicateGroups.frontend.navigation.menuGroups.push(structuredClone(duplicateGroups.frontend.navigation.menuGroups[0]));
+  assert.throws(() => regions.normalizePack(duplicateGroups), /group parent ids are duplicated/);
+  const badNavigationOwner = structuredClone(regions.BUILTIN_PACKS[1]);
+  badNavigationOwner.frontend.navigation.topMenus[0].resourceId = 9997;
+  assert.throws(() => new regions.RegionPackRegistry([regions.BUILTIN_PACKS[0], badNavigationOwner], { profileId: "test-profile", packs: ["core-platform", "cn-mainland"] }), /navigation top menu ownership/);
+  const badNavigationItemOwner = structuredClone(regions.BUILTIN_PACKS[1]);
+  badNavigationItemOwner.frontend.navigation.menuGroups[0].rows[0].sysBusinessResources[0].resourceId = 9996;
+  assert.throws(() => new regions.RegionPackRegistry([regions.BUILTIN_PACKS[0], badNavigationItemOwner], { profileId: "test-profile", packs: ["core-platform", "cn-mainland"] }), /navigation item ownership/);
 });
 
 test("loads the checked-in deployment profile and supports an explicit pack override", () => {
