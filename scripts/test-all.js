@@ -15,6 +15,8 @@ const commands = [
   ["run", "test:client-config"],
   ["run", "test:region-packs"],
   ["run", "test:region-pages"],
+  ["run", "verify:region-ownership"],
+  ["run", "test:release-artifact"],
   ["run", "test:http-security"],
   ["run", "test:runtime"],
   ["run", "test:readiness"],

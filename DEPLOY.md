@@ -158,11 +158,13 @@ npm run verify
 
 ```powershell
 cd G:\学习\chrome-plugin-chrome-openai-bundled-http\outputs\zwkjy-clone
+npm.cmd run release:build
+npm.cmd run release:verify -- releases\zwkjy-clone-提交号.zip
 git archive --format=zip --output zwkjy-clone.zip HEAD
 scp .\zwkjy-clone.zip root@服务器IP:/opt/
 ```
 
-`git archive` 只打包已提交文件，不会把本地 SQLite、账号库、备份、日志或临时文件带入发布包。
+推荐上传 `release:build` 生成的 ZIP。其 `RELEASE-MANIFEST.json` 记录源码提交、逐文件 SHA-256、文件数量和总字节数；构建器只读取 Git 已跟踪文件，发现数据库、账号库、附件、备份、日志、`.env`、`node_modules` 或临时目录会直接失败。`git archive` 可作为不带清单的兼容方案，同样只打包已提交文件。
 
 在服务器执行：
 

@@ -271,8 +271,12 @@ npm run verify:external
 ```bash
 npm run test:all
 npm audit
+npm run verify:region-ownership
+npm run release:verify -- /path/to/zwkjy-clone-提交号.zip
 curl -fsS http://127.0.0.1:3100/api/health
 ```
+
+正式发布包必须由 `npm run release:build` 生成并通过 `release:verify`。ZIP 清单逐文件验签，并拒绝数据库、账号库、附件、备份、日志、环境变量文件和临时目录；解压验证应使用全新的目录，执行 `npm ci` 和 `npm run test:all`，不能只在开发工作区验收。
 
 仓库内的 `.github/workflows/quality-gate.yml` 会在每次推送、Pull Request 和人工触发时，使用 Node.js 24 执行 `npm ci` 与同一套 `npm run test:all`。合并或部署前必须同时满足本地门禁和 GitHub Actions `Quality Gate` 成功；CI 失败时不得只凭本地一次通过继续发布。
 

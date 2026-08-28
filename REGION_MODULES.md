@@ -62,6 +62,7 @@ GET /api/client/modules
 3. 地区专属计算、表单、翻译、导入导出和报表必须由该包拥有；平台核心不得依赖地区包。
 4. 为开启和关闭两种状态增加白盒及隔离 HTTP 测试，验证菜单、旧页面 ID、直接页面 URL、API 和工作流同时切换。
 5. 执行 `npm.cmd run test:region-packs`、`npm.cmd run verify:region-profile` 和 `npm.cmd run test:all`。
+   `verify:region-ownership` 会交叉核对地区菜单、页面、运行时页面与全部显式 Express 路由，并生成稳定归属校验和。
 6. 记录 `/api/client/modules` 的 `profileId` 与 `checksum`，再构建和部署客户版本。
 
 未知模块、缺少依赖、重复资源 ID、非法路由、重复能力或损坏配置都会导致服务启动失败，不会自动回退到全功能版。

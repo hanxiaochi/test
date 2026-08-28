@@ -9,6 +9,7 @@ data/security.db
 data/security.db-shm
 data/security.db-wal
 tmp/
+releases/
 CALCULATION_USAGE.md
 *.log
 .env

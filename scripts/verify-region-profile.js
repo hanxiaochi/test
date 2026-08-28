@@ -57,6 +57,9 @@ async function main() {
   assert.deepEqual(modules.body.data.packs.map((pack) => pack.id), expectedPacks);
   assert.equal(modules.body.data.profileId, profile);
   assert.equal(modules.body.data.checksum.length, 64);
+  const domesticPack = modules.body.data.packs.find((pack) => pack.id === "cn-mainland");
+  if (profile === "fidic-international-commercial") assert.equal(domesticPack, undefined);
+  else assert.deepEqual(domesticPack.runtimePageRoutes, [{ route: "/costBase/calculator_page", method: "all" }]);
 
   const top = await request("/sbr/sbr_find", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "type=menu" });
   assert.deepEqual(top.body.data.map((row) => Number(row.resourceId)), profile === "fidic-international-commercial" ? [9000] : [2, 3, 7, 409, 9000]);
@@ -72,7 +75,7 @@ async function main() {
     assert.ok(ids.includes(9041));
     assert.equal((await request("/api/admin/workflows?module=billmeasure")).response.status, 404);
     assert.equal((await request("/international/certificates_page")).response.status, 200);
-    for (const url of ["/payment/jl_report_page", "/bill_measure/dashboard_page", "/api/cost/summary", "/admin/calculation_rules_page", "/sbr/sbr_com/49"]) {
+    for (const url of ["/payment/jl_report_page", "/bill_measure/dashboard_page", "/costBase/calculator_page", "/api/cost/summary", "/admin/calculation_rules_page", "/sbr/sbr_com/49"]) {
       const disabled = await request(url);
       assert.equal(disabled.response.status, 404, `${url} should be disabled in the international profile`);
       assert.equal(disabled.body.errorCode, "REGION_PACK_DISABLED");
@@ -92,6 +95,9 @@ async function main() {
     assert.equal(fidicApi.response.status, 404);
     assert.equal(fidicApi.body.errorCode, "REGION_PACK_DISABLED");
     assert.equal((await request("/payment/jl_report_page")).response.status, 200);
+    const calculator = await request("/costBase/calculator_page", { headers: { Accept: "text/html" } });
+    assert.equal(calculator.response.status, 200);
+    assert.match(calculator.text, /id=["']cost-calculator-form["']/);
   }
 
   console.log(JSON.stringify({ ok: true, testProfile: profile, runtimeProfileId: modules.body.data.profileId, packs: expectedPacks, menuIds: ids.length }));
