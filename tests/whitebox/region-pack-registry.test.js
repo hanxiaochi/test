@@ -10,6 +10,12 @@ function registry(packs = ["core-platform", "cn-mainland", "fidic-international"
   return new regions.RegionPackRegistry(regions.BUILTIN_PACKS, { profileId: "test-profile", packs });
 }
 
+function clonePack(pack) {
+  const copy = structuredClone({ ...pack, runtime: undefined });
+  if (pack.runtime) copy.runtime = { pages: pack.runtime.pages.map((page) => ({ ...page })) };
+  return copy;
+}
+
 test("builds a deterministic full frontend and backend module manifest", () => {
   const first = registry();
   const second = registry();
@@ -34,6 +40,9 @@ test("builds a deterministic full frontend and backend module manifest", () => {
   assert.deepEqual(adminMenu.find((item) => item.resourceId === 9001).sysBusinessResources.map((item) => item.resourceId), [9002, 9004]);
   assert.equal(manifest.packs.find((pack) => pack.id === "core-platform").frontend.topMenus[0].name["en-US"], "Administration");
   assert.deepEqual(manifest.packs.find((pack) => pack.id === "cn-mainland").frontend.navigation.topMenuIds, [2, 3, 7, 409]);
+  assert.deepEqual(manifest.packs.find((pack) => pack.id === "cn-mainland").runtimePageRoutes, [{ route: "/costBase/calculator_page", method: "all" }]);
+  assert.equal(first.mountedPages()[0].packId, "cn-mainland");
+  assert.equal(typeof first.mountedPages()[0].render, "function");
 });
 
 test("one profile filters matching frontend menus and backend routes together", () => {
@@ -61,6 +70,7 @@ test("one profile filters matching frontend menus and backend routes together", 
   assert.deepEqual(domestic.workflowModules(), ["billmeasure", "meterialdiasmeasure", "meterialinmeasure", "manualmeasure", "varyapplication", "engineeringcontactbill"]);
   assert.deepEqual(domestic.assembledMenu(9000).map((item) => item.resourceId), [9003, 9001, 9010, 9020, 9030, 9050, 9060]);
   assert.deepEqual(domestic.assembledTopMenus().map((item) => item.resourceId), [2, 3, 7, 409, 9000]);
+  assert.deepEqual(domestic.mountedPages().map((page) => page.route), ["/costBase/calculator_page"]);
 });
 
 test("profile and pack validation fail closed", () => {
@@ -68,7 +78,7 @@ test("profile and pack validation fail closed", () => {
   assert.throws(() => registry(["core-platform", "unknown-pack"]), /unknown region pack/);
   assert.throws(() => new regions.RegionPackRegistry([], { profileId: "test-profile", packs: [] }), /definitions are required/);
   assert.throws(() => new regions.RegionPackRegistry([regions.BUILTIN_PACKS[0], regions.BUILTIN_PACKS[0]], { profileId: "test-profile", packs: ["core-platform"] }), /ids are duplicated/);
-  const conflicting = structuredClone(regions.BUILTIN_PACKS[1]);
+  const conflicting = clonePack(regions.BUILTIN_PACKS[1]);
   conflicting.id = "cn-conflict";
   conflicting.frontend.topMenuIds = [9000];
   assert.throws(() => new regions.RegionPackRegistry([regions.BUILTIN_PACKS[0], conflicting], { profileId: "test-profile", packs: ["core-platform"] }), /owned by multiple packs/);
@@ -84,6 +94,35 @@ test("profile and pack validation fail closed", () => {
   assert.throws(() => regions.normalizePack({ ...structuredClone(regions.BUILTIN_PACKS[0]), frontend: { topMenuIds: [], resourceIds: [], pages: [{ id: "bad", titleKey: "bad.key", href: "bad" }] } }), /page route/);
   assert.throws(() => regions.normalizePack({ ...structuredClone(regions.BUILTIN_PACKS[0]), frontend: { topMenuIds: [], resourceIds: [], pages: [{ id: "same", titleKey: "same.key", href: "/one" }, { id: "same", titleKey: "same.key", href: "/two" }] } }), /page ids are duplicated/);
   assert.throws(() => regions.normalizePack({ ...structuredClone(regions.BUILTIN_PACKS[0]), backend: [] }), /backend must be an object/);
+  const invalidRuntime = clonePack(regions.BUILTIN_PACKS[1]);
+  invalidRuntime.runtime = [];
+  assert.throws(() => regions.normalizePack(invalidRuntime), /runtime must be an object/);
+  const invalidRuntimePages = clonePack(regions.BUILTIN_PACKS[1]);
+  invalidRuntimePages.runtime.pages = {};
+  assert.throws(() => regions.normalizePack(invalidRuntimePages), /runtime pages must be an array/);
+  const invalidRuntimeMethod = clonePack(regions.BUILTIN_PACKS[1]);
+  invalidRuntimeMethod.runtime.pages[0].method = "post";
+  assert.throws(() => regions.normalizePack(invalidRuntimeMethod), /runtime page method is invalid/);
+  const invalidRuntimeRenderer = clonePack(regions.BUILTIN_PACKS[1]);
+  invalidRuntimeRenderer.runtime.pages[0].render = "template";
+  assert.throws(() => regions.normalizePack(invalidRuntimeRenderer), /runtime page renderer is invalid/);
+  const duplicateRuntimeRoute = clonePack(regions.BUILTIN_PACKS[1]);
+  duplicateRuntimeRoute.runtime.pages.push({ ...duplicateRuntimeRoute.runtime.pages[0] });
+  assert.throws(() => regions.normalizePack(duplicateRuntimeRoute), /runtime page routes are duplicated/);
+  const wrongRuntimeOwner = clonePack(regions.BUILTIN_PACKS[0]);
+  wrongRuntimeOwner.runtime = { pages: [{ route: "/unowned/page", method: "get", render: () => "" }] };
+  assert.throws(() => new regions.RegionPackRegistry([wrongRuntimeOwner], { profileId: "test-profile", packs: ["core-platform"] }), /runtime page route ownership is invalid/);
+  const duplicateRuntimeOwner = clonePack(regions.BUILTIN_PACKS[1]);
+  duplicateRuntimeOwner.id = "cn-runtime-conflict";
+  duplicateRuntimeOwner.frontend.topMenuIds = [];
+  duplicateRuntimeOwner.frontend.resourceIds = [];
+  duplicateRuntimeOwner.frontend.menuItems = [];
+  duplicateRuntimeOwner.frontend.navigation = { topMenus: [], menuGroups: [] };
+  duplicateRuntimeOwner.backend.workflowModules = [];
+  assert.throws(
+    () => new regions.RegionPackRegistry([regions.BUILTIN_PACKS[0], regions.BUILTIN_PACKS[1], duplicateRuntimeOwner], { profileId: "test-profile", packs: ["core-platform", "cn-mainland"] }),
+    /runtime page route .* owned by multiple packs/
+  );
   assert.throws(() => registry().filterMenu({}), /menu rows/);
   assert.throws(() => registry().routeOwner("invalid"), /request route/);
   assert.throws(() => registry().hasCapability("invalid capability"), /region capability/);
@@ -101,6 +140,7 @@ test("international-only assembly rejects domestic routes and resources", () => 
   assert.deepEqual(international.workflowModules(), ["internationalcertificate", "internationalcontractevent"]);
   assert.deepEqual(international.assembledMenu(9000, "en-US").map((item) => item.resourceId), [9003, 9041, 9010, 9020, 9030, 9040, 9050, 9060]);
   assert.deepEqual(international.assembledTopMenus().map((item) => item.resourceId), [9000]);
+  assert.deepEqual(international.mountedPages(), []);
 });
 
 test("frontend menu declarations validate ownership, hierarchy and presentation", () => {
@@ -163,35 +203,35 @@ test("frontend menu declarations validate ownership, hierarchy and presentation"
   assert.throws(() => frontendMenu.normalizeLegacyMenuRow({ ...legacy, parentId: 2 }, "legacy menu", 0), /parent id/);
   assert.throws(() => frontendMenu.normalizeLegacyMenuRow({ ...legacy, sysBusinessResources: {} }, "legacy menu", 0), /children/);
 
-  const badTopOwner = structuredClone(regions.BUILTIN_PACKS[0]);
+  const badTopOwner = clonePack(regions.BUILTIN_PACKS[0]);
   badTopOwner.frontend.topMenus[0].resourceId = 9999;
   assert.throws(() => new regions.RegionPackRegistry([badTopOwner], { profileId: "test-profile", packs: ["core-platform"] }), /top menu ownership/);
-  const badItemOwner = structuredClone(regions.BUILTIN_PACKS[0]);
+  const badItemOwner = clonePack(regions.BUILTIN_PACKS[0]);
   badItemOwner.frontend.menuItems[0].resourceId = 9998;
   assert.throws(() => new regions.RegionPackRegistry([badItemOwner], { profileId: "test-profile", packs: ["core-platform"] }), /menu item ownership/);
-  const duplicateMenu = structuredClone(regions.BUILTIN_PACKS[0]);
+  const duplicateMenu = clonePack(regions.BUILTIN_PACKS[0]);
   duplicateMenu.frontend.menuItems.push(structuredClone(duplicateMenu.frontend.menuItems[0]));
   assert.throws(() => new regions.RegionPackRegistry([duplicateMenu], { profileId: "test-profile", packs: ["core-platform"] }), /menu resources are duplicated/);
-  const invalidList = structuredClone(regions.BUILTIN_PACKS[0]);
+  const invalidList = clonePack(regions.BUILTIN_PACKS[0]);
   invalidList.frontend.menuItems = {};
   assert.throws(() => regions.normalizePack(invalidList), /menu items must be an array/);
-  const duplicateWorkflow = structuredClone(regions.BUILTIN_PACKS[2]);
+  const duplicateWorkflow = clonePack(regions.BUILTIN_PACKS[2]);
   duplicateWorkflow.id = "fidic-conflict";
   duplicateWorkflow.frontend.resourceIds = [];
   duplicateWorkflow.frontend.menuItems = [];
   duplicateWorkflow.backend.exactRoutes = [];
   duplicateWorkflow.backend.routePrefixes = [];
   assert.throws(() => new regions.RegionPackRegistry([regions.BUILTIN_PACKS[0], regions.BUILTIN_PACKS[2], duplicateWorkflow], { profileId: "test-profile", packs: ["core-platform", "fidic-international"] }), /workflow module .* owned by multiple packs/);
-  const invalidNavigation = structuredClone(regions.BUILTIN_PACKS[1]);
+  const invalidNavigation = clonePack(regions.BUILTIN_PACKS[1]);
   invalidNavigation.frontend.navigation = {};
   assert.throws(() => regions.normalizePack(invalidNavigation), /top menus and groups must be arrays/);
-  const duplicateGroups = structuredClone(regions.BUILTIN_PACKS[1]);
+  const duplicateGroups = clonePack(regions.BUILTIN_PACKS[1]);
   duplicateGroups.frontend.navigation.menuGroups.push(structuredClone(duplicateGroups.frontend.navigation.menuGroups[0]));
   assert.throws(() => regions.normalizePack(duplicateGroups), /group parent ids are duplicated/);
-  const badNavigationOwner = structuredClone(regions.BUILTIN_PACKS[1]);
+  const badNavigationOwner = clonePack(regions.BUILTIN_PACKS[1]);
   badNavigationOwner.frontend.navigation.topMenus[0].resourceId = 9997;
   assert.throws(() => new regions.RegionPackRegistry([regions.BUILTIN_PACKS[0], badNavigationOwner], { profileId: "test-profile", packs: ["core-platform", "cn-mainland"] }), /navigation top menu ownership/);
-  const badNavigationItemOwner = structuredClone(regions.BUILTIN_PACKS[1]);
+  const badNavigationItemOwner = clonePack(regions.BUILTIN_PACKS[1]);
   badNavigationItemOwner.frontend.navigation.menuGroups[0].rows[0].sysBusinessResources[0].resourceId = 9996;
   assert.throws(() => new regions.RegionPackRegistry([regions.BUILTIN_PACKS[0], badNavigationItemOwner], { profileId: "test-profile", packs: ["core-platform", "cn-mainland"] }), /navigation item ownership/);
 });
@@ -220,7 +260,7 @@ test("default construction, exact routes, leaf menus and optional permissions re
   const leaf = defaults.filterMenu([{ resourceId: 123456, resourceName: "Unowned extension", sysBusinessResources: "" }]);
   assert.equal(leaf[0].sysBusinessResources, "");
 
-  const custom = structuredClone(regions.BUILTIN_PACKS[0]);
+  const custom = clonePack(regions.BUILTIN_PACKS[0]);
   custom.frontend.pages.push({ id: "public-page", titleKey: "modules.core.publicPage", href: "/public-page", permission: "" });
   const customRegistry = new regions.RegionPackRegistry([custom], { profileId: "custom-profile", packs: ["core-platform"] });
   assert.ok(customRegistry.publicManifest({ hasPermission: "invalid" }).packs[0].frontend.pages.some((item) => item.id === "public-page"));

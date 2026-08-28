@@ -17,6 +17,7 @@
     "test:auth-config": "node --test tests/whitebox/auth-service-config.test.js",
     "test:client-config": "node --test --experimental-test-coverage --test-coverage-include=lib/client-config.js --test-coverage-lines=100 --test-coverage-functions=100 --test-coverage-branches=100 tests/whitebox/client-config.test.js",
     "test:region-packs": "node --test --experimental-test-coverage --test-coverage-include=lib/regions/pack-registry.js --test-coverage-include=lib/regions/frontend-menu.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=90 tests/whitebox/region-pack-registry.test.js",
+    "test:region-pages": "node --test tests/whitebox/cn-mainland-pages.test.js",
     "test:http-security": "node --test --experimental-test-coverage --test-coverage-include=lib/security/http-security.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=90 tests/whitebox/http-security.test.js",
     "test:runtime": "node --test --experimental-test-coverage --test-coverage-include=lib/runtime/graceful-shutdown.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=85 tests/whitebox/graceful-shutdown.test.js",
     "test:readiness": "node --test --experimental-test-coverage --test-coverage-include=lib/runtime/readiness.js --test-coverage-lines=95 --test-coverage-functions=100 --test-coverage-branches=90 tests/whitebox/readiness.test.js",

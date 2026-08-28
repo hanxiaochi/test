@@ -57,6 +57,7 @@ GET /api/client/modules
 ## 新地区包流水线
 
 1. 在 `lib/regions/packs/` 新建地区包，声明唯一 ID、语义化版本、依赖、能力、前端菜单/页面、后端路由和审批工作流类型。
+   地区专属 HTML 页面放在包内 `pages/`，并通过 `runtime.pages` 声明 `route`、`method`（仅允许 `get` 或 `all`）和 `render` 函数；不要在 `server.js` 重复注册同一路由。
 2. 把地区包加入 `BUILTIN_PACKS`，并在 `config/region-profiles/` 新建客户版本配置。
 3. 地区专属计算、表单、翻译、导入导出和报表必须由该包拥有；平台核心不得依赖地区包。
 4. 为开启和关闭两种状态增加白盒及隔离 HTTP 测试，验证菜单、旧页面 ID、直接页面 URL、API 和工作流同时切换。
@@ -75,4 +76,4 @@ GET /api/client/modules
 
 ## 当前迁移边界
 
-当前版本已经完成统一注册、前端菜单/页面暴露、后端路由阻断和能力选择。后台菜单的双语名称、图标、URL、稳定顺序以及国内/国际审批工作流类型已经迁入各自地区包，由注册表装配为旧 Layui 前端所需结构；中国大陆四组主菜单及左侧导航资产位于 `lib/regions/packs/cn-mainland/navigation/`，核心不再读取 `data/api_menu_utf8.json` 或 `data/api_left_*.json`，`server.js` 也不再维护地区菜单 ID、文件名和子页数量。原有大型 `server.js` 中的部分具体页面渲染函数仍将逐步迁移到包自有目录；迁移期间注册表是唯一对外暴露边界，每次搬迁必须保持接口和计算回归不变。
+当前版本已经完成统一注册、前端菜单/页面暴露、后端路由阻断和能力选择。后台菜单的双语名称、图标、URL、稳定顺序以及国内/国际审批工作流类型已经迁入各自地区包，由注册表装配为旧 Layui 前端所需结构；中国大陆四组主菜单及左侧导航资产位于 `lib/regions/packs/cn-mainland/navigation/`，核心不再读取 `data/api_menu_utf8.json` 或 `data/api_left_*.json`，`server.js` 也不再维护地区菜单 ID、文件名和子页数量。国内造价计算器已迁入 `lib/regions/packs/cn-mainland/pages/`，由地区包运行时注册表挂载；非法方法、缺失渲染器、重复路由或路由归属错误都会阻止启动，公开清单只记录稳定的路由和方法，不序列化函数。原有大型 `server.js` 中的其余具体页面渲染函数仍将逐步迁移到包自有目录；迁移期间注册表是唯一对外暴露边界，每次搬迁必须保持接口和计算回归不变。
