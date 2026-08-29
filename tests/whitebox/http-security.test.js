@@ -53,16 +53,20 @@ test("invalid limiter options fall back to safe defaults", () => {
 test("security middleware sets compatible baseline headers", () => {
   const headers = {};
   let nextCalls = 0;
-  securityHeaders({}, { setHeader(name, value) { headers[name] = value; } }, () => { nextCalls += 1; });
+  securityHeaders({ secure: false }, { setHeader(name, value) { headers[name] = value; } }, () => { nextCalls += 1; });
   assert.deepEqual(headers, {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "SAMEORIGIN",
     "Referrer-Policy": "same-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-    "Content-Security-Policy": "frame-ancestors 'self'",
+    "Content-Security-Policy": "default-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'",
+    "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
+    "Cross-Origin-Resource-Policy": "same-origin",
     "X-XSS-Protection": "0"
   });
   assert.equal(nextCalls, 1);
+  securityHeaders({ secure: true }, { setHeader(name, value) { headers[name] = value; } }, () => {});
+  assert.equal(headers["Strict-Transport-Security"], "max-age=31536000; includeSubDomains");
 });
 
 test("browser mutation decisions reject cross-origin evidence without blocking API clients", () => {

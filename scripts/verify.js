@@ -97,7 +97,8 @@ async function verifyHealth() {
   assert.strictEqual(json.data.serverFile, undefined, "public health endpoint must not expose server paths");
   assert.strictEqual(response.headers.get("x-content-type-options"), "nosniff", "responses should prevent MIME sniffing");
   assert.strictEqual(response.headers.get("x-frame-options"), "SAMEORIGIN", "same-origin embedded application pages should remain usable");
-  assert.strictEqual(response.headers.get("content-security-policy"), "frame-ancestors 'self'", "responses should reject cross-origin framing");
+  const contentSecurityPolicy = response.headers.get("content-security-policy") || "";
+  assert.ok(contentSecurityPolicy.includes("frame-ancestors 'self'") && contentSecurityPolicy.includes("object-src 'none'") && contentSecurityPolicy.includes("form-action 'self'"), "responses should enforce framing, object and form restrictions");
   assert.strictEqual(response.headers.get("x-powered-by"), null, "responses must not disclose the Express implementation");
 
   const ready = await requestJson("/api/ready");
@@ -306,6 +307,8 @@ async function verifyAuthorizationFlow() {
   assert.strictEqual(auditExportDenied.response.status, 403, "viewer should not export security audit records");
   const auditRetentionDenied = await postJson("/api/admin/security_audit/retention", { days: 365 });
   assert.strictEqual(auditRetentionDenied.response.status, 403, "viewer should not apply security audit retention");
+  const baselineDenied = await requestJson("/api/admin/security_baseline");
+  assert.strictEqual(baselineDenied.response.status, 403, "viewer should not access the security baseline report");
   const runtimeDenied = await requestJson("/api/debug/runtime");
   assert.strictEqual(runtimeDenied.response.status, 403, "viewer should not access runtime diagnostics");
   const viewerDownload = await requestBuffer(`/projectInformationNode/attachment/${viewerFixtureId}/download?hangId=${attachmentDocumentId}`);
@@ -367,6 +370,15 @@ async function verifyAuthorizationFlow() {
   const roles = await requestJson("/api/admin/roles");
   assert.deepStrictEqual(roles.json.data.map((role) => role.code), ["admin", "certificate_approver", "editor", "viewer"], "admin should list the four built-in roles including certificate approver");
   assert.deepStrictEqual(roles.json.data.find((role) => role.code === "certificate_approver").permissions, ["data:read", "international:calculate", "international:export", "international:issue", "international:read", "international:review", "international:void"], "certificate approver should receive review and certificate lifecycle grants plus base read access");
+  const permissionCatalog = await requestJson("/api/admin/permissions");
+  assert.ok(permissionCatalog.json.data.some((item) => item.code === "data:read") && permissionCatalog.json.data.some((item) => item.code === "admin:users"), "administrator should read the permission catalog");
+  const customRole = await postJson("/api/admin/roles", { code: "regression_auditor", name: "回归造价审核员", permissionCodes: ["data:read", "international:read"] });
+  assert.deepStrictEqual(customRole.json.data.permissions, ["data:read", "international:read"], "administrator should create a least-privilege custom role");
+  const deletedCustomRole = await postJson("/api/admin/roles/regression_auditor/delete", {});
+  assert.strictEqual(deletedCustomRole.json.data.deleted, true, "administrator should delete an unused custom role");
+  const baseline = await requestJson("/api/admin/security_baseline");
+  assert.strictEqual(baseline.json.data.ok, true, "security baseline should have no technical control failures");
+  assert.strictEqual(baseline.json.data.certificationClaim, false, "technical baseline must not claim formal MLPS certification");
   const certificateProject = await postJson("/api/admin/projects", { projectKey: "certificate-rbac-project", name: "证书职责分离项目" });
   assert.strictEqual(certificateProject.response.status, 200, "admin should create an isolated certificate RBAC project");
   const editorUser = await postJson("/api/admin/users", {
@@ -547,6 +559,8 @@ async function verifyAuthorizationFlow() {
   assert.ok(page.text.includes("账号权限管理") && page.text.includes("create-user-form") && page.text.includes("安全审计"), "user administration page should expose user, role, and audit controls");
   assert.ok(page.text.includes("项目目录") && page.text.includes("create-project-form") && page.text.includes("保存项目"), "user administration page should expose project directory and assignment controls");
   assert.ok(page.text.includes("data-reset-password") && page.text.includes("重置密码"), "user administration page should expose a temporary-password reset workflow");
+  assert.ok(page.text.includes("custom-role-form") && page.text.includes("自定义角色权限"), "user administration page should expose granular role permission controls");
+  assert.ok(page.text.includes("等保2.0二级技术基线检测") && page.text.includes("不等同于测评机构认证"), "user administration page should expose an honest MLPS technical baseline report");
   assert.ok(page.text.includes("audit-filter-form") && page.text.includes("audit-export") && page.text.includes("audit-retention-apply"), "user administration page should expose audit filtering, pagination, export, and retention controls");
   const shell = await requestText("/index.html");
   assert.ok(shell.text.includes("app-project-switch") && shell.text.includes("/api/session/project"), "main shell should expose a persistent project switcher");

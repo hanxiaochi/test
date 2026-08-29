@@ -205,6 +205,8 @@ test("invalid database path and permission denials are explicit", () => {
 
 test("administration lists users, changes roles, disables users, and revokes sessions", () => withStore((store) => {
   const admin = store.bootstrap({ account: "ys1", password: "000000" });
+  assert.throws(() => store.setUserStatus({ userId: admin.userId, status: "disabled" }), /最后一个有效系统管理员/);
+  assert.throws(() => store.setUserRoles({ userId: admin.userId, roleCodes: ["viewer"] }), /最后一个有效系统管理员/);
   assert.deepStrictEqual(store.listRoles().map((role) => role.code), ["admin", "certificate_approver", "editor", "viewer"]);
   assert.deepStrictEqual(store.listRoles().find((role) => role.code === "viewer").permissions, ["data:read", "international:calculate", "international:export", "international:read"]);
   assert.deepStrictEqual(store.listRoles().find((role) => role.code === "editor").permissions, ["data:read", "data:write", "international:calculate", "international:export", "international:read", "international:submit"]);

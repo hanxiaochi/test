@@ -28,6 +28,8 @@ const { scanAttachmentConsistency } = require("./lib/attachments/attachment-cons
 const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
 const { readinessReport } = require("./lib/runtime/readiness");
 const { browserMutationGuard, securityHeaders } = require("./lib/security/http-security");
+const { AuthorizationAdmin } = require("./lib/security/authorization-admin");
+const { assessMlpsBaseline } = require("./lib/security/mlps-baseline");
 const { WorkflowError, WorkflowStore, certificateApplicationDefinition, contractEventDefinition, defaultDefinition } = require("./lib/workflow/workflow-store");
 const workflowCoordinator = require("./lib/workflow/workflow-coordinator");
 const { scanWorkflowConsistency } = require("./lib/workflow/workflow-consistency");
@@ -65,6 +67,7 @@ fs.mkdirSync(backupDir, { recursive: true });
 fs.mkdirSync(systemBackupDir, { recursive: true });
 let systemBackupRunning = false;
 const attachmentStore = new AttachmentStore({ dbFile: attachmentDbFile, objectDir: attachmentDir, maxBytes: attachmentMaxBytes });
+const authorizationAdmin = new AuthorizationAdmin(authService.store);
 const attachmentUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: attachmentMaxBytes, files: 1, fields: 6, parts: 7, fieldNameSize: 80, fieldSize: 2048, headerPairs: 50 }
@@ -2304,6 +2307,8 @@ function userManagementHtml(req = {}) {
   const roles = authService.store.listRoles(tenantId);
   const projects = authService.store.listProjects(tenantId);
   const audits = authService.store.auditRows(30, tenantId);
+  const permissions = authorizationAdmin.listPermissions().filter((permission) => permission.code !== "*");
+  const baseline = assessMlpsBaseline({ env: process.env, policy: authService.store.accountSecurity.policy, stats: authService.store.securityPosture(tenantId) });
   const roleOptions = (selected = []) => roles.map((role) => `<option value="${htmlEscape(role.code)}" ${selected.includes(role.code) ? "selected" : ""}>${htmlEscape(role.name)}</option>`).join("");
   const projectOptions = (selected = []) => projects.filter((project) => project.status === "active").map((project) => `<option value="${htmlEscape(project.projectId)}" ${selected.includes(project.projectId) ? "selected" : ""}>${htmlEscape(project.name)} (${htmlEscape(project.projectId)})</option>`).join("");
   const userRows = users.map((user) => {
@@ -2315,14 +2320,15 @@ function userManagementHtml(req = {}) {
       <td>${htmlEscape(user.displayName)}</td>
       <td>${htmlEscape(user.roles.map((role) => role.name).join("、"))}</td>
       <td>${htmlEscape(user.projects.map((project) => project.name).join("、") || "未分配")}</td>
-      <td>${user.status === "active" ? "启用" : "禁用"}</td>
+      <td>${user.status === "active" ? (user.lockedUntil ? `锁定至 ${htmlEscape(user.lockedUntil)}` : "启用") : "禁用"}</td>
       <td>${user.mustChangePassword ? "是" : "否"}</td>
       <td>
-        <select data-user-role="${user.id}">${roleOptions(selectedRoles)}</select>
+        <select multiple size="2" data-user-role="${user.id}">${roleOptions(selectedRoles)}</select>
         <button type="button" class="layui-btn layui-btn-xs" data-save-role="${user.id}">保存角色</button>
         <select multiple size="2" data-user-project="${user.id}" style="min-width:180px;vertical-align:middle;">${projectOptions(selectedProjects)}</select>
         <button type="button" class="layui-btn layui-btn-xs" data-save-project="${user.id}">保存项目</button>
         <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" data-user-status="${user.id}" data-status="${nextStatus}">${nextStatus === "disabled" ? "禁用" : "启用"}</button>
+        ${user.lockedUntil ? `<button type="button" class="layui-btn layui-btn-xs layui-btn-primary" data-user-unlock="${user.id}">解锁</button>` : ""}
         <div style="margin-top:6px;display:flex;gap:4px;align-items:center;">
           <input type="password" data-reset-password-input="${user.id}" autocomplete="new-password" placeholder="临时强密码" style="width:150px;height:28px;padding:0 6px;border:1px solid #c8d1dc;">
           <button type="button" class="layui-btn layui-btn-xs layui-btn-warm" data-reset-password="${user.id}">重置密码</button>
@@ -2334,6 +2340,9 @@ function userManagementHtml(req = {}) {
     <td>${htmlEscape(row.created_at)}</td><td>${htmlEscape(row.action)}</td><td>${htmlEscape(row.result)}</td>
     <td>${htmlEscape(row.user_id || "")}</td><td>${htmlEscape(row.target_type)}</td><td>${htmlEscape(row.target_id)}</td><td>${htmlEscape(row.ip_address)}</td>
   </tr>`).join("");
+  const baselineRows = baseline.checks.map((item) => `<tr><td>${item.status === "pass" ? "通过" : item.status === "warn" ? "提示" : "不通过"}</td><td>${htmlEscape(item.title)}</td><td>${htmlEscape(item.evidence)}</td><td>${htmlEscape(item.remediation || "-")}</td></tr>`).join("");
+  const permissionOptions = permissions.map((permission) => `<option value="${htmlEscape(permission.code)}">${htmlEscape(permission.name)} (${htmlEscape(permission.code)})</option>`).join("");
+  const roleRows = roles.map((role) => `<tr><td>${htmlEscape(role.code)}</td><td>${htmlEscape(role.name)}</td><td>${htmlEscape(role.permissions.join("、"))}</td><td>${role.builtIn ? "内置保护" : `<button type="button" class="layui-btn layui-btn-xs layui-btn-danger" data-delete-role="${htmlEscape(role.code)}">删除</button>`}</td></tr>`).join("");
   return `<div class="core-page" data-core-page="user-management">
     ${corePageStyle("#0f766e")}
     <div class="core-shell">
@@ -2348,6 +2357,16 @@ function userManagementHtml(req = {}) {
             <thead><tr><th>账号</th><th>姓名</th><th>角色</th><th>授权项目</th><th>状态</th><th>首次改密</th><th>操作</th></tr></thead>
             <tbody>${userRows || `<tr><td colspan="7" class="core-empty">暂无用户</td></tr>`}</tbody>
           </table>
+        </div>
+        <div class="core-panel">
+          <h3>自定义角色权限</h3>
+          <form id="custom-role-form" class="core-form">
+            <label>角色编码<input name="code" required placeholder="例如 cost_auditor"></label>
+            <label>角色名称<input name="name" required placeholder="例如 造价审核员"></label>
+            <label>权限项<select name="permissionCodes" multiple size="7" required>${permissionOptions}</select></label>
+            <button type="button" class="layui-btn layui-btn-sm" id="save-custom-role">保存角色</button>
+          </form>
+          <table class="layui-table" lay-size="sm"><thead><tr><th>编码</th><th>名称</th><th>权限</th><th>操作</th></tr></thead><tbody>${roleRows}</tbody></table>
         </div>
         <div class="core-panel">
           <h3>新增用户</h3>
@@ -2374,6 +2393,10 @@ function userManagementHtml(req = {}) {
             <tbody>${projects.map((project) => `<tr><td>${htmlEscape(project.projectId)}</td><td>${htmlEscape(project.name)}</td><td>${project.status === "active" ? "启用" : "禁用"}</td></tr>`).join("")}</tbody>
           </table>
         </div>
+      </div>
+      <div class="core-panel" style="margin-top:12px;">
+        <div class="core-head"><div><h3>等保2.0二级技术基线检测</h3><p>${htmlEscape(baseline.baseline)}。这是产品技术自检，不等同于测评机构认证。</p></div><div>${baseline.productionReady ? "生产基线通过" : baseline.ok ? "代码基线通过，部署项待完善" : "存在待修复项"}</div></div>
+        <table class="layui-table" lay-size="sm"><thead><tr><th>结果</th><th>控制项</th><th>证据</th><th>整改要求</th></tr></thead><tbody>${baselineRows}</tbody></table>
       </div>
       <div class="core-panel" style="margin-top:12px;">
         <h3>安全审计</h3>
@@ -2433,9 +2456,19 @@ function userManagementHtml(req = {}) {
         var data=Object.fromEntries(new FormData(root.querySelector('#create-project-form')).entries());
         post('/api/admin/projects',data).then(function(){notify('项目已创建');refresh()}).catch(function(e){notify(e.message)});
       });
+      root.querySelector('#save-custom-role').addEventListener('click',function(){
+        var form=root.querySelector('#custom-role-form');var data=Object.fromEntries(new FormData(form).entries());
+        data.permissionCodes=Array.prototype.map.call(form.querySelector('[name="permissionCodes"]').selectedOptions,function(option){return option.value});
+        post('/api/admin/roles',data).then(function(){notify('角色权限已保存');refresh()}).catch(function(e){notify(e.message)});
+      });
+      Array.prototype.forEach.call(root.querySelectorAll('[data-delete-role]'),function(btn){btn.addEventListener('click',function(){
+        if(!window.confirm('确认删除该自定义角色？'))return;
+        post('/api/admin/roles/'+encodeURIComponent(btn.getAttribute('data-delete-role'))+'/delete',{}).then(function(){notify('角色已删除');refresh()}).catch(function(e){notify(e.message)});
+      })});
       Array.prototype.forEach.call(root.querySelectorAll('[data-save-role]'),function(btn){btn.addEventListener('click',function(){
-        var id=btn.getAttribute('data-save-role'); var code=root.querySelector('[data-user-role="'+id+'"]').value;
-        post('/api/admin/users/'+id+'/roles',{roleCodes:[code]}).then(function(){notify('角色已更新，原会话已撤销');refresh()}).catch(function(e){notify(e.message)});
+        var id=btn.getAttribute('data-save-role'); var select=root.querySelector('[data-user-role="'+id+'"]');
+        var roleCodes=Array.prototype.map.call(select.selectedOptions,function(option){return option.value});
+        post('/api/admin/users/'+id+'/roles',{roleCodes:roleCodes}).then(function(){notify('角色已更新，原会话已撤销');refresh()}).catch(function(e){notify(e.message)});
       })});
       Array.prototype.forEach.call(root.querySelectorAll('[data-save-project]'),function(btn){btn.addEventListener('click',function(){
         var id=btn.getAttribute('data-save-project'); var select=root.querySelector('[data-user-project="'+id+'"]');
@@ -2444,6 +2477,9 @@ function userManagementHtml(req = {}) {
       })});
       Array.prototype.forEach.call(root.querySelectorAll('[data-user-status]'),function(btn){btn.addEventListener('click',function(){
         post('/api/admin/users/'+btn.getAttribute('data-user-status')+'/status',{status:btn.getAttribute('data-status')}).then(function(){notify('账号状态已更新');refresh()}).catch(function(e){notify(e.message)});
+      })});
+      Array.prototype.forEach.call(root.querySelectorAll('[data-user-unlock]'),function(btn){btn.addEventListener('click',function(){
+        post('/api/admin/users/'+btn.getAttribute('data-user-unlock')+'/unlock',{}).then(function(){notify('账号已解锁');refresh()}).catch(function(e){notify(e.message)});
       })});
       Array.prototype.forEach.call(root.querySelectorAll('[data-reset-password]'),function(btn){btn.addEventListener('click',function(){
         var id=btn.getAttribute('data-reset-password');var input=root.querySelector('[data-reset-password-input="'+id+'"]');
@@ -14588,6 +14624,36 @@ app.get("/api/admin/users", requirePermission("admin:users"), (req, res) => {
 app.get("/api/admin/roles", requirePermission("admin:users"), (req, res) => {
   operationOk(res, authService.store.listRoles(req.authUser.tenantId));
 });
+app.get("/api/admin/permissions", requirePermission("admin:users"), (_req, res) => {
+  operationOk(res, authorizationAdmin.listPermissions());
+});
+app.post("/api/admin/roles", requirePermission("admin:users"), (req, res) => {
+  try {
+    operationOk(res, authorizationAdmin.saveRole({
+      tenantId: req.authUser.tenantId,
+      code: req.body.code,
+      name: req.body.name,
+      permissionCodes: req.body.permissionCodes,
+      actorUserId: req.authUser.id
+    }));
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/roles/:code/delete", requirePermission("admin:users"), (req, res) => {
+  try {
+    operationOk(res, authorizationAdmin.deleteRole({ tenantId: req.authUser.tenantId, code: req.params.code, actorUserId: req.authUser.id }));
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.get("/api/admin/security_baseline", requirePermission("admin:users"), (req, res) => {
+  operationOk(res, assessMlpsBaseline({
+    env: process.env,
+    policy: authService.store.accountSecurity.policy,
+    stats: authService.store.securityPosture(req.authUser.tenantId)
+  }));
+});
 app.get("/api/admin/projects", requirePermission("admin:users"), (req, res) => {
   operationOk(res, authService.store.listProjects(req.authUser.tenantId));
 });
@@ -14662,6 +14728,13 @@ app.post("/api/admin/users/:id/password", requirePermission("admin:users"), (req
       ipAddress: req.ip,
       userAgent: req.headers["user-agent"]
     }));
+  } catch (error) {
+    res.status(400).json({ code: 0, msg: error.message, data: null });
+  }
+});
+app.post("/api/admin/users/:id/unlock", requirePermission("admin:users"), (req, res) => {
+  try {
+    operationOk(res, authService.store.unlockUser({ tenantId: req.authUser.tenantId, userId: req.params.id, actorUserId: req.authUser.id }));
   } catch (error) {
     res.status(400).json({ code: 0, msg: error.message, data: null });
   }
