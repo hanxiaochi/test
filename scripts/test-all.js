@@ -17,6 +17,8 @@ const commands = [
   ["run", "test:deployment-security"],
   ["run", "test:spreadsheet-safety"],
   ["run", "verify:commercial-security"],
+  ["run", "verify:browser-dependencies"],
+  ["run", "test:bootstrap-compat"],
   ["run", "test:login-rate-persistence"],
   ["run", "test:auth-config"],
   ["run", "test:client-config"],

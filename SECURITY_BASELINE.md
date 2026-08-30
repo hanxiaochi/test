@@ -19,6 +19,7 @@
 ```bash
 npm run verify:security-baseline
 npm run verify:commercial-security
+npm run verify:browser-dependencies
 npm audit --omit=dev
 npm run test:all
 ```

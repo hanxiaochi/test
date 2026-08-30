@@ -20,6 +20,8 @@
     "test:deployment-security": "node --test tests/whitebox/deployment-security.test.js",
     "test:spreadsheet-safety": "node --test tests/whitebox/spreadsheet-safety.test.js",
     "verify:commercial-security": "node scripts/commercial-security-audit.js",
+    "verify:browser-dependencies": "node scripts/browser-dependency-audit.js",
+    "test:bootstrap-compat": "node --test tests/whitebox/bootstrap-safe-compat.test.js",
     "test:login-rate-persistence": "node --test tests/integration/login-rate-persistence.test.js",
     "test:auth-config": "node --test tests/whitebox/auth-service-config.test.js",
     "test:client-config": "node --test --experimental-test-coverage --test-coverage-include=lib/client-config.js --test-coverage-lines=100 --test-coverage-functions=100 --test-coverage-branches=100 tests/whitebox/client-config.test.js",
@@ -80,5 +82,8 @@
   },
   "engines": {
     "node": ">=22.5.0"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
   }
 }

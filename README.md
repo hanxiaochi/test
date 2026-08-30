@@ -38,6 +38,7 @@ npm.cmd run verify
 npm.cmd run verify:region-profile
 npm.cmd run verify:security-baseline
 npm.cmd run verify:commercial-security
+npm.cmd run verify:browser-dependencies
 ```
 
 验证内容包括：运行健康检查、接口契约、页面动作接口、静态资源、核心造价公式、清单/变更/材料补差/手动计量闭环、材料到场/联系单/资料/工期闭环、流程定义版本/权限/并发冲突/处理记录闭环和中文数据质量。
