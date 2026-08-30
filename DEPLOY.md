@@ -188,6 +188,7 @@ install -d -o root -g root -m 0700 /etc/zwkjy-clone
 cat >/etc/zwkjy-clone/app.env <<'EOF'
 NODE_ENV=production
 PORT=3100
+APP_HOST=127.0.0.1
 APP_STORAGE=sqlite
 APP_BOOTSTRAP_PASSWORD=请替换为至少10位且含字母数字特殊字符的初始密码
 APP_COOKIE_SECURE=true
@@ -249,9 +250,9 @@ systemctl status zwkjy-clone --no-pager
 journalctl -u zwkjy-clone -f
 ```
 
-## 直接用 3100 端口访问
+## 3100 端口仅限隔离内网临时验收
 
-如果安全组已经放行 TCP `3100`，访问：
+正式版本默认只监听 `127.0.0.1`，公网无法直接访问 3100，这是预期的安全行为。仅在隔离内网临时验收、没有生产数据时，才可改用 `APP_HOST=0.0.0.0`、非生产模式和强初始密码后访问：
 
 ```text
 http://服务器IP:3100/
@@ -264,7 +265,7 @@ http://服务器IP:3100/
 密码：/etc/zwkjy-clone/app.env 中配置的 APP_BOOTSTRAP_PASSWORD
 ```
 
-当 `APP_COOKIE_SECURE=true` 时，浏览器只会通过 HTTPS 携带登录 Cookie，因此上面的 HTTP 地址只适合健康检查。临时内网验收可把环境文件中的值改成 `false` 并重启服务；正式上线前必须恢复为 `true`，使用域名和 HTTPS，且不要开放公网 `3100`。
+生产模式缺少 `APP_COOKIE_SECURE=true` 或 `APP_TRUST_PROXY` 会直接拒绝启动。正式上线必须恢复 `APP_HOST=127.0.0.1`，使用下文的 Nginx、域名和 HTTPS，并在云安全组中关闭公网 3100。
 
 ## 用 Nginx 反向代理
 
@@ -410,7 +411,7 @@ data/runtime.db*、data/security.db*、data/attachments.db*、data/attachments/�
 
 完整验收必须使用 `npm ci` 后执行 `npm run test:all`。验收完成的纯运行环境可以执行 `npm prune --omit=dev` 减少开发依赖；需要再次运行全套回归前必须重新执行 `npm ci`。
 
-上线前还必须执行 `npm run verify:security-baseline` 和 `npm audit --omit=dev`。系统按等保2.0二级常见技术基线实现密码历史/有效期、账号锁定、闲置会话、RBAC、自定义角色、管理员重置密码和安全审计；技术自检不代表已完成正式定级备案与测评，完整边界见 `SECURITY_BASELINE.md`。
+上线前还必须执行 `npm run verify:security-baseline`、`npm run verify:commercial-security` 和 `npm audit --omit=dev`。系统按等保2.0二级常见技术基线实现密码历史/有效期、账号锁定、闲置会话、RBAC、自定义角色、管理员重置密码、安全审计、外网弱口令拒绝启动和静态资源白名单；技术自检不代表已完成正式定级备案与测评，也不能证明没有未知漏洞，完整边界见 `SECURITY_BASELINE.md`。
 
 主计量支付报表会生成真实 `.xlsx`、`.pdf`、`.docx`，一键导出 ZIP 同时包含三种文件和 `manifest.json`。验收不能只看扩展名：XLSX/DOCX 应检查 ZIP/OOXML 结构，PDF 应检查 `%PDF-` 文件签名；系统的接口回归已经执行这些检查。报表生成、成功下载和缺失文件下载都会进入安全审计。
 

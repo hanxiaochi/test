@@ -2,7 +2,16 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { LoginRateLimiter, browserMutationDecision, browserMutationGuard, identityKey, positiveInteger, securityHeaders } = require("../../lib/security/http-security");
+const {
+  LoginRateLimiter,
+  browserMutationDecision,
+  browserMutationGuard,
+  identityKey,
+  positiveInteger,
+  securityHeaders,
+  sourceExposureDecision,
+  sourceExposureGuard
+} = require("../../lib/security/http-security");
 
 test("positive integers and login identities are normalized", () => {
   assert.equal(positiveInteger("5", 9), 5);
@@ -59,7 +68,7 @@ test("security middleware sets compatible baseline headers", () => {
     "X-Frame-Options": "SAMEORIGIN",
     "Referrer-Policy": "same-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-    "Content-Security-Policy": "default-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https:; frame-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'",
     "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
     "Cross-Origin-Resource-Policy": "same-origin",
     "X-XSS-Protection": "0"
@@ -67,6 +76,32 @@ test("security middleware sets compatible baseline headers", () => {
   assert.equal(nextCalls, 1);
   securityHeaders({ secure: true }, { setHeader(name, value) { headers[name] = value; } }, () => {});
   assert.equal(headers["Strict-Transport-Security"], "max-age=31536000; includeSubDomains");
+  assert.ok(headers["Content-Security-Policy"].endsWith("; upgrade-insecure-requests"));
+});
+
+test("source exposure decisions block private files and traversal encodings", () => {
+  assert.deepEqual(sourceExposureDecision("/assets/app.js"), { allowed: true, reason: "public-path" });
+  assert.deepEqual(sourceExposureDecision("/pageoffice.js?version=1"), { allowed: true, reason: "public-path" });
+  assert.deepEqual(sourceExposureDecision("/data/security.db"), { allowed: false, reason: "private-directory" });
+  assert.deepEqual(sourceExposureDecision("/server.js"), { allowed: false, reason: "private-file" });
+  assert.deepEqual(sourceExposureDecision("/%2e%2e/data/security.db"), { allowed: false, reason: "hidden-or-traversal" });
+  assert.deepEqual(sourceExposureDecision("/%ZZ"), { allowed: false, reason: "invalid-encoding" });
+});
+
+test("source exposure middleware returns a non-disclosing 404", () => {
+  let nextCalls = 0;
+  sourceExposureGuard({ originalUrl: "/css/app.css" }, {}, () => { nextCalls += 1; });
+  assert.equal(nextCalls, 1);
+  let statusCode;
+  let body;
+  sourceExposureGuard(
+    { originalUrl: "/package.json" },
+    { status(code) { statusCode = code; return this; }, json(value) { body = value; } },
+    () => { nextCalls += 1; }
+  );
+  assert.equal(nextCalls, 1);
+  assert.equal(statusCode, 404);
+  assert.equal(body.errorCode, "RESOURCE_NOT_FOUND");
 });
 
 test("browser mutation decisions reject cross-origin evidence without blocking API clients", () => {

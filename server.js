@@ -27,9 +27,11 @@ const { AttachmentStore } = require("./lib/attachments/attachment-store");
 const { scanAttachmentConsistency } = require("./lib/attachments/attachment-consistency");
 const { createGracefulShutdown } = require("./lib/runtime/graceful-shutdown");
 const { readinessReport } = require("./lib/runtime/readiness");
-const { browserMutationGuard, securityHeaders } = require("./lib/security/http-security");
+const { browserMutationGuard, securityHeaders, sourceExposureGuard } = require("./lib/security/http-security");
+const { assertServerDeployment } = require("./lib/security/deployment-security");
 const { AuthorizationAdmin } = require("./lib/security/authorization-admin");
 const { assessMlpsBaseline } = require("./lib/security/mlps-baseline");
+const { neutralizeSpreadsheetFormula } = require("./lib/security/spreadsheet-safety");
 const { WorkflowError, WorkflowStore, certificateApplicationDefinition, contractEventDefinition, defaultDefinition } = require("./lib/workflow/workflow-store");
 const workflowCoordinator = require("./lib/workflow/workflow-coordinator");
 const { scanWorkflowConsistency } = require("./lib/workflow/workflow-consistency");
@@ -58,6 +60,8 @@ const measureImportMaxBytes = Math.max(1024, Number(process.env.APP_MEASURE_IMPO
 const measureImportMaxRows = Math.max(1, Number(process.env.APP_MEASURE_IMPORT_MAX_ROWS) || 5000);
 const measureImportMaxSheets = Math.max(1, Number(process.env.APP_MEASURE_IMPORT_MAX_SHEETS) || 5);
 const port = process.env.PORT || 3100;
+const deploymentSecurity = assertServerDeployment(authService.deployment);
+const host = deploymentSecurity.host;
 const loginRateLimitOptions = {
   maxAttempts: process.env.APP_LOGIN_MAX_ATTEMPTS,
   windowMs: process.env.APP_LOGIN_WINDOW_MS,
@@ -101,10 +105,12 @@ initializedRuleTenants.add("default::1");
 app.disable("etag");
 app.disable("x-powered-by");
 if (process.env.APP_TRUST_PROXY) app.set("trust proxy", process.env.APP_TRUST_PROXY === "true" ? 1 : process.env.APP_TRUST_PROXY);
-app.use(express.urlencoded({ extended: true, limit: "2mb" }));
-app.use(express.json({ limit: process.env.APP_BODY_LIMIT || "64mb" }));
 app.use(securityHeaders);
+app.use(sourceExposureGuard);
 app.use(browserMutationGuard);
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+app.use("/api/admin/backups/import", express.json({ limit: process.env.APP_BACKUP_IMPORT_BODY_LIMIT || "32mb" }));
+app.use(express.json({ limit: process.env.APP_BODY_LIMIT || "2mb" }));
 app.use((req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Pragma", "no-cache");
@@ -1054,7 +1060,7 @@ function csv(res, filename, rows) {
     });
     return set;
   }, new Set()));
-  const escape = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const escape = (value) => `"${String(neutralizeSpreadsheetFormula(value ?? "")).replace(/"/g, '""')}"`;
   const body = [columns.join(","), ...data.map((row) => columns.map((key) => escape(row[key])).join(","))].join("\n");
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
@@ -1069,37 +1075,40 @@ function csvBody(rows) {
     });
     return set;
   }, new Set()));
-  const escape = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const escape = (value) => `"${String(neutralizeSpreadsheetFormula(value ?? "")).replace(/"/g, '""')}"`;
   return "\uFEFF" + [columns.join(","), ...data.map((row) => columns.map((key) => escape(row[key])).join(","))].join("\n");
 }
 
-function ensureExportDir() {
-  const dir = exportDir;
+function ensureExportDir(req) {
+  if (!req || !req.authUser || !req.businessContext) throw new Error("Authenticated export scope is required");
+  const tenantKey = crypto.createHash("sha256").update(String(req.authUser.tenantId), "utf8").digest("hex").slice(0, 24);
+  const projectKey = crypto.createHash("sha256").update(String(req.businessContext.projectId), "utf8").digest("hex").slice(0, 24);
+  const dir = path.join(exportDir, tenantKey, projectKey);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
-function saveCsvExport(filename, rows) {
+function saveCsvExport(req, filename, rows) {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-  const safeName = `${stamp}-${path.basename(filename)}`;
-  const dir = ensureExportDir();
-  fs.writeFileSync(path.join(dir, safeName), csvBody(rows), "utf8");
+  const safeName = `${stamp}-${crypto.randomBytes(6).toString("hex")}-${path.basename(filename)}`;
+  const dir = ensureExportDir(req);
+  fs.writeFileSync(path.join(dir, safeName), csvBody(rows), { encoding: "utf8", flag: "wx", mode: 0o600 });
   return {
-    fileDir: "/data/exports",
+    fileDir: "/file_upload/down_load",
     fileName: safeName,
-    url: `/data/exports/${safeName}`
+    url: `/file_upload/down_load?file_name=${encodeURIComponent(safeName)}`
   };
 }
 
-function saveExportBuffer(filename, data) {
+function saveExportBuffer(req, filename, data) {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-  const safeName = `${stamp}-${path.basename(filename)}`;
-  const dir = ensureExportDir();
-  fs.writeFileSync(path.join(dir, safeName), data);
+  const safeName = `${stamp}-${crypto.randomBytes(6).toString("hex")}-${path.basename(filename)}`;
+  const dir = ensureExportDir(req);
+  fs.writeFileSync(path.join(dir, safeName), data, { flag: "wx", mode: 0o600 });
   return {
-    fileDir: "/data/exports",
+    fileDir: "/file_upload/down_load",
     fileName: safeName,
-    url: `/data/exports/${safeName}`
+    url: `/file_upload/down_load?file_name=${encodeURIComponent(safeName)}`
   };
 }
 
@@ -1112,7 +1121,7 @@ function exportCsvOrTicket(req, res, filename, rows, ticketShape = "url") {
     csv(res, filename, rows);
     return;
   }
-  const saved = saveCsvExport(filename, rows);
+  const saved = saveCsvExport(req, filename, rows);
   operationOk(res, ticketShape === "array" ? [saved.fileDir, saved.fileName] : saved.url);
 }
 
@@ -1320,7 +1329,7 @@ async function exportReport(req, res) {
     res.send(payload.data);
     return;
   }
-  const saved = saveExportBuffer(payload.filename, payload.data);
+  const saved = saveExportBuffer(req, payload.filename, payload.data);
   reportExportAudit(req, "report.export", "success", { ...auditDetails, savedFileName: saved.fileName });
   operationOk(res, [saved.fileDir, saved.fileName]);
 }
@@ -1328,11 +1337,20 @@ async function exportReport(req, res) {
 function resolveExportFile(req) {
   const source = req.body.url || req.query.url || req.body.src || req.query.src || "";
   const fileName = req.body.file_name || req.query.file_name || req.body.fileName || req.query.fileName || "";
-  const sourceName = source ? path.basename(String(source).replace(/\\/g, "/")) : "";
+  let sourceName = "";
+  if (source) {
+    try {
+      const parsed = new URL(String(source), "http://local.invalid");
+      sourceName = parsed.searchParams.get("file_name") || path.basename(parsed.pathname.replace(/\\/g, "/"));
+    } catch {
+      sourceName = "";
+    }
+  }
   const name = path.basename(String(fileName || sourceName || ""));
   if (!name) return "";
-  const fullPath = path.join(ensureExportDir(), name);
-  return fullPath.startsWith(ensureExportDir()) ? fullPath : "";
+  const directory = ensureExportDir(req);
+  const fullPath = path.join(directory, name);
+  return path.dirname(fullPath) === directory ? fullPath : "";
 }
 
 function downloadExport(req, res, fallbackName, fallbackRows) {
@@ -14297,6 +14315,7 @@ app.get("/", (req, res) => {
 
 app.get("/index", (req, res) => res.redirect("/"));
 app.get("/index.html", (req, res) => html(res, readText(path.join(root, "index.html"))));
+app.get("/login.html", (req, res) => html(res, readText(path.join(root, "login.html"))));
 app.get("/main", (req, res) => html(res, dashboardHtml("综合工作台")));
 app.get("/account/password_page", (req, res) => html(res, passwordChangePageHtml(req.authUser)));
 
@@ -16148,15 +16167,22 @@ app.all("*", (req, res, next) => {
   next();
 });
 
-app.use(express.static(root, {
+const staticOptions = {
   etag: false,
   lastModified: false,
+  dotfiles: "deny",
   setHeaders: (res) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
   }
-}));
+};
+["assets", "common", "css", "img", "js"].forEach((directory) => {
+  app.use(`/${directory}`, express.static(path.join(root, directory), staticOptions));
+});
+["pageoffice.js", "work_form_http.js"].forEach((fileName) => {
+  app.get(`/${fileName}`, (_req, res) => res.sendFile(path.join(root, fileName)));
+});
 
 app.use((req, res) => {
   if (req.accepts("json") && !req.accepts("html")) {
@@ -16199,8 +16225,8 @@ app.use((error, req, res, _next) => {
   });
 });
 
-const server = app.listen(port, () => {
-  console.log(`APP local clone running at http://localhost:${port}`);
+const server = app.listen(port, host, () => {
+  console.log(`APP local clone running at http://${host}:${port}`);
 });
 
 const shutdown = createGracefulShutdown({

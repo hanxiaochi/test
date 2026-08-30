@@ -31,3 +31,6 @@ jobs:
 
       - name: Run complete quality gate
         run: npm run test:all
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev

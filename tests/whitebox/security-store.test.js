@@ -30,6 +30,9 @@ test("bootstrap is idempotent and never resets an existing password", () => with
   assert.equal(first.created, true);
   assert.equal(second.created, false);
   assert.equal(first.userId, second.userId);
+  assert.equal(store.passwordMatches(first.userId, "000000"), true);
+  assert.equal(store.passwordMatches(first.userId, "not-the-password"), false);
+  assert.equal(store.passwordMatches(999999, "000000"), false);
   assert.ok(store.authenticate({ account: "ys1", password: "000000" }));
   assert.equal(store.authenticate({ account: "ys1", password: "changed-by-restart" }), null);
 }));

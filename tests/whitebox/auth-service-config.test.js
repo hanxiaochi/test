@@ -73,3 +73,18 @@ test("production authentication bootstrap rejects weak new credentials without r
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test("external binding rejects a legacy default administrator even when startup supplies another password", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "zwkjy-auth-external-test-"));
+  const securityFile = path.join(temp, "security.db");
+  const baseEnv = { APP_STORAGE: "json", APP_SECURITY_DB_PATH: securityFile, APP_BOOTSTRAP_ACCOUNT: "ys1" };
+  try {
+    const local = runAuthService({ ...baseEnv, APP_HOST: "127.0.0.1", APP_BOOTSTRAP_PASSWORD: "000000" });
+    assert.equal(local.status, 0, local.stderr);
+    const exposed = runAuthService({ ...baseEnv, APP_HOST: "0.0.0.0", APP_BOOTSTRAP_PASSWORD: "Configured-But-Not-Applied-42!" });
+    assert.notEqual(exposed.status, 0);
+    assert.match(exposed.stderr, /replace the insecure bootstrap administrator password/);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});

@@ -168,6 +168,7 @@ install -d -o root -g root -m 0700 /etc/zwkjy-clone
 cat >/etc/zwkjy-clone/app.env <<'EOF'
 NODE_ENV=production
 PORT=3100
+APP_HOST=127.0.0.1
 APP_STORAGE=sqlite
 APP_BOOTSTRAP_PASSWORD=请替换为至少10位且含字母数字特殊字符的初始密码
 APP_COOKIE_SECURE=true
@@ -331,6 +332,7 @@ node -e "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('
 
 ```text
 PORT                    HTTP 端口，默认 3100
+APP_HOST                监听地址，默认 127.0.0.1；只有隔离内网测试才使用 0.0.0.0
 APP_STORAGE             sqlite（默认）或 json（应急回滚）
 APP_DATA_DIR            统一持久化数据根目录，默认项目 data/；容器和测试环境应显式隔离
 APP_RUNTIME_DB_PATH     旧 JSON 路径
@@ -339,6 +341,7 @@ APP_SECURITY_DB_PATH    账号、权限和审计 SQLite 路径
 APP_RULE_DB_PATH        规则版本库路径，默认复用 security.db
 APP_WORKFLOW_DB_PATH    审批定义、实例和事件库路径，默认复用 security.db
 APP_BACKUP_DIR          应用内项目备份目录
+APP_BACKUP_IMPORT_BODY_LIMIT 项目备份导入JSON上限，默认32mb；其余JSON默认2mb
 APP_ATTACHMENT_DB_PATH  附件元数据 SQLite 路径，默认 data/attachments.db
 APP_ATTACHMENT_DIR      附件对象目录，默认 data/attachments
 APP_ATTACHMENT_MAX_BYTES 单文件上限字节数，默认 20971520（20 MiB）
@@ -376,7 +379,9 @@ Nginx 的 `client_max_body_size` 必须略大于 `APP_ATTACHMENT_MAX_BYTES` 以�
 
 用户可从右上角账号菜单主动修改密码。管理员可在账号权限管理中设置临时强密码、解锁账号、分配多个角色/项目并创建最小权限自定义角色；重置或授权变化会撤销目标用户全部会话，临时密码不会出现在审计详情中。
 
-当 `NODE_ENV=production` 且目标管理员尚不存在时，弱初始密码会导致服务拒绝启动；这可防止全新公网实例意外使用默认 `000000`。已有数据库中的账号和密码不会被启动配置覆盖。
+默认只监听 `127.0.0.1`。当 `NODE_ENV=production` 或 `APP_HOST` 不是回环地址时，弱初始密码会导致服务拒绝启动；已有数据库如果仍能使用默认 `000000` 登录，也会拒绝外网或生产启动。已有强密码不会被启动配置覆盖。生产模式还会强制要求 `APP_COOKIE_SECURE=true` 和显式 `APP_TRUST_PROXY`，避免把未完成 TLS 配置的实例误当作商用环境。
+
+HTTP 只发布 `assets/`、`common/`、`css/`、`img/`、`js/` 和两个兼容脚本。`data/`、`lib/`、`scripts/`、`tests/`、日志、Git 元数据、`server.js`、`package.json` 等路径始终返回 404；不要通过 Nginx 额外把项目目录配置为静态站点，否则会绕过该保护。
 
 登录失败计数保存在安全 SQLite 数据库中，服务重启后不会清零。限流表只保存 IP、租户和账号组合的 SHA-256 摘要，并按 `APP_LOGIN_WINDOW_MS` 自动过期、按 `APP_LOGIN_MAX_ENTRIES` 限制容量。
 

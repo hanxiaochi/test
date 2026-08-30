@@ -135,6 +135,20 @@ async function verifyUnauthenticatedAccess() {
   });
   assert.strictEqual(sameOrigin.response.status, 200, "same-origin browser mutations should reach the existing login contract");
   assert.strictEqual(sameOrigin.json.code, 0, "same-origin probe should be rejected only for invalid credentials");
+  const injection = await requestJson("/dologin", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ user_account: "' OR 1=1 --", password: "irrelevant" }).toString()
+  });
+  assert.strictEqual(injection.json.code, 0, "SQL-like login input must remain data and never bypass authentication");
+  assert.ok(!injection.response.headers.get("set-cookie"), "injection probes must not receive a session");
+  const oversized = await requestJson("/dologin", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_account: "oversized-probe", password: "A".repeat(2 * 1024 * 1024) })
+  });
+  assert.strictEqual(oversized.response.status, 413, "ordinary JSON endpoints should reject bodies above the 2 MiB limit");
+  assert.ok((oversized.response.headers.get("content-security-policy") || "").includes("object-src 'none'"), "parser errors should retain security headers");
 }
 
 async function verifyLoginFlow() {
@@ -187,6 +201,11 @@ async function verifyLoginFlow() {
   assert.strictEqual(relogin.json.code, 1, "administrator should authenticate with the replacement password");
   assert.strictEqual(relogin.json.data.mustChangePassword, false, "replacement password should clear the forced-change flag");
   authCookieHeader = relogin.response.headers.get("set-cookie").split(";")[0];
+  for (const privatePath of ["/data/security.db", "/server.js", "/package.json", "/lib/security/security-store.js", "/.git/config"]) {
+    const blocked = await requestText(privatePath);
+    assert.strictEqual(blocked.response.status, 404, `${privatePath} must never be exposed to an authenticated user`);
+    assert.strictEqual(blocked.text.includes("password_hash"), false, `${privatePath} must not disclose authentication data`);
+  }
   const modules = await requestJson("/api/client/modules");
   assert.strictEqual(modules.response.status, 200, "authenticated clients should receive the frontend module manifest");
   assert.deepStrictEqual(modules.json.data.packs.map((pack) => pack.id), ["core-platform", "cn-mainland", "fidic-international"], "default deployment should assemble all commercial region packs in configured order");
@@ -372,8 +391,12 @@ async function verifyAuthorizationFlow() {
   assert.deepStrictEqual(roles.json.data.find((role) => role.code === "certificate_approver").permissions, ["data:read", "international:calculate", "international:export", "international:issue", "international:read", "international:review", "international:void"], "certificate approver should receive review and certificate lifecycle grants plus base read access");
   const permissionCatalog = await requestJson("/api/admin/permissions");
   assert.ok(permissionCatalog.json.data.some((item) => item.code === "data:read") && permissionCatalog.json.data.some((item) => item.code === "admin:users"), "administrator should read the permission catalog");
-  const customRole = await postJson("/api/admin/roles", { code: "regression_auditor", name: "回归造价审核员", permissionCodes: ["data:read", "international:read"] });
+  const xssRoleName = '<img src=x onerror="globalThis.__xss=1">';
+  const customRole = await postJson("/api/admin/roles", { code: "regression_auditor", name: xssRoleName, permissionCodes: ["data:read", "international:read"] });
   assert.deepStrictEqual(customRole.json.data.permissions, ["data:read", "international:read"], "administrator should create a least-privilege custom role");
+  const escapedRolePage = await requestText("/admin/users_page");
+  assert.strictEqual(escapedRolePage.text.includes(xssRoleName), false, "stored role names must not render as executable HTML");
+  assert.ok(escapedRolePage.text.includes("&lt;img src=x onerror=&quot;globalThis.__xss=1&quot;&gt;"), "stored role names should be HTML escaped");
   const deletedCustomRole = await postJson("/api/admin/roles/regression_auditor/delete", {});
   assert.strictEqual(deletedCustomRole.json.data.deleted, true, "administrator should delete an unused custom role");
   const baseline = await requestJson("/api/admin/security_baseline");
@@ -571,6 +594,13 @@ async function verifyAuthorizationFlow() {
   const mapConfig = await requestJson("/api/client-config/maps");
   assert.strictEqual(mapConfig.response.status, 200, "authenticated users should read optional map client configuration");
   assert.deepStrictEqual(mapConfig.json.data, { enabled: false }, "map integration should fail closed when deployment credentials are absent");
+  authCookieHeader = "";
+  await requestJson("/dologin", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "=1+1" },
+    body: new URLSearchParams({ user_account: "csv_formula_probe", password: "wrong" }).toString()
+  });
+  authCookieHeader = adminCookie;
   const filteredAudit = await requestJson("/api/admin/security_audit/query?action=login&result=denied&page=1&limit=2");
   assert.strictEqual(filteredAudit.response.status, 200, "administrator should query tenant security audit records");
   assert.ok(filteredAudit.json.data.total >= 1 && filteredAudit.json.data.rows.length <= 2, "audit query should filter and page results");
@@ -581,6 +611,7 @@ async function verifyAuthorizationFlow() {
   assert.strictEqual(auditExport.response.status, 200, "administrator should export filtered audit records");
   assert.ok(String(auditExport.response.headers.get("content-type")).includes("text/csv"), "audit export should use CSV content type");
   assert.ok(auditExport.buffer.toString("utf8").includes("login") && auditExport.buffer.toString("utf8").startsWith("\uFEFF"), "audit CSV should include matching rows and a spreadsheet-compatible BOM");
+  assert.ok(auditExport.buffer.toString("utf8").includes("'=1+1"), "audit CSV should neutralize spreadsheet formulas in user-controlled fields");
   const invalidAuditExport = await requestJson("/api/admin/security_audit/export?userId=invalid");
   assert.strictEqual(invalidAuditExport.response.status, 400, "invalid audit export filters should fail explicitly");
   const exportAudits = await requestJson("/api/admin/security_audit/query?action=security.audit.export");
@@ -4150,7 +4181,10 @@ async function verifyImportExportDownloadLoop() {
     body: JSON.stringify({})
   });
   assert.strictEqual(ticket.json.code, 1, "AJAX export ticket should succeed");
-  assert.ok(typeof ticket.json.data === "string" && ticket.json.data.includes("/data/exports/"), "AJAX export should return saved export URL");
+  assert.ok(typeof ticket.json.data === "string" && ticket.json.data.includes("/file_upload/down_load?file_name="), "AJAX export should return an authenticated saved export URL");
+  const ticketFileName = new URL(ticket.json.data, BASE_URL).searchParams.get("file_name");
+  const crossProjectExport = await requestText(`/file_upload/down_load?file_name=${encodeURIComponent(ticketFileName)}&projectId=regression-project-2`);
+  assert.strictEqual(crossProjectExport.response.status, 404, "saved exports must not cross project storage boundaries");
 
   const downloaded = await requestText(`/file_upload/down_load?url=${encodeURIComponent(ticket.json.data)}`);
   assert.strictEqual(downloaded.response.status, 200, "saved export download should succeed");
@@ -4193,7 +4227,7 @@ async function verifyImportExportDownloadLoop() {
       body: JSON.stringify({})
     });
     assert.strictEqual(ajaxTicket.json.code, 1, `${item.label} AJAX export ticket should succeed`);
-    assert.ok(typeof ajaxTicket.json.data === "string" && ajaxTicket.json.data.includes("/data/exports/"), `${item.label} AJAX export should return saved file URL`);
+    assert.ok(typeof ajaxTicket.json.data === "string" && ajaxTicket.json.data.includes("/file_upload/down_load?file_name="), `${item.label} AJAX export should return authenticated saved file URL`);
     const ajaxDownload = await requestText(`/file_upload/down_load?url=${encodeURIComponent(ajaxTicket.json.data)}`);
     assert.strictEqual(ajaxDownload.response.status, 200, `${item.label} saved export should download`);
     assert.ok(item.columns.every((column) => ajaxDownload.text.includes(column)), `${item.label} saved export should preserve columns`);
