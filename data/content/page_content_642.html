@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>资料综合管理</title>
+<style type="text/css">
+#buttonGroup button {
+	float: none;
+	font-size:12px;
+	width:90px;
+	margin-bottom: 2px;
+}
+.table{
+	margin-bottom: 0 !important;
+}
+</style>
+</head>
+<body>
+<div style="display:none;">
+<input  type="file" name="file" />
+</div>
+<!-- 原项目第三方 COS 资源链接已脱敏 -->
+	<div id="workingPositionDiv"></div>
+	<div class="layui-row">
+		<div class="layui-col-md3">
+			
+			<div id="buttonGroup" class="box-body" style="padding: 0;">
+				<img src="img/dhx/dhxtree_web/green.png">全部挂接
+				<img src="img/dhx/dhxtree_web/yellow.png">部分挂接
+				<img src="img/dhx/dhxtree_web/red.png">未挂接
+			</div>		
+			<div id="node_tree"></div>
+		</div>
+		<div class="layui-col-md9">
+			<!--对应分部分项数据表 -->
+				<table id="informationParamTable" lay-filter="informationParamTable" class="table table-striped table-bordered">
+				</table>
+		</div>
+ 	 </div>
+	<script type="text/javascript">
+		var tree;
+		layui.use(['table','util','appInit'], function(){
+			var table = layui.table,appInit=layui.appInit;
+		 	var headCols=[
+				[
+					{"field":"zizeng","align":"center","title":"序号","type":"numbers",width:40},
+					{"align":"center","title":"所属标段","width": 200,"templet":function(d){
+						return d.projectInformationNode.sysSection.sectionName;
+					}},
+					{"align":"center","title":"所属分项","style":"text-align:left","templet":function(d){
+						return d.projectInformationNode.nodeName;
+					}},
+					{"align":"center","title":"填写时间","width": 200,"templet":function(d){
+						return d.hangDate;
+					}},
+					{"align":"center","title":"填报人","width": 120,"templet":function(d){
+						if(d.sysUser==""){
+							return "";
+						}
+						return d.sysUser.userName;
+					}},
+					{"title":"操作","width": 120,rowspan:2,"align":"center","templet":function(d){
+						var btns ='<div class="btn-group" >';
+							btns += '<button type="button"lay-event="edit" class="btn btn-primary btn-xs">查看</button>';
+							btns += "</div>";
+						return btns;
+					}}
+				]
+			];
+		 	table.render({
+			  	elem: '#informationParamTable'
+			  	,url:"projectInformationNode/find_hang_by_param"
+			  	,where:{informationId : informationId}
+			  	,size: 'sm'
+			  	,cols: headCols
+			  	,defaultToolbar:[]
+			  	//,height: 'full-165'
+			  	,even:true
+			  	,cellMinWidth: 60
+				,height:'full-150'
+			  	,done : function() {}
+			});
+			table.on('row(informationParamTable)', function(obj){
+				 obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+			})
+			table.on('tool(informationParamTable)', function(obj){
+				projectInformationHangLineClick[obj.event](obj.data);
+			});
+			var projectInformationHangLineClick = {
+				edit : function(data) {
+// 					var ntkoed=ntkoBrowser.ExtensionInstalled();
+// 		 			if(ntkoed){
+						hangId=data.hangId;
+						POBrowser.openWindowModeless(CommonUtil.webPath()+'/page_office/project_information_open_word?type=see&hangId='+data.hangId,'width=1200px;height=800px;');
+// 						ntkoBrowser.openWindow(CommonUtil.webPath()+"/projectInformationNode/editindex_information?type=see&hangId="+data.hangId,
+// 								"","","","","",'1');
+// 		 			}else{
+// 		 				 var iTop = ntkoBrowser.NtkoiTop();   //获得窗口的垂直位置;
+// 		 			     var iLeft = ntkoBrowser.NtkoiLeft();        //获得窗口的水平位置;
+// 		 				 window.open("editindex_information","","height=200px,width=500px,top="+iTop+"px,left="+iLeft+"px,titlebar=no,toolbar=no,menubar=no,scrollbars=auto,resizeable=no,location=no,status=no");
+// 		 			}
+				}
+			}
+			$("#node_tree").css("height",divHeight+"px");
+			function getTree() {
+				$("#node_tree").html("");
+				$.ajax({
+					url : "projectInformationParam/get_node_tree",
+					type : "get",
+					dataType : "json",
+					success : function(result) {
+						if (result.code == 1) {
+							tree = new dhtmlXTreeObject("node_tree", "100%","100%", 0);
+							tree.setImagePath("img/dhx/dhxtree_web/");
+							tree.enableTreeLines(true);
+							tree.attachEvent("onClick",onNodeSelect);
+							var informationList = result.data.data;
+							console.log(JSON.stringify(informationList));
+							var closeList = result.data.closeData;
+							tree.insertNewItem(0, -1,"演示项目A", 0, "部门.png",
+									"部门.png", "部门.png","CHILD");
+							getNodeTree(informationList,closeList);
+						}
+					}
+				});
+			}
+			getTree();
+			function getNodeTree(list,closeList) {
+				for (var i = 0; i < list.length; i++) {
+					if(list[i].state==0){
+						tree.insertNewItem(
+								list[i].parentId,
+								list[i].id, list[i].name,
+								0, "green.png", "green.png", "green.png",
+								"CHILD");
+						tree.setItemColor(list[i].id, "#008000", "#008000");
+					}
+					if(list[i].state==1){
+						tree.insertNewItem(
+								list[i].parentId,
+								list[i].id, list[i].name,
+								0, "yellow.png", "yellow.png", "yellow.png",
+								"CHILD");
+						tree.setItemColor(list[i].id, "#DAA520", "#DAA520");
+					}
+					if(list[i].state==2){
+						tree.insertNewItem(
+								list[i].parentId,
+								list[i].id, list[i].name,
+								0, "red.png", "red.png", "red.png",
+								"CHILD");
+						tree.setItemColor(list[i].id, "#FF0000", "#FF0000");
+					}
+				}
+				for(var i=0;i<closeList.length;i++){
+					tree.closeItem(closeList[i].id)
+				}
+			}
+			var informationId = 0;
+			function onNodeSelect(sID) {
+				sID=sID+"";
+				if(sID.indexOf("js")==-1 && sID.indexOf("sur")==-1 && sID.indexOf("con")==-1){
+					informationId=sID;
+					table.reload("informationParamTable",{where:{informationId:informationId}});
+				}
+			}
+			$("#editParam").on("click",function(){
+				if(informationId==0){
+					Ewin.msg({type : "warning",content : "请选择节点"});
+					return;
+				}
+				$.get('projectInformationParam/edit_page?informationId='+informationId, {}, function(str){
+		    		  layer.open({
+		    		    type: 1,
+		    		    offset: '50px',
+		    		    area: ['500px', '400px'],
+		    		    title:'<i class="layui-icon layui-icon-add-circle"></i>编辑',
+		    		    content: str
+		    		  });
+		    	});
+			})
+		})
+	</script>
+</body>
+</html>

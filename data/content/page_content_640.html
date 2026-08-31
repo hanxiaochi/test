@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>资料管理</title>
+<style type="text/css">
+#buttonGroup button {
+	float: none;
+	font-size:12px;
+	width:90px;
+	margin-bottom: 2px;
+}
+.table{
+	margin-bottom: 0 !important;
+}
+</style>
+</head>
+<body>
+<div style="display:none;">
+<input  type="file" name="file" />
+</div>
+<!-- 原项目第三方 COS 资源链接已脱敏 -->
+	<div id="workingPositionDiv"></div>
+	<div class="layui-row">
+		<div class="layui-col-md3">
+			<div id="buttonGroup" class="box-body" style="padding: 0;">
+				<button data-type="init"  class="btn btn-default btn-sm">恢复默认</button>
+				<button data-type="hang" data-url="" class="btn btn-default btn-sm">挂接资料</button>
+				<button data-type="delete" data-url="delete_node" class="btn btn-default btn-sm">删除部项</button><br/>
+				<button data-type="button" data-url="edit_page" data_type="addPre" class="btn btn-default">添加同级</button>
+				<button data-type="button" data-url="edit_page" data_type="addNext" class="btn btn-default">添加下级</button>
+				<button data-type="button" data-url="edit_page" data_type="editNode" class="btn btn-default">修改部项</button>
+			</div>
+			<div id="node_tree"></div>
+		</div>
+		<div class="layui-col-md9">
+			<!--对应分部分项数据表 -->
+			<div id="secBill" class="tab-content" data-type="design" style="margin-left: 10px">
+				<table id="projectInformationHangTable" lay-filter="projectInformationHangTable" class="table table-striped table-bordered">
+				</table>
+			</div>
+		</div>
+ 	 </div>
+	<script type="text/javascript" src="pageoffice.js" id="po_js_main"></script>
+	<script type="text/javascript">
+		var tree,ntko,hangId,fileName;
+		var nodeId = 0,nodeLevel="";
+		layui.use(['table'], function(){
+			var table = layui.table;
+		 	var headCols=[
+				[
+					{"field":"zizeng","align":"center","title":"序号","type":"numbers",width:40},
+					{"align":"center","title":"填写时间","width": 150,"templet":function(d){
+						return d.hangDate;
+					}},
+					{"align":"center","title":"文件编号","width": 120,"templet":function(d){
+						return d.projectInformationParam.dataNo;
+					}},
+					{"align":"center","title":"文件名称","style":"text-align:left","templet":function(d){
+						return d.projectInformationParam.dataName;
+					}},
+					{"align":"center","title":"填报人","width": 120,"templet":function(d){
+						if(d.sysUser==""){
+							return "";
+						}
+						return d.sysUser.userName;
+					}},
+					{"title":"操作","width": 180,rowspan:2,"align":"center","templet":function(d){
+						var btns ='<div class="btn-group" >';
+							btns += '<button type="button"lay-event="access" class="btn btn-default btn-xs">附件</button>';
+							btns += '<button type="button"lay-event="edit" class="btn btn-primary btn-xs">编辑</button>';
+							btns += '<button type="button" lay-event="deletes" class="btn btn-danger btn-xs">删除</button>';
+							btns += "</div>";
+						return btns;
+					}}
+				]
+			];
+		 	table.render({
+			  	elem: '#projectInformationHangTable'
+			  	,url:"projectInformationNode/find_hang_param"
+			  	,where:{nodeId : nodeId}
+			  	,size: 'sm'
+			  	,cols: headCols
+			  	,defaultToolbar:[]
+			  	//,height: 'full-165'
+			  	,even:true
+			  	,cellMinWidth: 60
+				,height:'full-150'
+			  	,done : function() {
+//	 				layer.closeAll('loading');
+			  	}
+			});
+			table.on('row(projectInformationHangTable)', function(obj){
+				 obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+			})
+			table.on('tool(projectInformationHangTable)', function(obj){
+				projectInformationHangLineClick[obj.event](obj.data);
+			});
+			var projectInformationHangLineClick = {
+				deletes : function(data) {
+					Ewin.confirm({message : "确认要删除本条数据吗？"}).on(function(e) {
+						if (e) {
+							$.ajax({
+								url : "projectInformationNode/delete_hang_param",
+								type : "delete",
+								data : {hangId : data.hangId},
+								success : function(result) {
+									if (result.code == 1) {
+										Ewin.msg({type : "success",content : "删除成功！"})
+										table.reload("projectInformationHangTable",{where:{nodeId:nodeId}});
+									} else {
+										Ewin.msg({type : "danger",content : "删除失败！"})
+									}
+								}
+							});
+						}
+					})
+				},
+				edit : function(data) {
+					hangId=data.hangId;
+					POBrowser.openWindowModeless(CommonUtil.webPath()+'/page_office/project_information_open_word?type=edit&hangId='+data.hangId,'width=1200px;height=800px;');
+// 					 var ntkoed=ntkoBrowser.ExtensionInstalled();
+// 		 			 if(ntkoed){
+// // 							ntkoBrowser.ntkoClose(strURL);
+// 						hangId=data.hangId;
+						
+// 						ntkoBrowser.openWindow(CommonUtil.webPath()+"/projectInformationNode/editindex_information?type=edit&hangId="+data.hangId,"","","","",""
+// 								,'1');
+// 		 			 }else{
+// 		 				 var iTop = ntkoBrowser.NtkoiTop();   //获得窗口的垂直位置;
+// 		 			     var iLeft = ntkoBrowser.NtkoiLeft();        //获得窗口的水平位置;
+// 		 				 window.open(CommonUtil.webPath()+"/projectInformationNode/exeindex","","height=200px,width=500px,top="+iTop+"px,left="+iLeft+"px,titlebar=no,toolbar=no,menubar=no,scrollbars=auto,resizeable=no,location=no,status=no");
+// 		 			 }
+				},
+				access : function(data) {
+					var id=data.hangId;
+					$.get('project_information_hang_file/page?id='+id, {}, function(str){
+			    		  layer.open({
+			    		    type: 1,
+			    		    offset: '50px',
+			    		    area: ['500px', '600px'],
+			    		    title:'<i class="layui-icon layui-icon-add-circle"></i>附件',
+			    		    content: str
+			    		  });
+			    	});
+				},
+			}
+			$("#node_tree").css("height",divHeight+"px");
+			function getTree() {
+				$("#node_tree").html("");
+				var sectionId = getValue("sectionId");
+				if (sectionId == null)
+					return;
+				$.ajax({
+					url : "projectInformationNode/get_node_tree",
+					data : {nodeType:"0"},
+					type : "get",
+					dataType : "json",
+					success : function(result) {
+						if (result.code == 1) {
+							tree = new dhtmlXTreeObject("node_tree", "100%","100%", 0);
+							tree.setImagePath("img/dhx/dhxtree_web/");
+							tree.enableTreeLines(true);
+							tree.attachEvent("onClick",onNodeSelect);
+							var nodeList = result.data;
+							tree.insertNewItem(0, -1,getValue("sectionName"), 0, "部门.png",
+									"部门.png", "部门.png","CHILD");
+							getNodeTree(nodeList);
+						}
+					}
+				});
+			}
+			getTree();
+			function getNodeTree(list) {
+				var closeList=new Array();
+				for (var i = 0; i < list.length; i++) {
+					if(list[i].nodeLevel.length==4){
+						tree.insertNewItem(
+								-1,
+								list[i].nodeLevel, list[i].nodeName,
+								0, "部门.png", "部门.png", "部门.png",
+								"CHILD");
+						closeList.push(list[i].nodeLevel);
+					}else{
+						tree.insertNewItem(
+								list[i].nodeLevel.substring(0,list[i].nodeLevel.length-4),
+								list[i].nodeLevel, list[i].nodeName,
+								0, "部门.png", "部门.png", "部门.png",
+								"CHILD");
+					}
+					tree.setUserData(list[i].nodeLevel,
+							list[i].nodeName,
+							list[i].nodeId);
+				}
+				for(var i=0;i<closeList.length;i++){
+					tree.closeItem(closeList[i])
+				}
+			}
+			function onNodeSelect(sID) {
+				if(sID!=-1){
+					nodeLevel=sID;
+					nodeId =  tree.getUserData(sID, tree.getItemText(sID));
+					table.reload("projectInformationHangTable",{where:{nodeId:nodeId}});
+				}else{
+					nodeId =  -1;
+				}
+			}
+			//按钮组单击监听 data-type==button 的按钮
+			$("#buttonGroup button[data-type]").on("click",function() {
+				var _this=this;
+				var dataType=$(_this).attr("data-type");
+				if(dataType=="init"){
+					Ewin.confirm({message : "是否恢复数据？"}).on(function(e) {
+						if (e) {
+							$.ajax({
+								url : "projectInformationNode/init_node",
+								type : "get",
+								async : false,
+								data : {nodeType : "0"},
+								success : function(result) {
+									if (result.code == 1 ) {
+										Ewin.msg({
+											type : "success",
+											content : "恢复成功"
+										});
+										getTree();
+									}else{
+										Ewin.msg({
+											type : "danger",
+											content : "已挂接清单，无法初始化"
+										});
+									}
+								}
+							});
+						}
+					})
+					return false;
+				}
+				if (nodeId == -1 || nodeId == 0 ||nodeId==null) {
+					Ewin.msg({type : "warning",content : "请选择节点"});
+					return;
+				}
+				if(dataType=="delete"){
+					Ewin.confirm({message : "是否将选中数据删除？"}).on(function(e) {
+						if (e) {
+							$.ajax({
+								url : "projectInformationNode/delete_node",
+								type : "get",
+								data : {nodeId : nodeId},
+								success : function(result) {
+									if (result.code == 1) {
+										Ewin.msg({
+											type : "success",
+											content : "删除成功"
+										});
+										// 重新构造
+										tree.deleteItem(nodeLevel,false);
+									}
+								}
+							});
+						}
+					})
+				}else if(dataType=="hang"){
+					$.get('projectInformationNode/hang_page?nodeId='+nodeId, {}, function(str){
+			    		  layer.open({
+			    		    type: 1,
+			    		    offset: '50px',
+			    		    area: ['500px', '600px'],
+			    		    title:'<i class="layui-icon layui-icon-add-circle"></i>挂接',
+			    		    content: str
+			    		  });
+			    	});
+				}else{
+					if($(_this).attr("data_type")=="addPre"&&nodeLevel.length==4){
+						Ewin.msg({type : "warning",content : "该节点无法添加同级"});
+						return false;
+					}
+					$.get('projectInformationNode/edit_page?nodeId='+nodeId+'&type='+$(_this).attr("data_type"), {}, function(str){
+		    		 	 layer.open({
+			    		    type: 1,
+			    		    offset: '50px',
+			    		    area: ['400px', '240px'],
+			    		    title:'<i class="layui-icon layui-icon-add-circle"></i>编辑',
+			    		    content: str
+			    		  });
+			    	}); 
+				}
+			});
+		})
+// 		function ntkoCloseEvent(){
+// 			console.log(JSON.stringify(ntko));
+// 			ntko.SaveToURL('http://192.168.1.16:8081/projectInformationNode/upload_attachment?hangId='+hangId, 
+// 					"file", '', fileName, '', false)
+// 		}
+	</script>
+</body>
+</html>

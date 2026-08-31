@@ -1,0 +1,7 @@
+{
+  "profileId": "fidic-international-commercial",
+  "packs": [
+    "core-platform",
+    "fidic-international"
+  ]
+}

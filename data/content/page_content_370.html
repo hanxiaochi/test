@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>多项目查询（领导查询）</title>
+</head>
+<body>
+	<div id="mutilProjectTab"></div>
+	<div class="modal fade bs-example-modal-lg text-center" id="showProcessImg" tabindex="-1" role="dialog" aria-labelledby="myLargeModalLabel">
+		<div class="modal-dialog modal-lg" style="display: inline-block; width: auto; margin-top: 12%">
+			<div class="modal-content" style="box-shadow: darkgrey 0px 0px 30px 5px;">
+				<img id="imgInModalID" class="carousel-inner img-responsive img-rounded" onclick="javascript:$('#showProcessImg').modal('hide')" onmouseover="this.style.cursor='pointer';this.style.cursor='hand'" onmouseout="this.style.cursor='default'" />
+			</div>
+		</div>
+	</div>
+	<script type="text/html" id="projectList">
+				<div style="margin:5px 0px;padding-right:20px;display:none;width:300px;" id="mutilClicntSelectId">
+					<select class="form-control input-sm" id="mutilClientId">
+						<!-- 其中m是个临时变量，像for(User u : userList)那样中的u-->
+						<option value="1" >演示系统A</option>
+					</select>
+				</div>
+	<div class="layui-row">
+		<div class="layui-col-md8">
+				<input type="hidden" id="sysProjectTableSelectId" value="0">
+				<table id="sysProjectTable" lay-filter="sysProjectTable" ></table>
+
+				<h5>标段信息</h5>
+				<table id="sysSectionTable" lay-filter="sysSectionTable" ></table>
+		</div>
+		<div class="layui-col-md4">
+				<div id="myChart" style="width: 500px; height: 300px;">
+		</div>
+	</div>
+	</script>
+	<script type="text/javascript" src="assets/plugins/iCheck/icheck.min.js"></script>
+	<script type="text/javascript" src="js/bootstrap-zwtab.js"></script>
+	<script type="text/javascript">
+		ZwTab.init({
+			id : "mutilProjectTab",
+			title : "工程标段列表",
+			html : $("#projectList").html()
+		});
+		
+		layui.use(['table'], function(){
+			var isTests="0";
+			var moneyNum = getValue("moneyDecimals");
+			if(isTests=="1"){
+				$("#mutilClicntSelectId").css("display","");
+			}
+			$("#mutilClientId").change(function() {
+				 table.reload('sysProjectTable',{where: {clientId:$("#mutilClientId").val()}});
+				 table.reload('sysSectionTable',{where: {projectId:0}});
+			});
+			 //表格
+			  var table = layui.table;
+			  layer.load(2);
+			  var cols =[
+		          	{ "title": "工程编号",width:103,'align':'center',"field":"projectNo"},
+		          	{ "title": "工程名称",'align':'center',"field":"projectName"},
+		          	{ "title": "总工期",'align':'center',"field":"consPeriod",'align':'center'},
+		          	{ "title": "总投资额","field":"totalInvest",'align':'center'},
+		          	{ "title": "累计支付","field":"sjzf",'align':'center'},
+		           /* { "title": "操作",'align':'center', "fixed":"right",templet:function(d){
+		            	var btns = '<div class="btn-group">';
+						//btns += '<button type="button"  lay-event="businesInfo" class="btn btn-info btn-xs">工商信息</button>';
+						btns += '</div>';
+						return btns;
+                   	
+	                }
+		          	}*/
+			    ];
+			  var detailCols =[
+				  { "title": "标段编号","width":80,"field":"sectionNo",'align':'center'},
+				  { "title": "标段名称","width":120,"field":"sectionName",'align':'center'},
+				  { "title": "开工日期","width":115,"field":"secStartDate",'align':'center'},
+				  { "title": "竣工日期","width":115,"field":"secEndDate",'align':'center'},
+				  { "title": "合同工期","width":80,"field":"contrDuration",'align':'center'},
+				  { "title": "总投资额","width":90,"field":"contractSumMoney",'align':'center'},
+				  { "title": "操作", width:130,align:'center',templet:function(d){
+						var btns = '<button type="button" lay-event="details" class="btn btn-primary btn-xs">详情</button></div>';
+						return btns;
+                }},
+				  { "title": "累计支付",templet: function(d){
+					  var contractSumMoney = d.contractSumMoney;
+						var sjzf = d.sjzf;
+						if(contractSumMoney!='undefined'&&sjzf!='cumulativeAmount'){
+							if(contractSumMoney==''){
+								return '<div class="layui-progress layui-progress-big" lay-showpercent="true"> <div class="layui-progress-bar" lay-percent="0%"></div></div>';
+							}
+							 var percentStr =(parseFloat(d.sjzf)/parseFloat(parseFloat(d.contractSumMoney))*100).toFixed(2);
+							 var str ='<div class="layui-progress layui-progress-big" lay-showpercent="true"> <div class="layui-progress-bar" lay-percent="'+percentStr+'%"></div></div>';
+							return str;
+						}
+						return '<div class="layui-progress layui-progress-big" lay-showpercent="true"> <div class="layui-progress-bar" lay-percent="0%"></div></div>';
+				  }}
+	             
+			    ];
+			  table.render({
+			    elem: '#sysProjectTable'
+		        ,defaultToolbar:[]
+			    ,url: 'mtilProjectQuer/get_project_list_by_user' //数据接口
+			    ,where:{clientId:$("#mutilClientId").val()}
+			  	,page: true
+			  	,even:true
+			  	,cellMinWidth: 80
+			  	,limit:10
+			  	,limits:[10,20,30]
+			    ,cols: [cols]
+			    ,size: 'sm'
+			    ,done : function() {
+			    	
+					layer.closeAll('loading');
+					 $(".layui-table-view[lay-id='sysProjectTable'] .layui-table-body tr[data-index = 0]").click();
+					 layui.use('element', function(){
+						  var element = layui.element;
+						  element.init();
+						});
+				}
+			  });
+			  table.render({
+			    elem: '#sysSectionTable'
+			    ,url: 'mtilProjectQuer/query_section_list' //数据接口
+			    ,where:{projectId: $("#sysProjectTableSelectId").val()}
+			  	,page: false
+			  	,cellMinWidth: 80
+			    ,cols: [detailCols]
+			    ,size: 'sm'
+			    ,done : function() {
+					layer.closeAll('loading');
+					layui.use('element', function(){
+						  var element = layui.element;
+						  element.init();
+						});
+				}
+			  });
+				table.on('row(sysProjectTable)', function(obj){
+					obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+					var projectId=obj.data.projectId;
+					var projectName=obj.data.projectName;
+				    $("#sysProjectTableSelectId").val(projectId);
+				    table.reload('sysSectionTable',{where: {projectId:projectId}});
+				    getChartDate(projectId,
+							projectName);
+				})
+				table.on('row(sysSectionTable)', function(obj){
+					obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+				})
+				table.on('tool(sysProjectTable)', function(obj){
+					sysProjectLineClick[obj.event](obj.data.projectId);
+				});
+				var sysProjectLineClick = {
+					businesInfo : function(projectId) {
+						ZwTab.addTab({
+							id : "mutilProjectTab",
+							type : "addpage",
+							title : "工商信息",
+							url : "busineInfo/busine_info_page",
+							data : {
+								"projectId" : projectId,
+								type : 1
+							}
+						});
+					},
+				}
+				table.on('tool(sysSectionTable)', function(obj){
+					sysSectionLineClick[obj.event](obj.data.sectionId);
+				});
+				var sysSectionLineClick = {
+						contract : function(sectionId) {
+							Ewin
+									.modal({
+										modalId : "sysSectionModalEdit",
+										title : "编辑标段",
+										width : 1000,
+										url : "sys_project/get_section_contract",
+										data : {
+											"sectionId" : sectionId
+										}
+									});
+						},
+						details : function(sectionId) {
+							ZwTab
+									.addTab({
+										id : "mutilProjectTab",
+										type : "addpage",
+										title : "标段详情",
+										url : "mtilProjectQuer/get_mutil_detail",
+										data : {
+											"sectionId" : sectionId
+										}
+									});
+						}
+					}
+				function getChartDate(projectId, projectName) {
+					$.ajax({
+						url : "mtilProjectQuer/get_section_data_by_project",
+						type : "get",
+						async:false,
+						data : {
+							projectId : projectId
+						},
+						success : function(result) {
+							var serviceName = [];
+							var serviceData = [];
+							if (result.code == 1) {
+								var data = result.data;
+								var i = 0;
+								for ( var key in data) {
+									var obj = new Object();
+									obj.name = key;
+									obj.value = data[key];
+									serviceData[i] = obj;
+									serviceName[i] = key;
+									i++;
+								}
+								getChart(serviceData, serviceName, projectName);
+							}
+						}
+					});
+				}
+
+				var myChart;
+				function getChart(serviceData, serviceName, projectName) {
+					if (myChart != null && myChart != "" && myChart != undefined) {
+						myChart.dispose();
+					}
+					myChart = echarts.init(document.getElementById('myChart'));
+					option = {
+						title : {
+							text : "累计支付金额",
+							subtext : '',
+							x : 'center'
+						},
+						tooltip : {
+							trigger : 'item',
+							formatter : "{a} <br/>{b} : {c} ({d}%)"
+						},
+						legend : {
+							orient : 'vertical',
+							left : 'left',
+							data : serviceName
+						},
+						series : [ {
+							name : '',
+							type : 'pie',
+							radius : '55%',
+							center : [ '50%', '60%' ],
+							data : serviceData,
+							itemStyle : {
+								emphasis : {
+									shadowBlur : 10,
+									shadowOffsetX : 0,
+									shadowColor : 'rgba(0, 0, 0, 0.5)'
+								}
+							}
+						} ]
+					};
+					// 使用刚指定的配置项和数据显示图表。
+					myChart.setOption(option);
+				}
+				
+
+		  });
+		
+		
+	</script>
+</body>
+</html>

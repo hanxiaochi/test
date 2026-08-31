@@ -1,0 +1,39 @@
+.ztree {
+  margin: 0;
+  padding: 8px 12px;
+  color: #333;
+}
+
+.ztree ul {
+  margin: 0 0 0 18px;
+  padding: 0;
+}
+
+.ztree li {
+  list-style: none;
+  line-height: 28px;
+  white-space: nowrap;
+}
+
+.ztree li a {
+  color: #333;
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.ztree li a:hover,
+.ztree li a.curSelectedNode {
+  background: #eef5ff;
+  color: #1e6bb8;
+  text-decoration: none;
+}
+
+.ztree .button {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  border-radius: 2px;
+  background: #8ab4f8;
+}

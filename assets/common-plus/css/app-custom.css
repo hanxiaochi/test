@@ -1,0 +1,81 @@
+.site-fix .site-tree {
+	position: fixed;
+	top: 80px;
+	bottom: 45px;
+	z-index: 900;
+	min-height: 0;
+	overflow: auto;
+	background-color: #fff;
+}
+.site-tree {
+/*	border-top: 1px solid #eee;
+	border-right: 1px solid #eee;*/
+	width: 357px;
+	min-height: 750px;
+	padding: 5px 0 20px;
+}
+.site-tree, .site-content {
+	/*display: inline-block;*/
+	vertical-align: top;
+}
+.site-fix .site-content {
+	margin-left: 357px;
+}
+.site-content {
+	height:calc(100% - 40px);
+	padding: 3px 0 0 5px;
+}
+.layui-layout-admin .layui-main{
+	margin: 0 !important;
+	padding: 0 !important;
+}
+.lay-zw-content-page{
+	/*内容超出*/
+	overflow: auto;
+}
+.layui-btn-primary{
+	background-color: #fff !important;
+}
+.layui-btn-normal {
+    background-color: #1E9FFF !important;
+}
+.layui-btn-warm {
+    background-color: #FFB800 !important;
+}
+.layui-btn-danger {
+    background-color: #FF5722 !important;
+}
+.layui-btn-disabled, .layui-btn-disabled:active, .layui-btn-disabled:hover {
+	background-color: #FBFBFB !important;
+}
+.lay-zw-content-page{
+	height:calc(100% - 30px);
+}
+
+/* Local shell pages are injected into this single content pane. The original
+   fixed-height rule can collapse under the captured layout, hiding valid HTML. */
+.layui-layout-admin .layui-body,
+.app-mini .layui-layout-admin .layui-body,
+.layui-zw-max-body .layui-body{
+	position:fixed !important;
+	top:50px !important;
+	left:200px !important;
+	right:0 !important;
+	bottom:0 !important;
+	width:auto !important;
+	height:auto !important;
+	overflow:auto !important;
+	padding-bottom:24px !important;
+}
+.lay-zw-content-page{
+	display:block !important;
+	position:relative !important;
+	z-index:1 !important;
+	height:auto !important;
+	min-height:calc(100vh - 98px);
+	overflow:visible !important;
+	visibility:visible !important;
+	opacity:1 !important;
+	transform:none !important;
+	padding:0 5px 24px;
+}

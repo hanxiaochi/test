@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>分项台账</title>
+</head>
+   <link href="assets/zTree/css/zTreeStyle.css" rel="stylesheet"
+          type="text/css">
+   <script src="assets/zTree/jquery.ztree.all.min.js"
+          type="text/javascript"></script>
+<style type="text/css">
+    .app{
+        height: calc(100% - 10px);
+    }
+.app>.app-tree,.app>.app-content{
+    display: inline-block;
+    position: relative;
+    height: 100%;
+}
+.app>.app-tree{
+    width: 350px;
+    background-color: #f8f8f8;
+    overflow: auto;
+}
+    .app .app-left-content{
+        overflow: auto;
+    }
+.app>.app-content{
+    width: calc(100% - 380px);
+    overflow: auto;
+    min-width: 500px;
+}
+    .app .app-tree-btns{
+        padding: 10px;
+        position: fixed;
+        width: 350px;
+        height: 75px;
+        box-shadow: 0 0 5px #dddddd;
+        background-color: #F8F8F8;
+}
+    .app .ztree{
+        margin-top: 85px;
+    }
+    .app .ztree * {
+        font-size: 14px;
+    }
+
+    .app .ztree li a:hover {
+        text-decoration: none
+    }
+
+    .app .ztree li a.curSelectedNode {
+        background-color: #eeeeee;
+        color: #3c8dbc;
+        border: none;
+        opacity: 1;
+    }
+
+    .app .ztree li span {
+        margin-left: 5px;
+    }
+    #billAnalzeListTableName{
+        padding: 5px;
+        font-size: 16px;
+        font-weight: 400;
+    }
+</style>
+<body>	
+	<div class="layui-row">
+	    <div class="layui-col-xs3">
+	      <div class="grid-demo grid-demo-bg1">
+	      <!-- <div class="box-header dt-buttons btn-group form-inline">
+						<button data-type="button" id="exportSubItem"  class="btn btn-default">导出Excel</button>
+					</div> -->
+					<ul class="ztree" id="billAnalyzeNodeTree"></ul>
+	      </div>
+	      
+	    </div>
+	    <div class="layui-col-xs9">
+	      <div class="media-body" id="subItemBodyDiv">
+<!-- 				 	<table id="reportBillPayTable" lay-filter="reportBillPayTable" ></table> -->
+<!-- 					<div id="myChart" style="width: 90%; height: 300px;"></div> -->
+				</div>
+	    </div>
+	  </div>
+	<script>
+		
+		
+		       /**加载左侧树节点**/
+        var setting = {
+            view: {
+                selectedMulti: false
+            },
+            async: {
+                enable: true,
+                type:"get",
+                url:"billAnalyzeNode/tree",
+                autoParam:["nodeId=parentId"],
+                dataFilter: filter
+            },
+            data:{
+                key:{
+                    name:'nodeName',
+                },
+                simpleData: {
+                    enable: true,
+                    idKey: "nodeId",
+                    pIdKey: "parentId"
+                }
+            },
+            callback: {
+                beforeClick: beforeClick,
+                beforeAsync: beforeAsync,
+                onAsyncError: onAsyncError,
+                onAsyncSuccess: onAsyncSuccess
+            }
+        };
+		
+        //处理请求后three的数据
+        function filter(treeId, parentNode, childNodes) {
+            if (!childNodes) return null;
+            if(childNodes.code==1){
+                var data = childNodes.data;
+                for (var i=0, l=data.length; i<l; i++) {
+                    data[i].isParent = data[i].countNum>0;
+                    if(data[i].isParent){
+                        data[i].icon="img/dept.png";
+                    }
+                }
+                return data;
+            }
+            return childNodes;
+        }
+        function beforeClick(treeId, treeNode) {
+            //if (!treeNode.isParent) {
+            	nodeId = treeNode.nodeId;
+            	$.ajax({
+    				url : "leaderquery/find_sub_item_page",
+    				data : {
+    					nodeId : nodeId
+    				},
+    				type : "get",
+    				dataType : "html",
+    				success : function(result) {
+    					$("#subItemBodyDiv").html("");
+    					$("#subItemBodyDiv").append(result);
+    				}
+    			});
+
+            return true;
+        }
+        function beforeAsync(treeId, treeNode) {
+            return true;
+        }
+        function onAsyncError(event, treeId, treeNode, XMLHttpRequest, textStatus, errorThrown) {
+        }
+        function onAsyncSuccess(event, treeId, treeNode, msg) {
+        }
+        
+        /*重新加载方法
+         * type:refresh 刷新 add 新增
+         * silent： true 悄悄刷新 false 正常刷新
+         * */
+      	function refreshNode(type,silent) {
+         var zTree = $.fn.zTree.getZTreeObj("billAnalyzeNodeTree"),
+             nodes = zTree.getSelectedNodes();
+         if (nodes.length == 0) {
+             Ewin.msg({type : "danger",content : "请先选择一个父节点！"})
+             return;
+         }
+         for (var i=0, l=nodes.length; i<l; i++) {
+             zTree.reAsyncChildNodes(nodes[i], type, silent);
+             if (!silent) zTree.selectNode(nodes[i]);
+         }
+     	}
+        
+        $.fn.zTree.init($("#billAnalyzeNodeTree"), setting);
+        
+       
+		$.ajax({
+			url : "leaderquery/find_sub_item_page",
+			data : {
+				nodeId : 0
+			},
+			type : "get",
+			dataType : "html",
+			success : function(result) {
+				$("#subItemBodyDiv").html('');
+				$("#subItemBodyDiv").append(result);
+			}
+		});
+	</script>
+</body>
+</html>

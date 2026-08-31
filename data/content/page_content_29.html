@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>清单范本页面</title>
+<style>
+#myTab li a {
+	padding: 5px 30px;
+}
+</style>
+</head>
+<body>
+		<div class="box">
+		<div class="box-header">
+			<div id="buttonGroup" class="dt-buttons btn-group form-inline">
+				<button data-type="button" style="float: none;" data-url="edit_model_page" class="btn btn-default">添加范本</button>
+				<button data-type="button" style="float: none;" data-url="import_model" class="btn btn-default">导入范本</button>
+				<a data-type="button" style="float: none;" href="billModel/export_model" class="btn btn-default">导出范本</a>
+			</div>
+		</div>
+		<div class="box-body" >
+			<ul id="myTab" class="nav nav-tabs">
+				<li>
+					<a data-toggle="tab"></a>
+				</li>
+				<li>
+					<a data-toggle="tab">100</a>
+				</li>
+				<li>
+					<a data-toggle="tab">200</a>
+				</li>
+				<li>
+					<a data-toggle="tab">300</a>
+				</li>
+				<li>
+					<a data-toggle="tab">400</a>
+				</li>
+				<li>
+					<a data-toggle="tab">500</a>
+				</li>
+				<li>
+					<a data-toggle="tab">600</a>
+				</li>
+				<li>
+					<a data-toggle="tab">700</a>
+				</li>
+				<li>
+					<a data-toggle="tab">800</a>
+				</li>
+			</ul>
+			<div  id="myTabContent" class="tab-content">
+				<table  id="billModelList" class="table table-striped table-bordered" >
+				</table>
+			</div>
+		</div>
+	</div>
+	<script>
+		$(document)
+				.ready(
+						function() {
+							var theDistance =$(window).height()-($("#myTabContent").offset().top - $(window).scrollTop())-90;
+							var tableListData = $('#billModelList').DataTable({
+								ajax : {
+									url : "billModel/get_bill_model_list",
+									data : function(d) {
+										d.pageNo = $.trim($("#myTab li.active").text());
+									},
+									dataSrc : "data"
+								},
+								paging : false, // 禁止分页
+								pagingType : "full_numbers",//页码显示类型
+								serverSide : false,//服务端模式
+								ordering : false, // 禁止排序
+								bFilter : false,//关闭搜索框
+								scrollY: theDistance,
+								scrollX: false,
+								bLengthChange : false,//去掉每页显示多少条数据方法
+								fixedHeader: true,
+								colReorder : true,
+								select : 'single',
+								info : false, //不显示表格信息，在左下角
+								columns : [ {
+									"width" : "10%",
+									"title" : "清单编号",
+									"class" : "am-text-middle",
+									"data" : "billNo"
+								}, {
+									"title" : "中文名称",
+									"class" : "am-text-middle",
+									"data" : "billName"
+								}, {
+									"width" : "20%",
+									"title" : "计量单位",
+									"class" : "am-text-middle",
+									"data" : "measureUnit"
+								}, {
+									"width" : "15%",
+									"title" : "操作",
+									"class" : "am-text-middle",
+									"data" : "billId"
+								} ],
+								columnDefs : [ {
+									// targets用于指定操作的列，从第0列开始，-1为最后一列
+									// return后边是我们希望在指定列填入的按钮代码
+									targets : -1,
+									render : function(data,
+											type, full, meta) {
+										var btns = '<div class="btn-group" data-id="'+data+'"><button type="button" data-type="edit" class="btn btn-primary btn-xs">编辑</button>';
+										btns += '<button type="button"  data-type="remove" class="btn btn-danger btn-xs">删除</button></div>';
+										return btns;
+									}
+								} ]
+							});
+
+							tableListData.on('click',
+									'.btn-group[data-id] button[data-type]',
+									function(e, settings, json) {
+										sysSectionLineClick[$(this).attr(
+												"data-type")]($(this).parent()
+												.attr("data-id"));//监听 操作按钮
+									});
+							var sysSectionLineClick = {
+								edit : function(billId) {
+									Ewin.modal({
+										width : 400,
+										modalId : "billMoedlManage",
+										title : "编辑范本",
+										url : "billModel/edit_model_page",
+										data : {
+											"billId" : billId
+										}
+									});
+								},
+								remove : function(billId) {
+									Ewin
+											.confirm({
+												message : "确认要删除选择的数据吗？"
+											})
+											.on(
+													function(e) {
+														if (e) {//e 为true 说明点击确定
+															$
+																	.ajax({
+																		url : "billModel/bill_model_delete",
+																		type : "post",
+																		data : {
+																			"billId" : billId
+																		},
+																		dataType : "json",
+																		success : function(
+																				result) {
+																			if (result.code == 1) {
+																				Ewin
+																						.msg({
+																							type : "success",
+																							content : "已删除"
+																						})
+																				getpageNoList( $.trim($("#myTab li.active").text()));
+
+																			} else {
+																				Ewin
+																						.msg({
+																							type : "danger",
+																							content : result.msg
+																						})
+																			}
+																		}
+																	});
+															return;
+														}
+													});
+								}
+							}
+
+						});
+	</script>
+	<script>
+		$("#buttonGroup button.btn").on("click", function() {
+			showModel($(this).attr("data-url"), $(this).text());
+		});
+		function showModel(url, text) {
+			if($("#sysProjectWorkPositionSel>option").length==0 || $("#sysProjectWorkPositionSel").find("option[value='0']").length==1){
+				Ewin.msg({type:"danger",content:"请选择工作位置！"})
+				return false;
+			}
+			
+			Ewin.modal({
+				width : 400,
+				modalId : "billMoedlManage",
+				title : text,
+				url : "billModel/" + url,
+				data : {
+
+				},
+				drag : true
+			});
+		}
+		//监听ul下的li单击
+		$("#myTab").on("click", "li", function() {
+			$("#myTab li").each(function() {
+				$(this).attr("class", "");
+			});
+			$(this).addClass("active");
+			var tableListData = $('#billModelList').DataTable();
+			tableListData.ajax.reload(null, false);
+		});
+		//初始化模拟单机第一个页签
+		//$("#myTab").children(":first").click();
+		//初始化以一个li被选中
+		$("#myTab").children(":first").addClass("active");
+
+		//重新构建页面章节页签
+		//getpageNoList();
+		function getpageNoList(pageNoShow) {
+			if(pageNoShow=="" || pageNoShow== null)
+				pageNoShow="100";
+			$.ajax({
+				url : "billModel/bill_page_list",
+				type : "post",
+				data : {
+
+				},
+				dataType : "json",
+				success : function(result) {
+					if (result.code == 1) {
+						var srtHtml = "";
+						var pageNo = result.data;
+						for (var i = 0; i < pageNo.length; i++) {
+							srtHtml += '<li><a data-toggle="tab" >' + pageNo[i]
+									+ '</a></li>';
+						}
+						$("#myTab").empty();
+						$("#myTab").append(srtHtml);
+						$("#myTab li").each(function() {
+							if ($(this).text() == pageNoShow) {
+								$(this).addClass("active");
+							}
+						});
+						var tableListData = $('#billModelList').DataTable();
+						tableListData.ajax.reload(null, false);
+					}
+				}
+			});
+		}
+       
+	</script>
+</body>
+</html>

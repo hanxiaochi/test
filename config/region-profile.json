@@ -1,0 +1,8 @@
+{
+  "profileId": "full-commercial",
+  "packs": [
+    "core-platform",
+    "cn-mainland",
+    "fidic-international"
+  ]
+}

@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>各级审核金额</title>
+</head>
+<body>
+<table id="demo" lay-filter="test"></table>
+<script>
+    layui.use('table', function(){
+        var table = layui.table;
+        var amountNum = getValue("numDecimals");
+        var priceNum = getValue("priceDecimals");
+        var moneyNum = getValue("moneyDecimals");
+        // 定义双层表头数组
+        var headerRow1 = []; // 第一层表头（静态列+动态大列）
+        var headerRow2 = []; // 第二层表头（静态列+动态小列）
+
+        // ========== 1. 静态列配置（单层60px高） ==========
+        var staticColumns = [
+            {
+                field: 'chapterNo',
+                title: '项目编号',
+                width:90,
+                fixed: 'left',
+                "align":"center",
+                // 绑定静态列表头样式类
+                templet: '',
+                rowspan:2,
+                thClass: 'static-col-th'
+            },
+            {
+                field: 'chapterName',
+                title: '项目名称',
+                width:150,
+                fixed: 'left',
+                "align":"center",
+                totalRowText: '合计',
+                rowspan:2,
+                thClass: 'static-col-th'
+            },
+            {
+                field: 'contractMoney',
+                title: '合同金额（元）',
+                width:130,
+                fixed: 'left',
+                "align":"center",
+                totalRow: true,
+                rowspan:2,
+                thClass: 'static-col-th'
+            },
+            {
+                field: 'modifyMoney',
+                title: '修正金额（元）',
+                width:130,
+                fixed: 'left',
+                "align":"center",
+                totalRow: true,
+                rowspan:2,
+                thClass: 'static-col-th'
+            },
+            {
+                field: 'varyMoney',
+                title: '变更金额（元）',
+                width:130,
+                fixed: 'left',
+                "align":"center",
+                totalRow: true,
+                rowspan:2,
+                thClass: 'static-col-th'
+            },
+            {
+                field: 'finishContractMoney',
+                title: '变更后金额（元）',
+                width:130,
+                fixed: 'left',
+                "align":"center",
+                totalRow: true,
+                rowspan:2,
+                thClass: 'static-col-th'
+            }
+        ];
+
+        // 静态列加入双层表头（静态列无嵌套，两行结构一致）
+        headerRow1.push(...staticColumns);
+        // headerRow2.push(...staticColumns);
+
+        // ========== 2. 动态列配置（双层表头，总高60px） ==========
+        /*<![CDATA[*/
+        
+        var fie = "SBSJ";
+        var h = "";
+        if(fie=="SBSJ"){
+            h="上报金额（元）";
+        }else if(fie=="SHSJ"){
+            h="审核金额（元）";
+        }else if(fie=="PFSJ"){
+            h="审批金额（元）";
+        }
+
+        // 第一层表头：动态大列（30px高，跨2个小列）
+        headerRow1.push({
+            title: "\u65BD\u5DE5\u5355\u4F4D", // 大列标题：施工单位/监理单位等
+            colspan: 2, // 合并2个小列
+            width: 240, // 总宽度=120+120
+            "align":"center",
+            thClass: 'dynamic-main-th' // 绑定大列表头样式类
+        });
+
+        // 第二层表头：第一个小列（30px高，XX金额）
+        headerRow2.push({
+            field: "usertask1",
+            "align":"center",
+            totalRow: true,
+            title: h, // 小列标题：上报/审核/审批金额（元）
+            width: 120,
+            thClass: 'dynamic-sub-th', // 绑定小列表头样式类
+            templet:function(d){
+                var ff = "usertask1";
+                // 严谨判空，避免NaN报错
+                if(d[ff] != null && d[ff] !== undefined && d[ff] !== ""){
+                    return new Number(d[ff]).toFixed(moneyNum)
+                }
+                return d[ff] || "";
+            }
+        });
+
+        // 第二层表头：第二个小列（30px高，其中变更金额）
+        headerRow2.push({
+            field: "usertask1v",
+            "align":"center",
+            totalRow: true,
+            title: '其中变更金额',
+            width:120,
+            thClass: 'dynamic-sub-th', // 绑定小列表头样式类
+            templet:function(d){
+                var ff = "usertask1";
+                if(d[ff+'v'] != null && d[ff+'v'] !== undefined && d[ff+'v'] !== ""){
+                    return new Number(d[ff+'v']).toFixed(moneyNum)
+                }
+                return d[ff+'v'] || "";
+            }
+        });
+        var fie = "SHSJ";
+        var h = "";
+        if(fie=="SBSJ"){
+            h="上报金额（元）";
+        }else if(fie=="SHSJ"){
+            h="审核金额（元）";
+        }else if(fie=="PFSJ"){
+            h="审批金额（元）";
+        }
+
+        // 第一层表头：动态大列（30px高，跨2个小列）
+        headerRow1.push({
+            title: "\u76D1\u7406\u5355\u4F4D", // 大列标题：施工单位/监理单位等
+            colspan: 2, // 合并2个小列
+            width: 240, // 总宽度=120+120
+            "align":"center",
+            thClass: 'dynamic-main-th' // 绑定大列表头样式类
+        });
+
+        // 第二层表头：第一个小列（30px高，XX金额）
+        headerRow2.push({
+            field: "usertask2",
+            "align":"center",
+            totalRow: true,
+            title: h, // 小列标题：上报/审核/审批金额（元）
+            width: 120,
+            thClass: 'dynamic-sub-th', // 绑定小列表头样式类
+            templet:function(d){
+                var ff = "usertask2";
+                // 严谨判空，避免NaN报错
+                if(d[ff] != null && d[ff] !== undefined && d[ff] !== ""){
+                    return new Number(d[ff]).toFixed(moneyNum)
+                }
+                return d[ff] || "";
+            }
+        });
+
+        // 第二层表头：第二个小列（30px高，其中变更金额）
+        headerRow2.push({
+            field: "usertask2v",
+            "align":"center",
+            totalRow: true,
+            title: '其中变更金额',
+            width:120,
+            thClass: 'dynamic-sub-th', // 绑定小列表头样式类
+            templet:function(d){
+                var ff = "usertask2";
+                if(d[ff+'v'] != null && d[ff+'v'] !== undefined && d[ff+'v'] !== ""){
+                    return new Number(d[ff+'v']).toFixed(moneyNum)
+                }
+                return d[ff+'v'] || "";
+            }
+        });
+        var fie = "PFSJ";
+        var h = "";
+        if(fie=="SBSJ"){
+            h="上报金额（元）";
+        }else if(fie=="SHSJ"){
+            h="审核金额（元）";
+        }else if(fie=="PFSJ"){
+            h="审批金额（元）";
+        }
+
+        // 第一层表头：动态大列（30px高，跨2个小列）
+        headerRow1.push({
+            title: "\u4E1A\u4E3B\u5355\u4F4D", // 大列标题：施工单位/监理单位等
+            colspan: 2, // 合并2个小列
+            width: 240, // 总宽度=120+120
+            "align":"center",
+            thClass: 'dynamic-main-th' // 绑定大列表头样式类
+        });
+
+        // 第二层表头：第一个小列（30px高，XX金额）
+        headerRow2.push({
+            field: "usertask3",
+            "align":"center",
+            totalRow: true,
+            title: h, // 小列标题：上报/审核/审批金额（元）
+            width: 120,
+            thClass: 'dynamic-sub-th', // 绑定小列表头样式类
+            templet:function(d){
+                var ff = "usertask3";
+                // 严谨判空，避免NaN报错
+                if(d[ff] != null && d[ff] !== undefined && d[ff] !== ""){
+                    return new Number(d[ff]).toFixed(moneyNum)
+                }
+                return d[ff] || "";
+            }
+        });
+
+        // 第二层表头：第二个小列（30px高，其中变更金额）
+        headerRow2.push({
+            field: "usertask3v",
+            "align":"center",
+            totalRow: true,
+            title: '其中变更金额',
+            width:120,
+            thClass: 'dynamic-sub-th', // 绑定小列表头样式类
+            templet:function(d){
+                var ff = "usertask3";
+                if(d[ff+'v'] != null && d[ff+'v'] !== undefined && d[ff+'v'] !== ""){
+                    return new Number(d[ff+'v']).toFixed(moneyNum)
+                }
+                return d[ff+'v'] || "";
+            }
+        });
+        
+        /*]]>*/
+        // ========== 3. 表格渲染 ==========
+        table.render({
+            elem: '#demo'
+            ,url: 'measure_data/audit_money_list' // 数据接口
+            ,page: true // 开启分页
+            // 双层表头核心配置：cols为二维数组
+            ,cols: [headerRow1, headerRow2]
+            ,size: 'sm'
+            ,totalRow: true // 合计行
+            ,even:true // 隔行变色
+            // 修复固定列样式兼容
+            ,done: function(res, curr, count) {
+                // 确保固定列的表头样式生效
+                $('.layui-table-fixed-l th').addClass('static-col-th');
+            }
+        });
+
+        // 行点击选中效果
+        table.on('row(test)', function(obj){
+            obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+        });
+
+    });
+</script>
+</body>
+</html>

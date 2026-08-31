@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>手动计量列表</title>
+<link rel="stylesheet" href="css/bootstrap-zwtab.css">
+<style>
+#myTab li a {
+	padding: 5px 30px;
+}
+
+.checkbox-column {
+	background-color: #FFFFFF !important;
+}
+
+#manualMeasureTable {
+	margin-top: 5px;
+}
+</style>
+</head>
+<body>
+	<input type="hidden" value="SBSJ" id="roleTypeCode">
+	<input type="hidden" value="0" id="isSuperSection">
+	<input type="hidden" value="" id="isFirstLevel">
+	<input type="hidden" value="0" id="sectionType">
+	<div id="measureTab"></div>
+	<div class="modal fade bs-example-modal-lg text-center"
+		id="showProcessImg" tabindex="-1" role="dialog"
+		aria-labelledby="myLargeModalLabel">
+		<div class="modal-dialog modal-lg"
+			style="display: inline-block; width: auto; margin-top: 12%">
+			<div class="modal-content"
+				style="box-shadow: darkgrey 0px 0px 30px 5px;">
+				<img id="imgInModalID"
+					class="carousel-inner img-responsive img-rounded"
+					onclick="javascript:$('#showProcessImg').modal('hide')"
+					onmouseover="this.style.cursor='pointer';this.style.cursor='hand'"
+					onmouseout="this.style.cursor='default'" />
+			</div>
+		</div>
+	</div>
+	<button id="refresh" style="display: none;"   class="btn btn-primary">刷新</button>
+	<!-- <button title="退回 " lay-event="returnBtn" class="btn btn-warning btn-xs">退回</button> 62 行 -->
+	<!-- <button title="退回 " lay-event="returnBtn" class="btn btn-warning btn-xs">退回</button> 74行 -->
+	<!-- <button title="退回 " lay-event="returnBtn" class="btn btn-warning btn-xs">退回</button> 101行-->
+	<!-- <button title="退回 " lay-event="returnBtn" class="btn btn-warning btn-xs">退回</button> 113行 -->
+	<!-- <button title="退回 " lay-event="returnBtn" class="btn btn-warning btn-xs">退回</button> 135行 -->
+	<!-- <button title="退回 " lay-event="returnBtn" class="btn btn-warning btn-xs">退回</button> 143行 -->
+	<script type="text/html" id="manualMeasureTableBar">
+{{#  if(d.isSuperSection=='0'){ }}
+
+		{{#  if(d.roleTypeName=='SBSJ'){ }}
+			{{#  if(d.taskUser==true){ }}
+				<button title="编辑" lay-event="editBtn" class="btn btn-primary btn-xs">编辑</button>
+				<button title="删除 " lay-event="deleteBtn" class="btn btn-danger btn-xs">删除</button>
+			{{# } }}	
+			{{#  if(d.taskUser!=true){ }}
+			{{# } }}	
+		{{# } }}	
+
+		{{#  if(d.roleTypeName=='SHSJ'){ }}
+			{{#  if(d.taskUser==true){ }}
+				<button title="审核 " lay-event="approveBtn" class="btn btn-primary btn-xs">审核</button>
+				<button title="同意 " lay-event="agreeBtn" class="btn btn-success btn-xs">同意</button>
+				{{# var projectIdWorkSpace = $("#sysProjectWorkPositionSel").val(); }}
+						{{# if(projectIdWorkSpace==74 || projectIdWorkSpace==75){ }}
+								<a title="退回 " lay-event="returnBtn" class="btn btn-danger btn-xs">退回</a>
+						{{# } }}
+			{{# } }}	
+			{{#  if(d.taskUser!=true){ }}
+			{{# } }}	
+		{{# } }}	
+
+		{{#  if(d.roleTypeName=='PFSJ'){ }}
+			{{#  if(d.taskUser==true){ }}
+				<button title="审核 " lay-event="approveBtn" class="btn btn-primary btn-xs">审核</button>
+				<button title="同意 " lay-event="agreeBtn" class="btn btn-success btn-xs">同意</button>
+				{{# var projectIdWorkSpace = $("#sysProjectWorkPositionSel").val(); }}
+						{{# if(projectIdWorkSpace==74 || projectIdWorkSpace==75){ }}
+								<a title="退回 " lay-event="returnBtn" class="btn btn-danger btn-xs">退回</a>
+						{{# } }}
+			{{# } }}	
+			{{#  if(d.taskUser!=true){ }}
+			{{# } }}	
+		{{# } }}
+
+	{{# } }}
+
+{{#  if(d.isSuperSection=='2'){ }}
+
+		{{#  if(d.roleTypeName=='SBSJ'){ }}
+			{{#  if(d.taskUser==true){ }}
+				<button title="编辑" lay-event="editBtn" class="btn btn-primary btn-xs">编辑</button>
+				<button title="删除 " lay-event="deleteBtn" class="btn btn-danger btn-xs">删除</button>
+			{{# } }}	
+			{{#  if(d.taskUser!=true){ }}
+			{{# } }}	
+		{{# } }}	
+
+		{{#  if(d.roleTypeName=='SHSJ'){ }}
+			{{#  if(d.taskUser==true){ }}
+				<button title="审核 " lay-event="approveBtn" class="btn btn-primary btn-xs">审核</button>
+				<button title="同意 " lay-event="agreeBtn" class="btn btn-success btn-xs">同意</button>
+				{{# var projectIdWorkSpace = $("#sysProjectWorkPositionSel").val(); }}
+						{{# if(projectIdWorkSpace==74 || projectIdWorkSpace==75){ }}
+								<a title="退回 " lay-event="returnBtn" class="btn btn-danger btn-xs">退回</a>
+						{{# } }}
+			{{# } }}	
+			{{#  if(d.taskUser!=true){ }}
+			{{# } }}	
+		{{# } }}	
+
+		{{#  if(d.roleTypeName=='PFSJ'){ }}
+			{{#  if(d.taskUser==true){ }}
+				<button title="审核 " lay-event="approveBtn" class="btn btn-primary btn-xs">审核</button>
+				<button title="同意 " lay-event="agreeBtn" class="btn btn-success btn-xs">同意</button>
+				{{# var projectIdWorkSpace = $("#sysProjectWorkPositionSel").val(); }}
+						{{# if(projectIdWorkSpace==74 || projectIdWorkSpace==75){ }}
+								<a title="退回 " lay-event="returnBtn" class="btn btn-danger btn-xs">退回</a>
+						{{# } }}
+			{{# } }}	
+			{{#  if(d.taskUser!=true){ }}
+			{{# } }}	
+		{{# } }}
+
+	{{# } }}
+	{{#  if(d.isSuperSection=='1'){ }}
+			{{#  if(d.taskUser==true){ }}
+
+				{{#  if(d.roleTypeName=='SHSJ'){ }}
+					{{#  if(d.measureState==0||d.measureState==1||d.measureState==6){ }}
+							<button title="编辑" lay-event="editBtn" class="btn btn-primary btn-xs">编辑</button>
+							<button title="删除 " lay-event="deleteBtn" class="btn btn-danger btn-xs">删除</button>
+					{{# } }}
+					{{#  if(d.measureState==2||d.measureState==3){ }}
+				
+						<button title="审核 " lay-event="approveBtn" class="btn btn-primary btn-xs">审核</button>
+						<button title="同意 " lay-event="agreeBtn" class="btn btn-success btn-xs">同意</button>
+						
+						{{# var projectIdWorkSpace = $("#sysProjectWorkPositionSel").val(); }}
+						{{# if(projectIdWorkSpace==74 || projectIdWorkSpace==75){ }}
+								<a title="退回 " lay-event="returnBtn" class="btn btn-danger btn-xs">退回</a>
+						{{# } }}
+
+					{{# } }}
+				{{# } }}	
+
+				{{#  if(d.roleTypeName=='PFSJ'){ }}
+						<button title="审核 " lay-event="approveBtn" class="btn btn-primary btn-xs">审核</button>
+						<button title="同意 " lay-event="agreeBtn" class="btn btn-success btn-xs">同意</button>
+						{{# var projectIdWorkSpace = $("#sysProjectWorkPositionSel").val(); }}
+						{{# if(projectIdWorkSpace==74 || projectIdWorkSpace==75){ }}
+								<a title="退回 " lay-event="returnBtn" class="btn btn-danger btn-xs">退回</a>
+						{{# } }}
+				{{# } }}
+			{{# } }}	
+		{{# } }}
+		<a title="追踪 "  lay-event="trackBtn"  class="btn btn-info btn-xs">追踪</a>
+		<button title="浏览 " lay-event="see" class="btn btn-defaultsuc btn-xs">浏览</button>
+  	</script>
+	<script type="text/html" id="manualMeasureTableToolBar">
+		<button class="btn btn-primary btn-sm"  lay-event="addmanualMeasure"><i class="glyphicon glyphicon-plus"></i> 添加数据</button>
+		
+		<button class="btn btn-success btn-sm"  lay-event="reportMeasure"><i class="glyphicon glyphicon-send"></i> <lable>上报数据</lable> </button>
+		
+		
+		<button class="btn btn-default btn-sm" lay-event="withdrawMeasure"><i class="fa fa-copy"></i> 撤回上报</button>
+		
+		
+	</script>
+	<script type="text/html" id="indexTabContent">
+		<div class="box" style="margin-bottom: 0px;height:50%;border: none;">
+					<div class="box-body">
+						<form class="layui-form layui-form-pane" action=""  style="margin:5px 10px">
+							<div class="layui-inline">
+								<select  lay-filter="select" id="select">
+									<option  value="true" >全部</option>
+									<option  value="false" >待审核</option>
+									</select>
+								</div>
+						</form>
+						<input type="hidden" id="billMeasureTableSelectId">
+						<table id="manualMeasureTable" lay-filter="manualMeasureTable"></table>
+				   	</div>
+		</div>
+	</script>
+	<script type="text/javascript" src="js/bootstrap-zwtab.js"></script>
+	<script >
+	var moneyNum = getValue("moneyDecimals");
+		$("#measureTab").html($("#indexTabContent").html());
+		layui.use([ 'layer', 'table','form' ], function() {
+			var pageNum = 1;
+			var table = layui.table;
+			var layer = layui.layer,form = layui.form;
+			form.render();
+			form.on('select(select)', function(data){
+				//var typeCode =""; 
+				table.reload("manualMeasureTable", {where:{
+					typeCode:"",
+					flag:data.value
+				}});
+		    })
+			var msg = "";
+			if(msg!=""){
+				layer.msg(msg, {icon: 5,offset: '200px' });
+			}
+			$.ajax({
+				type : 'get',
+				url : "manualMeasure/detail_columns",
+				dataType : 'json',
+				success : function(res) {
+					if(res.code==1){
+							table.render({
+								elem: '#manualMeasureTable',
+								size: 'sm',
+								height: 'full-300',
+								url:'manualMeasure/detail_list?typeCode=',
+								toolbar: '#manualMeasureTableToolBar',
+								defaultToolbar:[],
+								cols:res.data,
+								where:{sectionType:"0"},
+								even:true,
+								cellMinWidth : 80,
+								page: {
+									limit: 10,
+							  		curr: 1
+							  	}
+								,done : function(res, curr, count) {
+							    	pageNum = curr;
+								}
+							});
+							table.on('tool(manualMeasureTable)', function(obj){
+								var data = obj.data;
+								manualMeasureTableClick[obj.event](data.manualId,obj);
+							});
+							table.on('row(manualMeasureTable)', function(obj){
+// 								obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+							})
+							table.on('toolbar(manualMeasureTable)', function(obj){
+								if($("#sysGatherDataWorkPositionSel>").length==0 || $("#select2-sysGatherDataWorkPositionSel-container").attr("title")=="请选择工期"){
+									Ewin.msg({type:"danger",content:"请选择工作位置！"})
+									return false;
+								}
+								var checkStatus = table.checkStatus(obj.config.id),data = checkStatus.data;
+								manualMeasureTableToolClick[obj.event](data);
+							});
+							$("#refresh").on("click",function(){
+								table.reload('manualMeasureTable', {where: {sectionType: $("#sectionType").val()}});
+							})
+					}else{
+						layer.msg(res.msg);
+					}
+				}
+			});
+			table.on('checkbox(manualMeasureTable)', function(obj){
+				if(obj.type!='all'){
+					if(obj.checked){
+						 obj.tr.addClass('layui-table-click'); 	
+					}else{
+						 obj.tr.removeClass('layui-table-click'); 	
+					}
+				}else{
+					if(obj.checked){
+						$("div[class='layui-unselect layui-form-checkbox']").attr('class','layui-unselect layui-form-checkbox layui-form-checked');
+						$("div[lay-id='manualMeasureTable'] div[class='layui-table-fixed layui-table-fixed-l'] tr").addClass('layui-table-click ');
+						$("div[lay-id='manualMeasureTable'] div[class='layui-table-body layui-table-main'] tr").addClass('layui-table-click ');
+					}else{
+						 $("div[class='layui-unselect layui-form-checkbox layui-form-checked']").attr('class','layui-unselect layui-form-checkbox');
+						$("div[lay-id='manualMeasureTable'] div[class='layui-table-fixed layui-table-fixed-l'] tr").removeClass('layui-table-click ');
+						$("div[lay-id='manualMeasureTable'] div[class='layui-table-body layui-table-main'] tr").removeClass('layui-table-click ');
+					}
+				}
+				
+			})
+			var manualMeasureTableToolClick={
+					addmanualMeasure:function(data){
+						Ewin.modal({
+							width : 700,
+							modalId : "manualMeasureEdit",
+							async : false,
+							title : "添加手动计量",
+							url : "manualMeasure/manualMeasure_edit_page",
+							data : {type:"edit"},
+							drag : true
+						});
+					},
+					reportMeasure:function(data){
+					    var message="确认要操作选择的清单吗?";
+					    var manualIds="*";
+						if(data.length==0){
+							message="确认要全部执行吗?";
+						}else{
+							var arr=new Array();
+					    	for(var i=0;i<data.length;i++){
+					    		arr.push(data[i].manualId);
+					    	}
+					    	manualIds = arr.join(",");
+						}
+						Ewin.confirm({message : message}).on(function(e) {
+							if (e) {//e 为true 说明点击确定
+								$.ajax({
+									url : "manualMeasure/up_order",
+									type : "post",
+									data : {
+										"manualMeasureIds" : manualIds
+									},
+									dataType : "json",
+									success : function(
+											result) {
+										if (result.code == 1) {
+											Ewin.msg({type : "success",content : "操作完成！"})
+												Ewin.modal({
+												width : 400,
+												modalId : "workflowSendSMSpage",
+												async : false,
+												title : "发送通知",
+												url : "workflow/isSendSMSpage",
+												data : {
+												"pageType" : "manualMeasure",
+												"pageNum":1 
+												},
+												drag : true
+												});
+											$("#refresh").click();
+										} else {
+											Ewin.msg({type : "danger",content : result.msg})
+										}
+									}
+								});
+							}
+						});
+					},
+					deleteManualMeasure:function(data){
+						var checkBoxArr = [];
+						var isDelete=false;
+						if(data.length==0){
+							Ewin.msg({type : "warning",content : "请选择要删除的数据！"});
+							return false;
+						}else{
+							var arr=new Array();
+					    	for(var i=0;i<data.length;i++){
+					    		arr.push(data[i].manualId);
+					    	}
+					    	manualIds = arr.join(",");
+					    	isDelete=true;
+						}
+						if(isDelete){
+							Ewin.confirm({message : "确认要删除数据吗"}).on(function(e) {
+								if (e) {//e 为true 说明点击确定
+									$.ajax({
+										url : "manualMeasure/delete/" + manualIds,
+										type : "delete",
+										dataType : "json",
+										success : function(result) {
+											if (result.code == 1) {
+												Ewin.msg({type : "success",content : "已删除"});
+												$("#refresh").click();
+											} else {
+												Ewin.msg({type : "danger",content : result.msg});
+											}
+										}
+									});
+								}
+
+							});
+						}
+					},
+					withdrawMeasure : function(data) {//撤回计量单
+						var message = "确认要操作选择的清单吗?";
+						var manualIds = "*";
+						if (data.length == 0) {
+							message = "确认要全部执行吗?";
+						} else {
+							var arr = new Array();
+							for (var i = 0; i < data.length; i++) {
+								arr.push(data[i].manualId);
+							}
+							manualIds = arr.join(",");
+						}
+						 
+						Ewin
+							.confirm({
+								message : message
+							})
+							.on(
+									function(e) {
+										if (e) {
+							
+							$.ajax({
+									url : "workflow/withdraw_order",
+									type : "post",
+									data : {
+										"ids" : manualIds,
+										"measureType":"ManualMeasure"
+									},
+									dataType : "json",
+									success : function(result) {
+										if (result.code == 1) {
+										Ewin.msg({
+												type : "success",
+												content : "操作完成！"
+												})
+											table.reload("manualMeasureTable");
+										} else {
+											Ewin.msg({
+												type : "warning",
+												content : result.msg
+												})
+										}
+										}
+										});
+								}
+								});
+								
+					},
+					agreeMeasure:function(data){
+					    var message="确认要同意所选清单吗?";
+					    var manualIds="*";
+						if(data.length==0){
+							message="确认要全部同意吗?";
+						}else{
+							var arr=new Array();
+					    	for(var i=0;i<data.length;i++){
+					    		arr.push(data[i].manualId);
+					    	}
+					    	manualIds = arr.join(",");
+						}
+						Ewin.confirm({message : message}).on(function(e) {
+							if (e) {//e 为true 说明点击确定
+								$.ajax({
+									url : "manualMeasure/update_measure_state",
+									type : "post",
+									data : {
+										"manualMeasureIds" : manualIds
+									},
+									dataType : "json",
+									success : function(result) {
+										if (result.code == 1) {
+											Ewin.msg({
+												type : "success",
+												content : "同意完成！"
+											})
+											$("#refresh").click();
+										} else {
+											Ewin.msg({
+												type : "danger",
+												content : result.msg
+											})
+										}
+									}
+								});
+							}
+						});
+					},
+					adjustMeasure : function(data) {//调整计量单
+						if (data.length == 0) {
+							Ewin.msg({
+								type : "danger",
+								content : "请至少选中一条计量单！"
+							})
+						} else if (data.length > 15) {
+							Ewin.msg({
+								type : "danger",
+								content : "只能调整15条计量单！"
+							});
+						} else {
+							var arr = new Array();
+							for (var i = 0; i < data.length; i++) {
+								arr.push(data[i].manualId);
+							}
+							Ewin.modal({
+								title : "调整清单",
+								modalId : "adjustPage",
+								width : 400,
+								url : "manualMeasure/adjust_page",
+								data : {
+									"manualIds" : arr
+											.join(",")
+								},
+								headerClass : "zw-track-header",
+								btn : "hide",
+								drag : true
+							});
+						}
+					},
+					archive:function(data){
+					    var message="确认要归档所选清单吗?";
+					    var manualIds="*";
+						if(data.length==0){
+							message="确认要全部归档吗?";
+						}else{
+							var arr=new Array();
+					    	for(var i=0;i<data.length;i++){
+					    		arr.push(data[i].manualId);
+					    	}
+					    	manualIds = arr.join(",");
+						}
+						Ewin.confirm({
+							message : message
+						}).on(function(e) {
+							if (e) {//e 为true 说明点击确定
+								$.ajax({
+									url : "manualMeasure/archive",
+									type : "post",
+									data : {
+										"manualMeasureIds" : manualIds
+									},
+									dataType : "json",
+									success : function(result) {
+										if (result.code == 1) {
+											Ewin.msg({
+												type : "success",
+												content : "归档完成！"
+											})
+											$("#refresh").click();
+										} else {
+											Ewin.msg({
+												type : "danger",
+												content : result.msg
+											})
+										}
+									}
+								});
+							}
+						});
+					},
+			}
+			
+			var manualMeasureTableClick = {
+					measureNo:function(manualMeasureId,obj){
+						 $("div[lay-id='manualMeasureTable'] input[type='checkbox']").prop('checked',false);
+						 $("div[class='layui-unselect layui-form-checkbox layui-form-checked']").attr('class','layui-unselect layui-form-checkbox');
+						 
+						$(obj.tr).find("td:first").children().find("div:first").addClass("layui-form-checked");
+						var index=$(obj.tr).attr("data-index");
+						var data=table.cache["manualMeasureTable"];
+						for(var i=0;i<data.length;i++){
+							data[i]['LAY_CHECKED']='';
+							if(index==i){
+								data[i]['LAY_CHECKED']='True';
+							}
+						}
+					},
+					reportBtn : function(manualMeasureId,obj) {//上报
+						Ewin.confirm({
+							message : "确认要上报吗"
+						}).on(function(e) {
+							if (e) {//e 为true 说明点击确定
+								$.ajax({
+									url : "manualMeasure/up_order",
+									type : "post",
+									data : {
+										"manualMeasureIds" : manualMeasureId
+									},
+									dataType : "json",
+									success : function(result) {
+										if (result.code == 1) {
+											Ewin.msg({
+												type : "success",
+												content : "上报完成！"
+											})
+											$("#refresh").click();
+										} else {
+											Ewin.msg({
+												type : "danger",
+												content : result.msg
+											})
+										}
+									}
+								});
+							}
+						});
+					},
+					trackBtn : function(manualMeasureId,obj) {//追踪
+						Ewin.modal({
+							title : "追踪清单",
+							modalId : "sysMeterailInRecord",
+							width : 650,
+							url : "manualMeasure/record_page",
+							data : {
+								"manualMeasureId" : manualMeasureId
+							},
+							headerClass : "zw-track-header",
+							btn : "hide",
+							drag : false
+						});
+					},
+					agreeBtn : function(manualMeasureId,obj) {//同意
+						Ewin.confirm({
+							message : "确定同意此条清单？"
+						}).on(function(e) {
+							if (e) {//e 为true 说明点击确定
+								$.ajax({
+									url : "manualMeasure/update_measure_state",
+									type : "post",
+									data : {
+										"manualMeasureIds" : manualMeasureId
+									},
+									dataType : "json",
+									success : function(result) {
+										if (result.code == 1) {
+											Ewin.msg({
+												type : "success",
+												content : "同意完成！"
+											})
+											$("#refresh").click();
+										} else {
+											Ewin.msg({
+												type : "danger",
+												content : result.msg
+											})
+										}
+									}
+								});
+							}
+						});
+					},
+					editBtn : function(manualMeasureId,obj) {//编辑
+						Ewin.modal({
+							width : 700,
+							modalId : "manualMeasureEdit",
+							async : false,
+							title : "添加手动计量",
+							url : "manualMeasure/manualMeasure_edit_page",
+							data : {
+								"manualMeasureId" : manualMeasureId,
+								type:"edit"
+							},
+							drag : true
+						});
+					},returnBtn : function(manualMeasureId, obj) {//退回
+						Ewin.modal({
+							modalId : "returnOrderPageList",
+							title : "退回",
+							width : 300,
+							headerClass : "zw-track-header",
+							submitText : "确认退回",
+							url : "manualMeasure/return_order_page",
+							data : {
+								"billMeasureId" : billMeasureId,
+								"tableId" : "billMeasureTable"
+							}
+						});
+					},
+					approveBtn : function(manualMeasureId,obj) {
+						$.ajax({
+							url : "manualMeasure/manualMeasure_edit_page",
+							type : "get",
+							async : false,
+							data : {
+								manualMeasureId : manualMeasureId,
+								type : "approve",
+								pageNum : pageNum
+							},
+							success : function(result) {
+								$("#measureTab").html(result);
+							}
+						});
+					},
+
+					returnBtn : function(manualMeasureId,obj) {//退回
+						Ewin.modal({
+							modalId : "returnOrderPageList",
+							title : "退回",
+							width : 300,
+							headerClass : "zw-track-header",
+							submitText : "确认退回",
+							url : "manualMeasure/return_order_page",
+							data : {
+								"manualMeasureId" : manualMeasureId,
+								"tableId" : "manualMeasureTable" //传递本页面表格使用的id 用于退回后的刷新
+							}
+						});
+
+					},
+					deleteBtn : function(manualMeasureId,obj) {//删除
+						Ewin.confirm({
+							message : "确认要删除选择的数据吗？"
+						}).on(function(e) {
+							if (e) {//e 为true 说明点击确定
+								$.ajax({
+									url : "manualMeasure/delete/" + manualMeasureId,
+									type : "delete",
+									dataType : "json",
+									success : function(result) {
+										if (result.code == 1) {
+											Ewin.msg({
+												type : "success",
+												content : "已删除"
+											});
+											$("#refresh").click();
+										} else {
+											Ewin.msg({
+												type : "danger",
+												content : result.msg
+											});
+										}
+									}
+								});
+								return;
+							}
+						});
+					},
+					see : function(manualMeasureId,obj) {//浏览
+						Ewin.modal({
+							modalId : "manualMeasureEdit",
+							title : "手动计量清单浏览",
+							width : 550,
+							url : "manualMeasure/manualMeasure_edit_page",
+							data : {
+								"manualMeasureId" : manualMeasureId,
+								"type" : "see"
+							},
+							headerClass : "zw-track-header",
+							btn : "hide",
+						});
+					}
+				};
+			
+			
+			
+		})
+		
+		
+
+	</script>
+</body>
+</html>

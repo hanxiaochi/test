@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>材料补差计量页面</title>
+</head>
+<body>
+	<div id="meterialDiasMeasureListTab"></div>
+	<script type="text/html" id="indexTabContent" >
+		<div class="box" style="margin-bottom: 0px;height:50%;border: none;">
+			<div class="box-body" >
+				<form class="layui-form layui-form-pane" action=""  style="margin:5px 10px">
+				<div class="layui-inline">
+					<select  lay-filter="select" id="select">
+						<option  value="true" >全部</option>
+						<option  value="false" >待审核</option>
+					</select>
+				</div>
+				</form>
+				<table id="meterialDiasMeasureTable"  lay-filter="meterialDiasMeasureTable"></table>
+			</div>
+		</div>
+		<div class="box" style="margin-bottom: 0px;border: none;height:50%">
+			<div class="box-body">
+				
+				<div id="meterialDiasMeasureTableDetailTableDiv"></div>
+			</div>
+		</div>
+	</script>
+	<script type="text/html" id="meterialDiasMeasureTableToolBar">
+		<button class="btn btn-primary btn-sm" id="addMeterialDiasMeasureBtn" lay-event="addMeterialDiasMeasureBtn"><i class="glyphicon glyphicon-plus"></i> 添加数据</button>
+			
+		<button  class="btn btn-success btn-sm" id="reportMeterialDiasBtn" lay-event="reportMeterialDiasBtn"><i class="glyphicon glyphicon-send"></i> <lable>上报数据</lable> </button>
+		<button class="btn btn-danger btn-sm" id="deleteMeterialDias" lay-event="deleteMeterialDias"><i class="glyphicon glyphicon-trash"></i> 删除数据</button>
+		
+		<button class="btn btn-default btn-sm" id="agreeMeterialDiasBtn" lay-event="withdrawMeasure"><i class="glyphicon glyphicon-ok-circle"></i> 撤回上报</button>
+		
+		<button class="btn btn-default btn-sm" id="refreshmeterialDiasMeasure" style="display:none;" lay-event="refreshmeterialDiasMeasure"><i class="glyphicon glyphicon-ok-circle"></i>刷新</button>
+		
+	</script>
+	<!-- <a title="退回 " lay-event="returnBtn" class="btn btn-warning btn-xs">退回</a> 41行 -->
+	<script type="text/html" id="meterialDiasMeasureTableBar">
+	{{#  if("SBSJ"=="SBSJ"){ }}
+		{{#  if(d.taskUser==true){ }}
+		<a title="编辑" lay-event="editBtn" class="btn btn-primary btn-xs">编辑</a>
+		{{# }else{ }}	
+		
+		{{# } }}
+	{{# }else if("SBSJ"=="SHSJ" || "SBSJ"=="PFSJ"){ }}
+		{{#  if(d.taskUser==true){ }}
+		<a title="审核 " lay-event="auditingBtn" class="btn btn-primary btn-xs">审核</a>
+		<a title="同意 " lay-event="agreeBtn" class="btn btn-success btn-xs">同意</a>
+		{{# var projectIdWorkSpace = $("#sysProjectWorkPositionSel").val(); }}
+			{{# if(projectIdWorkSpace==74 || projectIdWorkSpace==75){ }}
+				<a title="退回 " lay-event="returnBtn" class="btn btn-danger btn-xs">退回</a>
+			{{# } }}
+		{{# }else{ }}
+		{{# } }}
+	{{# } }}
+		<a title="追踪 " lay-event="trackBtn"  class="btn btn-info btn-xs">追踪</a>
+		<a title="浏览 " lay-event="see" class="btn btn-defaultsuc btn-xs">浏览</a>
+  	</script>
+	<script type="text/javascript">
+	layui.use(['table','form'],function() {
+		var pageNum = 1;
+		var msg = "";
+		if(msg!=""){
+			layer.msg(msg, {icon: 5,offset: '200px' });
+		}
+		layer.load(2);
+		$("#meterialDiasMeasureListTab").html($("#indexTabContent").html());
+		//表格
+		var table = layui.table,form = layui.form;
+		form.render();
+		form.on('select(select)', function(data){
+			//var typeCode =""; 
+			table.reload("meterialDiasMeasureTable", {where:{
+				typeCode:"",
+				flag:data.value
+			}});
+	    })
+		/**计量支付主表 数据加载*/
+		var cols = [
+			{"type":"checkbox","fixed":"left"},
+          	{"title": "补差年月","field":"diffYearMonth",event : "measureNo"},
+          	{"title": "批准文号","field":"approveNo",event : "measureNo"},
+            {"title": "材料来源","field":"provider",event : "measureNo"},
+            {"title": "计量日期","field":"measureDate",event : "measureNo"},
+            {"title": "材料名称","field":"secMaterialName",event : "measureNo"},
+            {"title": "状态","align": "center","field":"states",minWidth:180,event : "measureNo",templet:function(d){
+            	if(0=="1"){
+            		if(d.lineColor!=""){
+            			return "<p style='color:"+d.lineColor+"' data-processInstanceId='"+d.processInstanceId+"'>"+d.states+"</p>"
+            		}
+            	}
+            	return "<p data-processInstanceId='"+d.processInstanceId+"'>"+d.states+"</p>"
+            }},
+            {"title": "操作","align": "center", toolbar: '#meterialDiasMeasureTableBar',width:200}
+        ];
+		table.render({
+			    elem: '#meterialDiasMeasureTable'
+			    ,url: 'meterialdiasmeasure/meterial_dias_measure_list?typeCode=' //数据接口
+			  	,cellMinWidth: 80
+			  	,method:"get"
+			  	,toolbar: '#meterialDiasMeasureTableToolBar'
+				,defaultToolbar:[]
+			  	,even:true
+			  	,page: {
+					limit: 10,
+			  		curr: 1
+			  	}
+			  	,limits:[10,20,30]
+			    ,cols: [cols]
+			    ,size: 'sm'
+			    ,done : function(res, curr, count) {
+			    	pageNum = curr;
+					layer.closeAll('loading');
+				}
+		});
+		//监听操作栏按钮
+		table.on('tool(meterialDiasMeasureTable)', function(obj){
+			var data = obj.data;
+			meterialDiasMeasureListTableLineClick[obj.event](data.meterialDiasMeasureId,obj);
+		});
+		//监听头部按钮
+		table.on('toolbar(meterialDiasMeasureTable)', function(obj){
+			if($("#sysGatherDataWorkPositionSel>option").length==0 || $("#select2-sysGatherDataWorkPositionSel-container").attr("title")=="请选择工期"){
+				Ewin.msg({type:"danger",content:"请选择工作位置！"})
+				return false;
+			}
+			var checkStatus = table.checkStatus(obj.config.id),data = checkStatus.data;
+			meterialDiasMeasureTableToolClick[obj.event](data);
+		});
+// 		table.on('row(meterialDiasMeasureTable)', function(obj){
+// // 		      obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+// 			  var t = $(event.target).attr("lay-event");//点击操作按钮时不触发细目表
+// 			  if(typeof(t)!="undefined"){
+// 					return false;
+// 			  }
+// 		      var data = obj.data;
+// 			  var meterialDiasMeasureId = data.meterialDiasMeasureId;
+// 			  $("#meterialDiasMeasureTableDetailTableDiv").load("meterialdiasmeasure/detail_page?meterialDiasMeasureId="+meterialDiasMeasureId);
+// 		});
+		table.on('checkbox(meterialDiasMeasureTable)', function(obj){
+			if(obj.type!='all'){
+				if(obj.checked){
+					 obj.tr.addClass('layui-table-click'); 	
+				}else{
+					 obj.tr.removeClass('layui-table-click'); 	
+				}
+			}else{
+				if(obj.checked){
+					 $("div[class='layui-unselect layui-form-checkbox layui-form-checked']").attr('class','layui-unselect layui-form-checkbox layui-form-checked');
+					$("div[lay-id='meterialDiasMeasureTable'] div[class='layui-table-fixed layui-table-fixed-l'] tr").addClass('layui-table-click ');
+					$("div[lay-id='meterialDiasMeasureTable'] div[class='layui-table-body layui-table-main'] tr").addClass('layui-table-click ');
+				}else{
+					 $("div[class='layui-unselect layui-form-checkbox layui-form-checked']").attr('class','layui-unselect layui-form-checkbox');
+					$("div[lay-id='meterialDiasMeasureTable'] div[class='layui-table-fixed layui-table-fixed-l'] tr").removeClass('layui-table-click ');
+					$("div[lay-id='meterialDiasMeasureTable'] div[class='layui-table-body layui-table-main'] tr").removeClass('layui-table-click ');
+				}
+			}
+			
+		})
+			var meterialDiasMeasureListTableLineClick  = {
+				measureNo:function(mamId,obj){
+					 $("div[lay-id='meterialDiasMeasureTable'] input[type='checkbox']").prop('checked',false);
+					 $("div[class='layui-unselect layui-form-checkbox layui-form-checked']").attr('class','layui-unselect layui-form-checkbox');
+					$(obj.tr).find("td:first").children().find("div:first").addClass("layui-form-checked");
+					var index=$(obj.tr).attr("data-index");
+					var data=table.cache["meterialDiasMeasureTable"];
+					for(var i=0;i<data.length;i++){
+						data[i]['LAY_CHECKED']='';
+						if(index==i){
+							data[i]['LAY_CHECKED']='True';
+						}
+					}
+				      var meterialDiasMeasure = obj.data;
+					  var meterialDiasMeasureId = meterialDiasMeasure.meterialDiasMeasureId;
+					  $("#meterialDiasMeasureTableDetailTableDiv").load("meterialdiasmeasure/detail_page?meterialDiasMeasureId="+meterialDiasMeasureId);
+				},
+				editBtn: function(mamId,obj) { //编辑
+					$.ajax({
+						url : "meterialdiasmeasure/edit_meterial_dias_measure_page",
+						type : "get",
+						async : false,
+						data : {
+							meterialMeasureId : mamId,
+							type : "edit",
+							pageNum : pageNum
+						},
+						success : function(result) {
+							$("#meterialDiasMeasureListTab").html(result);
+						}
+					});
+
+				},
+				auditingBtn: function(mamId,obj) { //审核
+					$.ajax({
+						url : "meterialdiasmeasure/edit_meterial_dias_measure_page",
+						type : "get",
+						async : false,
+						data : {
+							meterialMeasureId : mamId,
+							type : "auditing",
+							pageNum : pageNum
+						},
+						success : function(result) {
+							$("#meterialDiasMeasureListTab").html(result);
+						}
+					});
+				},
+				deleteBtn: function(mamId,obj) { //删除
+					Ewin.confirm({
+						message: "确认要删除这条数据吗？"
+					}).on(function(e) {
+						if (e) {
+							$.ajax({
+								url: "meterialdiasmeasure/del_meterial_dias_measure",
+								data: {
+									meterialMeasureId: mamId
+								},
+								dataType: "json",
+								success: function(result) {
+									if (result.code == 1) {
+										Ewin.msg({
+											type: "success",
+											content: "已删除"
+										})
+										$("#refreshmeterialDiasMeasure").click();
+									} else {
+										Ewin.msg({
+											type: "danger",
+											content: "删除失败"
+										})
+									}
+								}
+							});
+
+						}
+					})
+
+				},
+				agreeBtn: function(mdmIds,obj) { //同意
+					Ewin.confirm({
+						message: "确认要同意吗"
+					}).on(
+						function(e) {
+							if (e) { //e 为true 说明点击确定
+								$.ajax({
+									url: "meterialdiasmeasure/agree_order",
+									type: "post",
+									data: {
+										"meterialMeasureId": mdmIds
+									},
+									dataType: "json",
+									success: function(result) {
+										if (result.code == 1) {
+											Ewin.msg({
+												type: "success",
+												content: "已同意！"
+											})
+											$("#refreshmeterialDiasMeasure").click();
+// 											meterialDiasMeasureListTable.ajax.reload();
+										} else {
+											Ewin.msg({
+												type: "danger",
+												content: "操作失败"
+											})
+										}
+									}
+								});
+							}
+						});
+				},
+				trackBtn: function(mamId,obj) { //追踪
+					Ewin.modal({
+						title: "追踪清单",
+						width: 760,
+						modalId: "trackMeterialDiasMeasureList",
+						url: "meterialdiasmeasure/track_meterial_dias_reasoure_page",
+						data: {
+							"meterialMeasureId": mamId
+						},
+						headerClass: "zw-track-header",
+						btn: "hide",
+						drag: false
+					});
+
+				},
+				returnBtn: function(mamId,obj) { //退回
+					Ewin.modal({
+						modalId: "returnOrderPageList",
+						title: "退回",
+						width: 300,
+						headerClass: "zw-track-header",
+						submitText: "确认退回",
+						url: "meterialdiasmeasure/return_order_page",
+						data: {
+							"meterialMeasureId": mamId,
+							"tableId" : "meterialDiasMeasureTable"
+						}
+					});
+
+				},
+				see: function(mamId,obj) { //浏览
+					$.ajax({
+						url : "meterialdiasmeasure/edit_meterial_dias_measure_page",
+						type : "get",
+						async : false,
+						data : {
+							meterialMeasureId : mamId,
+							type : "see",
+							pageNum : pageNum
+						},
+						success : function(result) {
+							$("#meterialDiasMeasureListTab").html(result);
+						}
+					});
+				}
+			}
+		// 点击头部按钮
+		var meterialDiasMeasureTableToolClick={
+			addMeterialDiasMeasureBtn:function(data){
+					$.ajax({
+						url : "meterialdiasmeasure/edit_meterial_dias_measure_page",
+						type : "get",
+						async : false,
+						data: {"pageNum" : pageNum},
+						success : function(result) {
+							$("#meterialDiasMeasureListTab").html(result);
+						}
+					});
+				},
+				refreshmeterialDiasMeasure:function(data){//刷新
+					 table.reload('meterialDiasMeasureTable');
+				},
+				reportMeterialDiasBtn:function(data){//上报计量单
+					var meterialMeasureIds = "*";
+					var isDelete=false;
+			    	var arr=new Array();
+			    	for(var i=0;i<data.length;i++){
+			    		var stateId=data[i].measureState;
+				    	if(stateId==1 || stateId==0||stateId==6){
+				    		isDelete=true;
+				    	}
+			    		arr.push(data[i].meterialDiasMeasureId);
+			    	}
+					var message = "确认要操作选择的清单吗?";
+					if (arr.length == 0) {
+						message = "确认要全部执行吗?";
+					} else {
+						meterialMeasureIds = arr.join(",");
+					}
+					Ewin.confirm({
+						message: message
+					}).on(function(e) {
+						if (e) { //e 为true 说明点击确定
+							$.ajax({
+								url: "meterialdiasmeasure/up_order",
+								type: "post",
+								data: {
+									"mdmIds": meterialMeasureIds
+								},
+								dataType: "json",
+								success: function(result) {
+									if (result.code == 1) {
+										Ewin.msg({
+											type: "success",
+											content: "操作完成！"
+										})
+										Ewin.modal({
+											width : 400,
+											modalId : "workflowSendSMSpage",
+											async : false,
+											title : "发送通知",
+											url : "workflow/isSendSMSpage",
+											data : {
+											"pageType" : "meterialDiasMeasure",
+											"pageNum":1 
+											},
+											drag : true
+										});
+										$("#refreshmeterialDiasMeasure").click();
+									} else {
+										Ewin.msg({
+											type: "warning",
+											content: result.msg
+										})
+									}
+								}
+							});
+						}
+					});
+				},
+				withdrawMeasure : function(data) {//撤回计量单
+					var message = "确认要操作选择的清单吗?";
+					var mdmIds = "*";
+					if (data.length == 0) {
+						message = "确认要全部执行吗?";
+					} else {
+						var arr = new Array();
+						for (var i = 0; i < data.length; i++) {
+							arr.push(data[i].meterialDiasMeasureId);
+						}
+						mdmIds = arr.join(",");
+					}
+					 
+					Ewin
+						.confirm({
+							message : message
+						})
+						.on(
+								function(e) {
+									if (e) {
+						
+						$.ajax({
+								url : "workflow/withdraw_order",
+								type : "post",
+								data : {
+									"ids" : mdmIds,
+									"measureType":"MeterialDiasMeasure"
+								},
+								dataType : "json",
+								success : function(result) {
+									if (result.code == 1) {
+									Ewin.msg({
+											type : "success",
+											content : "操作完成！"
+											})
+										table.reload("meterialDiasMeasureTable");
+									} else {
+										Ewin.msg({
+											type : "warning",
+											content : result.msg
+											})
+									}
+									}
+									});
+							}
+							});
+							
+				},
+				adjustMeasure : function(data) {//调整计量单
+					var meterialMeasureIds = "";
+					if (data.length == 0) {
+						Ewin.msg({
+							type : "danger",
+							content : "请至少选中一条计量单！"
+						})
+					} else if (data.length > 15) {
+						Ewin.msg({
+							type : "danger",
+							content : "只能调整15条计量单！"
+						});
+					} else {
+						var arr = new Array();
+						
+						for(var i=0;i<data.length;i++){
+				    		arr.push(data[i].meterialDiasMeasureId);
+				    	}
+						meterialMeasureIds = arr.join(",");
+						Ewin.modal({
+							title : "调整清单",
+							modalId : "adjustPage",
+							width : 400,
+							url : "meterialdiasmeasure/adjust_page",
+							data : {
+								"meterialMeasureId" : meterialMeasureIds
+							},
+							headerClass : "zw-track-header",
+							btn : "hide",
+							drag : true
+						});
+					}
+				},
+				deleteMeterialDias:function(data){//上报计量单
+					var meterialMeasureIds = "";
+					var isDelete=false;
+				    if(data.length==0){
+				    	Ewin.msg({type:"warning",content:"请选择要删除的计量单！"});
+				    	return false;
+				    }else {
+				    	var arr=new Array();
+				    	for(var i=0;i<data.length;i++){
+				    		var stateId=data[i].measureState;
+					    	if(stateId==1 || stateId==0||stateId==6){
+					    		isDelete=true;
+					    	}
+					    	
+				    		arr.push(data[i].meterialDiasMeasureId);
+				    	}
+				    	meterialMeasureIds = arr.join(",");
+					}
+				    if(isDelete){
+						Ewin.confirm({
+							message : "确认要删除选择的数据吗？"
+						}).on(function(e) {
+							if (e) {
+								$.ajax({
+									url: "meterialdiasmeasure/del_meterial_dias_measure",
+									type: "post",
+									data: {
+										"meterialMeasureId": meterialMeasureIds
+									},
+									dataType: "json",
+									success: function(result) {
+										if (result.code == 1) {
+											Ewin.msg({
+												type: "success",
+												content: "删除成功！"
+											})
+										} else {
+											Ewin.msg({
+												type: "danger",
+												content: result.msg
+											})
+										}
+										$("#refreshmeterialDiasMeasure").click();
+									}
+								});
+						return;
+							}
+						});
+				    }
+				    else{
+				    	Ewin.msg({type:"warning",content:"选中的计量单无法删除！"});
+				    }
+				},
+				agreeMeterialDiasBtn:function(data){//同意计量单
+						var message="确认要同意选择的清单吗?";
+					    var meterialMeasureIds="*";
+						if(data.length==0){
+							message="确认要全部同意吗?";
+						}else{
+							var arr=new Array();
+					    	for(var i=0;i<data.length;i++){
+					    		arr.push(data[i].meterialDiasMeasureId);
+					    	}
+					    	meterialMeasureIds = arr.join(",");
+						}
+						Ewin.confirm({ message: message }).on(function (e) {
+							if (e) {
+								$.ajax({
+									url: "meterialdiasmeasure/agree_order",
+									type: "post",
+									data: {
+										"meterialMeasureId": meterialMeasureIds
+									},
+									dataType: "json",
+									success: function(result) {
+										if (result.code == 1) {
+											Ewin.msg({
+												type: "success",
+												content: "操作成功！"
+											})
+											$("#refreshmeterialDiasMeasure").click();
+										} else {
+											Ewin.msg({
+												type: "warning",
+												content: result.msg
+											})
+										}
+									}
+								});
+							}
+						});
+				},
+				archiveMeterialDias:function(data){//计量单归档
+					var message="确认要归档选择的清单吗?";
+				    var meterialMeasureIds="*";
+					if(data.length==0){
+						message="确认要全部归档吗?";
+					}else{
+						var arr=new Array();
+				    	for(var i=0;i<data.length;i++){
+				    		arr.push(data[i].meterialDiasMeasureId);
+				    	}
+				    	meterialMeasureIds = arr.join(",");
+					}
+					Ewin.confirm({ message: message }).on(function (e) {
+						if (e) {//e 为true 说明点击确定
+							$.ajax({
+								url: "meterialdiasmeasure/archive",
+								type: "post",
+								data: {
+									"meterialDiasMeasureIds": meterialMeasureIds
+								},
+								dataType: "json",
+								success: function(result) {
+									if (result.code == 1) {
+										Ewin.msg({
+											type: "success",
+											content: "归档完成！"
+										})
+									} else {
+										Ewin.msg({
+											type: "danger",
+											content: result.msg
+										})
+									}
+									$("#refreshmeterialDiasMeasure").click();
+								}
+							});
+						}
+					});
+				}
+		}
+	});
+	</script>
+</body>
+</html>

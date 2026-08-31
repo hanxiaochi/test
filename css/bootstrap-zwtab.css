@@ -1,0 +1,15 @@
+.zw-tab{
+	padding-top:5px;
+}
+.zw-tab .tab-content{
+	padding-top:5px;
+}
+.zw-tab>.nav-tabs>li>a{
+	padding: 5px 10px;
+}
+.zw-tab>.nav-tabs>li>a>i{
+	margin-left:10px;
+}
+.zw-tab>.nav-tabs>li>a>i:hover{
+	color: #C9302C;
+}

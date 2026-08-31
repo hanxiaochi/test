@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>工程变更会议🐖页面</title>
+</head>
+<body>
+	<div id="varyMeetingDiv"></div>
+	<script type="text/html" id="varyMeetingIndexTabContent" >
+		<div class="box" style="margin-bottom: 0px;height:50%;border: none;">
+			<div class="box-body" >
+				<table id="varyMeetingTable"  lay-filter="varyMeetingTable"></table>
+			</div>
+		</div>
+	</script>
+	<script type="text/html" id="varyMeetingTableToolBar">
+		<button class="btn btn-primary btn-sm" id="addVaryMeetingBtn" lay-event="addVaryMeetingBtn"><i class="glyphicon glyphicon-plus"></i> 添加数据</button>
+	</script>
+	<script type="text/javascript">
+	layui.use(['table'],function() {
+		layer.load(2);
+		$("#varyMeetingDiv").html($("#varyMeetingIndexTabContent").html());
+		//表格
+		var table = layui.table;
+		var loginUserId="563";
+		/**计量支付主表 数据加载*/
+		var cols = [
+			{"field":'zizeng', "title": '序号', width:40,"type":"numbers",fixed:'left'},
+          	{"title": "编号","field":"meetingNo",width:130,fixed:'left'},
+          	{"title": "会议名称","field":"meetingTitle",width:200,"style":"text-align:left","align":"center",fixed:'left'},
+          	{"title": "会议地点","field":"meetingAddress",width:200,"style":"text-align:left","align":"center",fixed:'left'},
+          	{"title": "变更金额","field":"varyMoney",width:150,"align":"center",fixed:'left'},
+          	{"title": "会议时间","field":"meetingDate",width:150,"align":"center",fixed:'left'},
+          	{"title": "桩号","field":"pegeNo","align":"center"},
+          	{"title": "变更内容","field":"varyContent","align":"center"},
+          	{"title": "变更理由","field":"varyReason","align":"center"},
+            {"title": "操作","align": "center",width:220,fixed:'right',templet:function(d){
+            	var html=""
+            	if(loginUserId==d.createUserId){
+            		html+='<a title="编辑" lay-event="editBtn" class="btn btn-primary btn-xs">编辑</a>';
+            		html+=' <a title="删除" lay-event="deleteBtn" class="btn btn-danger btn-xs">删除</a>';
+            		html+=' <a title="签到人员" lay-event="userBtn" class="btn btn-success btn-xs">签到人员</a>';
+            	}
+            	html+=' <a title="浏览" lay-event="seeBtn" class="btn btn-warning btn-xs">浏览</a>';
+            	return html;
+            }}
+        ];
+		table.render({
+			    elem: '#varyMeetingTable'
+			    ,url: 'vary_meeting/get_vary_meeting_data' //数据接口
+		    	,toolbar: '#varyMeetingTableToolBar'
+			  	,method:"get"
+				,defaultToolbar:[]
+			  	,even:true
+			    ,cols: [cols]
+			    ,size: 'sm'
+			    ,done : function(res, curr, count) {
+					layer.closeAll('loading');
+				}
+		});
+		//监听操作栏按钮
+		table.on('tool(varyMeetingTable)', function(obj){
+			var data = obj.data;
+			varyMeetingTableLineClick[obj.event](data.meetingId);
+		});
+		//监听头部按钮
+		table.on('toolbar(varyMeetingTable)', function(obj){
+			varyMeetingTableToolClick[obj.event]();
+		});
+		table.on('row(varyMeetingTable)', function(obj){
+		      obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+		});
+			var varyMeetingTableLineClick  = {
+				userBtn: function(meetingId) { //编辑
+					Ewin.modal({
+						title : "签到人员管理",
+						modalId : "editVaryMeetingUserModel",
+						width : 650,
+						url : "vary_meeting/vary_meeting_user_page",
+						data : {
+							meetingId:meetingId
+						},
+						headerClass:"zw-track-header",
+						btn:"hide"
+					});
+				},
+				editBtn: function(meetingId) { //编辑
+					$.ajax({
+						url : "vary_meeting/vary_meeting_edit_page",
+						type : "get",
+						async : false,
+						data : {
+							meetingId : meetingId,
+							type:"edit"
+						},
+						success : function(result) {
+							$("#varyMeetingDiv").html(result);
+						}
+					});
+				},
+				deleteBtn: function(meetingId) { //删除
+					Ewin.confirm({
+						message: "确认要删除这条数据吗？"
+					}).on(function(e) {
+						if (e) {
+							$.ajax({
+								url: "vary_meeting/delete_vary_meeting",
+								data: {
+									meetingId: meetingId
+								},
+								type:"delete",
+								dataType: "json",
+								success: function(result) {
+									if (result.code == 1) {
+										Ewin.msg({
+											type: "success",
+											content: "已删除"
+										})
+										table.reload('varyMeetingTable');
+									} else {
+										Ewin.msg({
+											type: "danger",
+											content: "删除失败"
+										})
+									}
+								}
+							});
+
+						}
+					})
+
+				},
+				seeBtn: function(meetingId) { //浏览
+					$.ajax({
+						url : "vary_meeting/vary_meeting_edit_page",
+						type : "get",
+						async : false,
+						data : {
+							meetingId : meetingId,
+							type:"see"
+						},
+						success : function(result) {
+							$("#varyMeetingDiv").html(result);
+						}
+					});
+				}
+			}
+		// 点击头部按钮
+		var varyMeetingTableToolClick={
+			addVaryMeetingBtn(){
+					$.ajax({
+						url : "vary_meeting/vary_meeting_edit_page",
+						type : "get",
+						async : false,
+						data : {
+							meetingId : 0,
+							type:"add"
+						},
+						success : function(result) {
+							$("#varyMeetingDiv").html(result);
+						}
+					});
+				}
+		}
+	});
+	</script>
+</body>
+</html>

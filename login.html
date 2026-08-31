@@ -1,0 +1,180 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport"
+	content="initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="renderer" content="webkit">
+<meta http-equiv="X-UA-Compatible" content="IE=Edge,chrome=1">
+<meta http-equiv="Expires" CONTENT="0">
+<meta http-equiv="Cache-Control" CONTENT="no-cache">
+<meta http-equiv="Pragma" CONTENT="no-cache"> 
+<title>工程项目信息化管理云平台</title>
+<link rel="shortcut icon" href="img/logo-ico.ico" />
+<!-- Bootstrap 3 CSS-compatible safe behaviors -->
+<link rel="stylesheet"
+	href="assets/bower_components/bootstrap/dist/css/bootstrap.min.css">
+<!-- Font Awesome -->
+<link rel="stylesheet"
+	href="assets/bower_components/font-awesome/css/font-awesome.min.css">
+<link rel="stylesheet" type="text/css" href="css/login.css" />
+<style type="text/css">
+#message-info>span>i, #message-info>span>span {
+	color: #FF0000;
+}
+
+#message-info>span>i {
+	margin-right: 10px;
+}
+</style>
+</head>
+<body>
+	<div class="container-fluid">
+		<div class="row">
+			<!-- 网站名称信息（原项目产品名已脱敏） -->
+			<div class="logoFontDiv row">
+				<img src="img/login/default_loginTitle.png" />
+			</div>
+		</div>
+		<div class="row">
+			<div class="col-md-4  col-lg-4 col-sm-4 " id="leftDiv" style="padding: 0px;">
+				<img src="img/login/left.png" id="leftImg" style="width: 100%;" />
+			</div>
+			<div class="col-md-4  col-lg-4 col-sm-4" id="middleDiv" style="padding: 0px;">
+				<img src="img/login/middle.png" id="middleImg" style="width: 100%;" />
+				<div class="loginBox">
+					<h3 class="loginBox-title">登录账户</h3>
+					<div class="form-horizontal">
+						<div class="form-group has-info has-feedback">
+							<input type="text" class="form-control" placeholder="请您输入账户名称"
+								name="user_account"> <span
+								class="glyphicon glyphicon-user form-control-feedback"
+								aria-hidden="true"></span>
+						</div>
+						<div class="form-group has-info has-feedback">
+							<input type="password" class="form-control"
+								placeholder="请您输入账户密码" name="password"> <span
+								class="glyphicon glyphicon-lock form-control-feedback"
+								aria-hidden="true"></span>
+								<br>
+								<div class="form-check form-check-inline" id="forceLoginDiv" style="display:none">
+									<input class="form-check-input" type="checkbox" id="forceLogin" value="1">
+									<label class="form-check-label" style="color: red;">帐号处于在线状态，是否强制登录？</label>
+								</div>
+						</div>
+						<div class="form-group"
+							style="margin-top: -10px; margin-bottom: -10px; display: none;"
+							id="message-info">
+							<span><i class=""></i><span></span></span>
+						</div>
+						<div class="form-group">
+							<div style="margin-right: 0px; float: left;">
+								<button class="btn btn-primary" id="submitBtn">登录</button>
+							</div>
+							<div
+								style="margin-right: 0px; float: right; margin-bottom: 0px; line-height: 34px;">
+								<label> <input type="checkbox" id="checkboxSuccess">自动登录
+								</label> <span style="color: #0033FF;"> 忘记密码？ </span>
+							</div>
+						</div>
+					</div>
+				</div>
+				<div class="loadingSucDiv">
+					<img src="img/login/puff.svg" /> <span class="loadFont">授权认证中...</span>
+				</div>
+			</div>
+			<div class="col-md-4 col-lg-4 col-sm-4" id="rightDiv" style="padding: 0px;">
+				<img src="img/login/right.png" id="rightImg" style="width: 100%;" />
+			</div>
+		</div>
+		<div class="row">
+			<div class="col-md-12 col-lg-12">
+				<!-- 原站点版权信息已脱敏 -->
+			</div>
+		</div>
+	</div>
+</body>
+<!-- jQuery 3 -->
+<script src="assets/bower_components/jquery/dist/jquery.min.js"></script>
+<!-- Bootstrap 3.3.7 -->
+<script src="assets/bower_components/bootstrap/dist/js/bootstrap.min.js"></script>
+<script type="text/javascript" src="js/respond.min.js"></script>
+<script type="text/javascript">
+
+	function errMessage(arr) {
+		$("#message-info").show();
+		if (arr.type == "error") {
+			$("#message-info>span>i").attr("class", "fa fa-exclamation-circle");
+		} else {
+			$("#message-info>span>i").attr("class", "fa fa-warning");
+		}
+		$("#message-info>span>span").text(arr.message);
+	}
+	$("#submitBtn").on("click", function() {
+
+		login();
+	});
+	$(document).keyup(function(event) {
+		if (event.keyCode == 13) {
+			login();
+		}
+	});
+	function login() {
+		$("#message-info").hide();
+		if ($("input[name='user_account']").val() == "") {
+			errMessage({
+				type : "error",
+				message : "用户不存在"
+			});
+			return false;
+		}
+		if ($("input[name='password']").val() == "") {
+			errMessage({
+				type : "error",
+				message : "密码为空"
+			});
+			return false;
+		}
+		$.ajax({
+			url : "dologin",
+			data : {
+				user_account : $("input[name='user_account']").val(),
+				password : $("input[name='password']").val(),
+				remember_me : $("#forceLogin").prop("checked")
+			},
+			type : "post",
+			dataType : "json",
+			beforeSend : function(XHR) {//开始请求
+
+			},
+			success : function(result) {
+				if (result.code == 1) {
+					$(".loginBox").fadeOut(1000);
+					window.location.replace("/");
+				} else if (result.code == 0) {
+					errMessage({
+						type : "error",
+						message : result.msg
+					});
+				} else if (result.code == 2) {
+					errMessage({
+						type : "error",
+						message : result.msg
+					});
+				}else if(result.code == 4){
+					$("#forceLoginDiv").show();
+				} else {
+					errMessage({
+						type : "info",
+						message : result.msg
+					});
+				}
+			},
+			complete : function(XHR, TS) {//结束
+			}
+		});
+	}
+</script>
+
+</html>
+

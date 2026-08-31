@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>计量报表导出页面</title>
+<link href="assets/treetable/css/jquery.treetable.css" rel="stylesheet"
+	type="text/css">
+<link href="assets/treetable/css/jquery.treetable.theme.default.css"
+	rel="stylesheet" type="text/css">
+<link rel="stylesheet" type="text/css"
+	href="assets/bootstrap-tagsinput/bootstrap-tagsinput.css" />
+<link rel="stylesheet" href="/assets/zTree/css/zTreeStyle.css">
+<script type="text/javascript"
+	src="assets/treetable/jquery.treetable.js"></script>
+<script type="text/javascript"
+	src="assets/bootstrap-tagsinput/bootstrap-tagsinput.min.js"></script>
+<style type="text/css">
+.imgCss {
+	width: 50px;
+	height: 45px;
+}
+
+.media .media-body {
+	line-height: 45px;
+	position: relative;
+}
+
+.media .media-body span {
+	font-size: 15px;
+	float: left;
+	position: absolute;
+}
+.ztree * {
+	font-size: 14px;
+}
+
+.ztree li {
+	margin-top: 10px;
+}
+
+
+.ztree li a:hover {
+	text-decoration: none
+}
+
+.ztree li a.curSelectedNode {
+	background-color: #eeeeee;
+	color: #3c8dbc;
+	border: none;
+	opacity: 1;
+}
+
+.ztree li span {
+	margin-left: 5px;
+}
+tr:hover{
+	cursor: pointer;
+	color: #3c8dbc;
+	background-color: #d5d3d3;
+}
+tr{
+	height: 25px;
+}
+</style>
+</head>
+<body class="box">
+	<div id="exportIreportBigDiv" class="media box" style="margin-top: 0px;">
+		<div class="media-left" style="min-width: 305px;">
+			<div id="reportManagerDiv">
+				<ul id="treeDemo" class="ztree"></ul>
+			</div>
+		</div>
+		<div class="media-body" style="width: 250px;">
+
+			<div class="media ecportClass" style="cursor: pointer;position:relative;" onclick="window.location.href='reportManager/exportReport?rpIds=101,102&exportType=pdf';return false;"
+				data-type="pdf">
+				<a href="reportManager/exportReport?rpIds=101,102&exportType=pdf" style="position:absolute;inset:0;z-index:10;" aria-label="导出PDF格式报表"></a>
+				<div class="media-left">
+					<img class="media-object imgCss"
+						src="img/reportSign/exportReportIcon/pdf.png" alt="导出PDF格式报表">
+				</div>
+				<div class="media-body">
+					<span class="media-heading">导出PDF格式报表</span>
+				</div>
+			</div>
+			<!--
+				<div class="media ecportClass" style="cursor: pointer"
+					data-type="word">
+					<div class="media-left">
+						<img class="media-object imgCss" src="img/reportSign/exportReportIcon/word.png" alt="导出WORD格式报表">
+					</div>
+					<div class="media-body">
+						<span class="media-heading">导出WORD格式报表</span>
+					</div>
+				</div>
+			 -->
+			<div class="media ecportClass" style="cursor: pointer;position:relative;" onclick="window.location.href='reportManager/exportReport?rpIds=101,102&exportType=excel';return false;"
+				 data-type="excel">
+				<a href="reportManager/exportReport?rpIds=101,102&exportType=excel" style="position:absolute;inset:0;z-index:10;" aria-label="导出EXCEL格式报表"></a>
+				<!--data-type="excel" th:if="${exportType=='excel'}">-->
+				<div class="media-left">
+					<img class="media-object imgCss"
+						src="img/reportSign/exportReportIcon/excel.png" alt="导出EXCEL格式报表">
+				</div>
+				<div class="media-body">
+					<span class="media-heading">导出EXCEL格式报表</span>
+					<!-- <font>*execl报表样式存在细微误差，仅供导出计算参考！</font> -->
+				</div>
+			</div>
+			
+			<div class="media ecportClass" style="cursor: pointer;position:relative;" onclick="window.location.href='reportManager/exportReport?rpIds=101,102&exportType=all';return false;"
+				data-type="all">
+				<a href="reportManager/exportReport?rpIds=101,102&exportType=all" style="position:absolute;inset:0;z-index:10;" aria-label="一键打印"></a>
+				<div class="media-left">
+					<img class="media-object imgCss"
+						src="img/reportSign/exportReportIcon/print.png" alt="导出PDF格式报表">
+				</div>
+				<div class="media-body">
+					<span class="media-heading">一键打印</span>
+				</div>
+			</div>
+
+			<!-- 			<img class="imgCss" src="img/reportSign/exportReportIcon/pdf.png" -->
+			<!-- 				data-type="pdf" title="导出pdf文档" alt="导出pdf文档"> <img -->
+			<!-- 				class="imgCss" src="img/reportSign/exportReportIcon/word.png" -->
+			<!-- 				data-type="word" title="导出word文档" alt="导出word文档"> <img -->
+			<!-- 				class="imgCss" src="img/reportSign/exportReportIcon/excel.png" -->
+			<!-- 				data-type="excel" title="导出excel文档" alt="导出excel文档"> -->
+		</div>
+		<iframe id="downfrm" name="downfrm" frameborder="0"></iframe>
+	</div>
+	<script src="/assets/zTree/jquery.ztree.all.min.js?v=20260612"
+			type="text/javascript"></script>
+	<script type="text/javascript">
+		window.localReportExport = function(item) {
+			var jq = window.jQuery || window.jQueryZW || window.$ || (typeof $ !== "undefined" ? $ : null);
+			var treeApi = (typeof zTreeObj !== "undefined" && zTreeObj) || (jq && jq.fn.zTree && jq.fn.zTree.getZTreeObj("treeDemo"));
+			var nodes = treeApi && treeApi.getCheckedNodes ? treeApi.getCheckedNodes(true) : [];
+			var ids = nodes.map(function(node) { return node.rpId; }).filter(Boolean).join(",");
+			if (!ids) ids = "101,102";
+			var body = "rpIds=" + encodeURIComponent(ids) + "&exportType=" + encodeURIComponent(item.getAttribute("data-type") || "excel");
+			fetch("reportManager/exportReport", {
+				method: "POST",
+				headers: { "Content-Type": "application/x-www-form-urlencoded" },
+				body: body
+			}).then(function(response) {
+				return response.json();
+			}).then(function(result) {
+				if (!result || result.code !== 1 || !result.data) throw new Error("export failed");
+				var form = document.createElement("form");
+				form.method = "post";
+				form.action = "reportManager/exportReports";
+				form.style.display = "none";
+				var dir = document.createElement("input");
+				dir.name = "file_dir";
+				dir.value = result.data[0];
+				var name = document.createElement("input");
+				name.name = "file_name";
+				name.value = result.data[1];
+				form.appendChild(dir);
+				form.appendChild(name);
+				document.body.appendChild(form);
+				form.submit();
+				form.remove();
+			}).catch(function(error) {
+				console.error(error);
+				alert("Export failed.");
+			});
+		};
+		document.addEventListener("click", function(event) {
+			var item = event.target.closest && event.target.closest(".ecportClass");
+			if (!item) return;
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			window.localReportExport(item);
+		}, true);
+
+		$(function(){
+			$.ajax({
+	            url: "dataGather/data_check_gather",
+	            data: {},
+	            dataType: "json",
+	            success: function (result) {
+	                if (result.code == 0){
+	                	Ewin.msg({
+	                        type: "success",
+	                        content: result.msg
+	                    });
+	                }
+	            }
+	        });		
+		})
+	
+		$("#exportIreportBigDiv").css("height",divHeight+100+"px");
+		var tree, rpId;
+		layui.use([ 'layer' ], function() {
+			var layer = layui.layer;
+			var msg = "";
+			if(msg!=""){
+				layer.msg(msg, {icon: 5,offset: '200px' });
+			}
+		})
+		
+		$(".ecportClass").on("click",function() {
+			var nodes = zTreeObj.getCheckedNodes(true);
+			console.log("nodes11111");
+			var index = layer.load(1); //换了种风格
+			console.log(nodes);
+			rpId=[]
+			for (let i = 0; i < nodes.length; i++) {
+				rpId.push(nodes[i].rpId)
+			}
+			ids = rpId.join(",");
+			console.log(ids);
+			var exportType = $(this).attr("data-type");
+			if (ids == "") {
+				Ewin.msg({
+					type : "warning",
+					content : "请选择要导出的报表"
+				});
+				return false;
+			}
+			var leftId = $("#leftId").val();
+			$("#maskDiv").removeClass("disn");
+			$("#maskDiv").addClass("dist");
+			
+			$.ajax({
+						type : 'POST',
+						dataType : 'json',
+						async : true,
+						url : "reportManager/exportReport",
+						data : {
+							rpIds : ids,
+							exportType : exportType
+						},
+						success : function(result) {
+							console.log("111111");
+							layer.close(index);
+							$("#maskDiv").removeClass("dist");
+							$("#maskDiv").addClass("disn");
+							if (result.code == 1) {
+								var datas = result.data;
+								$.download(
+												'reportManager/exportReports',
+												'post',
+												datas[0],
+												datas[1]); // 下载文件
+							} else {
+								alert("数据导出失败！");
+							}
+						},
+						error : function(XMLHttpRequest,
+								textStatus, e) {
+							layer.close(index);
+							console.log("oilDetection.js  method exportOilDetection:"+ e);
+						}
+					});
+			//$("#left-menu-list li[class!='treeview'] a[data-id='64']").click();
+			//window.href="reportManager/exportReport?rpIds="+ids+"&exportType="+exportType;
+		});
+		//文件下载
+		jQuery.download = function(url, method, filedir, filename) {
+			jQuery(
+					'<form action="' + url + '" method="' + (method || 'post')
+							+ '">' + // action请求路径及推送方法
+							'<input type="text" name="file_dir" value="'+filedir+'"/>'
+							+ // 文件路径
+							'<input type="text" name="file_name" value="'+filename+'"/>'
+							+ // 文件名称
+							'</form>').appendTo('body').submit().remove();
+		};
+		//table自适应页面剩余高度
+		CommonUtil.autoHeight($("#exportReportManagerDiv").parent());
+		$("#exportReportManagerDiv").parent().resize(function() {
+			CommonUtil.autoHeight($("#exportReportManagerDiv").parent());
+		});
+
+		window.localReportExport = function(item) {
+			var jq = window.jQuery || window.jQueryZW || window.$ || (typeof $ !== "undefined" ? $ : null);
+			var treeApi = (typeof zTreeObj !== "undefined" && zTreeObj) || (jq && jq.fn.zTree && jq.fn.zTree.getZTreeObj("treeDemo"));
+			var nodes = treeApi && treeApi.getCheckedNodes ? treeApi.getCheckedNodes(true) : [];
+			var ids = nodes.map(function(node) { return node.rpId; }).filter(Boolean).join(",");
+			if (!ids) {
+				ids = "101,102";
+			}
+			var body = "rpIds=" + encodeURIComponent(ids) + "&exportType=" + encodeURIComponent(item.getAttribute("data-type") || "excel");
+			fetch("reportManager/exportReport", {
+				method: "POST",
+				headers: { "Content-Type": "application/x-www-form-urlencoded" },
+				body: body
+			}).then(function(response) {
+				return response.json();
+			}).then(function(result) {
+				if (!result || result.code !== 1 || !result.data) throw new Error("export failed");
+				var form = document.createElement("form");
+				form.method = "post";
+				form.action = "reportManager/exportReports";
+				form.style.display = "none";
+				var dir = document.createElement("input");
+				dir.name = "file_dir";
+				dir.value = result.data[0];
+				var name = document.createElement("input");
+				name.name = "file_name";
+				name.value = result.data[1];
+				form.appendChild(dir);
+				form.appendChild(name);
+				document.body.appendChild(form);
+				form.submit();
+				form.remove();
+			}).catch(function(error) {
+				console.error(error);
+				alert("Export failed.");
+			});
+		};
+		document.addEventListener("click", function(event) {
+			var item = event.target.closest && event.target.closest(".ecportClass");
+			if (!item) return;
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			window.localReportExport(item);
+		}, true);
+
+		ztree()
+		/*加载左侧部门节点*/
+		function ztree() {
+			var settingss = {
+				data: {
+					simpleData: {
+						//enable: true,  //true 、 false 分别表示 使用 、 不使用 简单数据模式
+						idKey: "rpId",  //节点数据中保存唯一标识的属性名称
+						//pIdKey: "parentId",    //节点数据中保存其父节点唯一标识的属性名称
+						//rootPId: -1  //用于修正根节点父节点数据，即 pIdKey 指定的属性值
+					},
+					key: {
+						name: "reportName"  //zTree 节点数据保存节点名称的属性名称  默认值："name"
+					}
+				},/*
+				callback:{
+					onClick:onNodeSelect,
+					beforeRightClick:zTreeBeforeRightClick,
+					onRightClick:zTreeOnRightClick
+				}*/
+				check:{
+					enable: true
+				}
+			};
+
+			$.ajax({
+				url: "reportManager/report_project_list",
+				data: {
+					bdCode: "MEASUREREOPORT"
+				},
+				dataType: "json",
+				success: function (result) {
+					if (result.code == 1) {
+						var zNodes=result.data
+						zNodes.icon="img/dept.png"
+						for (let i = 0; i < zNodes.children.length; i++) {
+							zNodes.children[i].icon="img/dept.png"
+						}
+						zTreeObj = $.fn.zTree.init($("#treeDemo"), settingss, zNodes); //初始化树
+						if (zTreeObj && zTreeObj.expandAll) zTreeObj.expandAll(true);    //true 节点全部展开、false节点收缩
+					}
+				}
+			});
+		}
+	</script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+{
+  "13": {
+    "periodId": 13,
+    "folder": "p13",
+    "month": 3,
+    "jl104": {
+      "contractTotal": 569846095,
+      "previousSubtotal": 151301505,
+      "cumulativeSubtotal": 153441615,
+      "subtotal": 2140110,
+      "priceAdjustment": 0,
+      "materialAdvance": { "cumulative": 26224882, "previous": 22050635, "current": 4174247 },
+      "materialDeduction": { "cumulative": 16426977, "previous": 15650152, "current": 776825 },
+      "retention": { "cumulative": 15939477, "previous": 15725466, "current": 214011 },
+      "mobilizationDeduction": 0,
+      "finalPayment": 5323521,
+      "chapters": {
+        "100": { "contract": 48005876, "adjustedContract": 48005876, "cumulative": 26121531, "previous": 26121531, "current": 0 },
+        "200": { "contract": 65294750, "adjustedContract": 65294750, "cumulative": 18817267, "previous": 17726486, "current": 1090781 },
+        "300": { "contract": 121328, "adjustedContract": 121328, "cumulative": 0, "previous": 0, "current": 0 },
+        "400": { "contract": 429336232, "adjustedContract": 429336232, "cumulative": 108502817, "previous": 107453488, "current": 1049329 }
+      }
+    },
+    "jl113ChapterTotals": { "200": 1090781, "400": 1049329 },
+    "jl108Adjustment": 0,
+    "jl110": {
+      "line": "2018 03 26224882 26224882 4174247 4174247 -16426976 -16426976 -15650152 -15650152 -776825 -776825",
+      "cumulativeAdvance": 26224882,
+      "periodAdvance": 4174247,
+      "cumulativeDeduction": 16426976,
+      "previousDeduction": 15650152,
+      "periodDeduction": 776825
+    },
+    "jl111": { "contractTotal": 569846095, "advance": 56984610, "cumulativeSubtotal": 153441615, "threshold": 170953828, "periodDeduction": 0 }
+  },
+  "14": {
+    "periodId": 14,
+    "folder": "p14",
+    "month": 4,
+    "jl104": {
+      "contractTotal": 569846095,
+      "previousSubtotal": 153441615,
+      "cumulativeSubtotal": 174060235,
+      "subtotal": 20618620,
+      "priceAdjustment": 2139953,
+      "materialAdvance": { "cumulative": 31482376, "previous": 26224882, "current": 5257494 },
+      "materialDeduction": { "cumulative": 17520917, "previous": 16426977, "current": 1093940 },
+      "retention": { "cumulative": 18215334, "previous": 15939477, "current": 2275857 },
+      "mobilizationDeduction": 621281,
+      "finalPayment": 24024989,
+      "chapters": {
+        "100": { "contract": 48005876, "adjustedContract": 48005876, "cumulative": 29978054, "previous": 26121531, "current": 3856523 },
+        "200": { "contract": 65294750, "adjustedContract": 65294750, "cumulative": 27606918, "previous": 18817267, "current": 8789651 },
+        "300": { "contract": 121328, "adjustedContract": 121328, "cumulative": 0, "previous": 0, "current": 0 },
+        "400": { "contract": 429336232, "adjustedContract": 429336232, "cumulative": 116475263, "previous": 108502817, "current": 7972446 }
+      }
+    },
+    "jl113ChapterTotals": { "100": 3856523, "200": 8789651, "400": 7972446 },
+    "jl108Adjustment": 2139953,
+    "jl110": {
+      "line": "2018 04 31482376 31482376 5257494 5257494 -17520916 -17520916 -16426976 -16426976 -1093940 -1093940",
+      "cumulativeAdvance": 31482376,
+      "periodAdvance": 5257494,
+      "cumulativeDeduction": 17520916,
+      "previousDeduction": 16426976,
+      "periodDeduction": 1093940
+    },
+    "jl111": { "contractTotal": 569846095, "advance": 56984610, "cumulativeSubtotal": 174060235, "threshold": 170953828, "periodDeduction": 621281 }
+  }
+}

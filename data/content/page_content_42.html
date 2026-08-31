@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>清单管理主页面</title>
+<style>
+#myTab li a {
+	padding: 5px 30px;
+}
+/* 遮罩层 */
+.loading-mask {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 9999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* 内容容器 */
+.loading-content {
+    text-align: center;
+    color: white;
+    font-size: 16px;
+}
+
+/* 圆圈加载动画 */
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 10px;
+}
+
+/* 动画关键帧 */
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+</style>
+</head>
+<body>
+	<div id="loading-mask" class="loading-mask" style="display: none;">
+	    <div class="loading-content">
+	        <div class="spinner"></div>
+	        <p>加载中...</p>
+	    </div>
+	</div>
+	<div id="workingPositionDiv"></div><!-- 引入工作位置 -->
+	<div class="box">
+		<div class="box-header">
+			<div id="buttonGroup" class="dt-buttons btn-group form-inline">
+				<button data-type="button" style="float: none;" data-url="save_sec_bill_page" class="btn btn-default">添加清单</button>
+				<button data-type="button" style="float: none;" data-url="import_sec_bill" class="btn btn-default">导入清单</button>
+				<button data-type="button" style="float: none;" data-url="bill_collect" class="btn btn-default">章节汇总</button>
+				<a data-type="button" href="secBill/export_sec_bill" style="float: none;" class="btn btn-default">导出清单</a>
+			</div>
+		</div>
+		<div class="box-body">
+			<ul id="myTab" class="nav nav-tabs">
+				<li>
+					<a data-toggle="tab">100</a>
+				</li>
+				<li>
+					<a data-toggle="tab">200</a>
+				</li>
+				<li>
+					<a data-toggle="tab">300</a>
+				</li>
+				<li>
+					<a data-toggle="tab">400</a>
+				</li>
+				<li>
+					<a data-toggle="tab">600</a>
+				</li>
+				<li>
+					<a data-toggle="tab">总章</a>
+				</li>
+			</ul>
+			<div style="overflow-x: hidden;" id="myTabContent" class="tab-content">
+				<table id="secBillList" class="table table-striped table-bordered"  width="80%">
+				</table>
+				<table id="secCollectList" class="table table-striped table-bordered"  width="80%">
+				</table>
+			</div>
+		</div>
+
+	</div>
+	<script type="text/javascript">
+	var index=0;
+	var amountNum=getValue("numDecimals");
+	var priceNum=getValue("priceDecimals");
+	var moneyNum=getValue("moneyDecimals");
+	$("#buttonGroup button.btn").on("click", function() {
+		var _this=this;
+			$.ajax({
+			url : "main_controller/mainReturnSectionFlag",
+			data : "",
+			success : function(result) {
+					if (result.code == 1) {
+						if($(_this).attr("data-url")=="import_sec_bill"){
+							showModel($(_this).attr("data-url"), $(_this).text());
+						}else if($(_this).attr("data-url")=="bill_collect"){
+							showLoading();
+							$.ajax({
+								url : "secBill/" + $(_this).attr("data-url"),
+								type : "post",
+								data : "",
+								success : function(
+										result) {
+									hideLoading();
+									if (result.code == 1) {
+										Ewin
+												.msg({
+													type : "success",
+													content : "汇总成功！"
+												})
+											var tableListData = $('#secBillList').DataTable();
+											tableListData.row(index).remove().draw( false );
+											tableListData.ajax.reload(null, false);
+									} else {
+										Ewin
+										.msg({
+											type : "danger",
+											content : result.msg
+										})
+									}
+								}
+							});
+						}else{
+							$.ajax({
+								url : "secBill/" + $(_this).attr("data-url"),
+								type : "post",
+								data : {
+								},
+								dataType : "html",
+								success : function(result) {
+									$(".lay-zw-content-page").empty();// 清空内容
+									$(".lay-zw-content-page").html(result);
+								}
+							});
+						}
+					}else{
+						Ewin.msg({type : "danger",content : result.msg});
+						return false;
+					}
+				}
+			})
+		
+		
+	
+			
+		
+	});
+	function showModel(url, text) {
+		Ewin.modal({
+			width : 400,
+			modalId : "billMoedlManage",
+			title : text,
+			url : "secBill/" + url,
+			data : {
+
+			},
+			drag : true
+		});
+	}
+	//监听ul下的li单击
+	$("#myTab").on("click", "li", function() {
+		$("#myTab li").each(function() {
+			$(this).attr("class", "");
+		});
+		$(this).addClass("active");
+		var pageNo=$.trim($(this).text());
+		$('#secBillList').DataTable().clear().draw();
+		if(pageNo!="总章"){
+			showDetailList(pageNo);
+		}else{
+			showDetailList(pageNo);	
+		}
+	});
+	
+	$("#myTab").children(":first").addClass("active");
+
+	var pageNoTemp =$.trim($("#myTab li.active").text())
+	showDetailList(pageNoTemp);
+	
+	function showDetailList(pageNo){
+		if(pageNo!="总章"){
+			$.ajax({
+				url : "secBill/sec_bill_detail_list_page",
+				type : "post",
+				data : {
+				},
+				dataType : "html",
+				success : function(result) {
+					$("#myTabContent").empty();// 清空内容
+					$("#myTabContent").html(result);
+				}
+			});
+		}else{
+			$.ajax({
+				url : "secBill/sec_bill_collect_list_page",
+				type : "post",
+				data : {
+				},
+				dataType : "html",
+				success : function(result) {
+					$("#myTabContent").empty();// 清空内容
+					$("#myTabContent").html(result);
+				}
+			});
+		}
+	}
+	//重新构建页面章节页签
+	//getpageNoList();
+	function getpageNoList(pageNoShow) {
+		if(pageNoShow=="" || pageNoShow== null)
+			pageNoShow="100";
+		$.ajax({
+			url : "secBill/bill_page_list",
+			type : "post",
+			data : {
+
+			},
+			dataType : "json",
+			success : function(result) {
+				if (result.code > 0) {
+					var srtHtml = "";
+					var pageNo = result.data;
+					for (var i = 0; i < pageNo.length; i++) {
+						srtHtml += '<li><a data-toggle="tab" >' + pageNo[i]
+								+ '</a></li>';
+					}
+					if(result.code==2){
+						srtHtml += '<li><a data-toggle="tab" >总章</a></li>';
+					}
+					$("#myTab").empty();
+					$("#myTab").append(srtHtml);
+					$("#myTab li").each(function() {
+						if ($(this).text() == pageNoShow) {
+							$(this).addClass("active");
+						}
+					});
+					var tableListData = $('#secBillList').DataTable();
+					tableListData.ajax.reload(null, false);
+				}
+			}
+		});
+	}
+	// 显示加载遮罩
+	function showLoading() {
+	    const mask = document.getElementById('loading-mask');
+	    mask.style.display = 'flex'; // 显示遮罩层
+	}
+
+	// 隐藏加载遮罩
+	function hideLoading() {
+	    const mask = document.getElementById('loading-mask');
+	    mask.style.display = 'none'; // 隐藏遮罩层
+	}
+
+	// 示例：模拟数据加载
+	document.addEventListener('DOMContentLoaded', function () {
+	    showLoading();
+	    setTimeout(() => {
+	        hideLoading();
+	    }, 3000); // 模拟3秒加载完成
+	});
+	</script>
+</body>
+</html>

@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>分布分项管理</title>
+    <link href="assets/zTree/css/zTreeStyle.css" rel="stylesheet"
+          type="text/css">
+<style type="text/css">
+    .app{
+        height: calc(100% - 10px);
+    }
+.app>.app-tree,.app>.app-content{
+    display: inline-block;
+    position: relative;
+    height: 100%;
+}
+.app>.app-tree{
+    width: 350px;
+    background-color: #f8f8f8;
+    overflow: auto;
+}
+    .app .app-left-content{
+        overflow: auto;
+    }
+.app>.app-content{
+    width: calc(100% - 380px);
+    overflow: auto;
+    min-width: 500px;
+}
+    .app .app-tree-btns{
+        padding: 10px;
+        position: fixed;
+        width: 350px;
+        height: 75px;
+        box-shadow: 0 0 5px #dddddd;
+        background-color: #F8F8F8;
+}
+    .app .ztree{
+        margin-top: 85px;
+    }
+    .app .ztree * {
+        font-size: 14px;
+    }
+
+    .app .ztree li a:hover {
+        text-decoration: none
+    }
+
+    .app .ztree li a.curSelectedNode {
+        background-color: #eeeeee;
+        color: #3c8dbc;
+        border: none;
+        opacity: 1;
+    }
+
+    .app .ztree li span {
+        margin-left: 5px;
+    }
+    #billAnalzeListTableName{
+        padding: 5px;
+        font-size: 16px;
+        font-weight: 400;
+    }
+</style>
+</head>
+<body>
+    <div class="app">
+        <!--加载分部分项树 -->
+        <div class="app-tree">
+            <div class="app-left-content">
+                <div class="app-tree-btns">
+                    <div class="layui-btn-group">
+                        <button  	class="layui-btn layui-btn-xs layui-btn-primary" data-type="import">导入清单</button>
+                        <button  	class="layui-btn layui-btn-xs" data-type="hang">挂接清单</button>
+                    </div>
+                    </br>
+                    <div class="layui-btn-group" style="margin-top: 10px;">
+                        <button  	class="layui-btn layui-btn-xs layui-btn-primary"  data-type="init">初始化</button>
+                        <button  	class="layui-btn layui-btn-xs" data-type="addNext">添加部项</button>
+                        <!-- <button data-type="button" data-url="edit_node" data_type="addLevel" class="btn btn-default">添加同级</button> -->
+                        <button  	class="layui-btn layui-btn-xs" data-type="showOwn">修改部项</button>
+                        <button  	class="layui-btn layui-btn-danger layui-btn-xs" data-type="delete">删除部项</button>
+                    </div>
+                </div>
+                <ul class="ztree" id="billAnalyzeNodeTree"></ul>
+            </div>
+        </div>
+        <!--点击树节点显示table内容 -->
+        <div class="app-content">
+            <div><i class="glyphicon glyphicon-list-alt"></i><span id="billAnalzeListTableName">清单</span></div>
+            <table id="billAnalzeListTable" lay-filter="billAnalzeListTable">
+            </table>
+        </div>
+    </div>
+    <script src="assets/zTree/jquery.ztree.all.min.js"
+            type="text/javascript"></script>
+    <script>
+        layui.use(['table','util','appInit'], function(){
+            var amountNum = getValue("numDecimals");
+            var priceNum = getValue("priceDecimals");
+            var moneyNum = getValue("moneyDecimals");
+            var table = layui.table,appInit=layui.appInit;
+        /**加载左侧树节点**/
+        var setting = {
+            view: {
+                selectedMulti: false
+            },
+            async: {
+                enable: true,
+                type:"get",
+                url:"billAnalyzeNode/tree",
+                autoParam:["nodeId=parentId"],
+                dataFilter: filter
+            },
+            data:{
+                key:{
+                    name:'nodeName',
+                },
+                simpleData: {
+                    enable: true,
+                    idKey: "nodeId",
+                    pIdKey: "parentId"
+                }
+            },
+            callback: {
+                beforeClick: beforeClick,
+                beforeAsync: beforeAsync,
+                onAsyncError: onAsyncError,
+                onAsyncSuccess: onAsyncSuccess
+            }
+        };
+        //处理请求后three的数据
+        function filter(treeId, parentNode, childNodes) {
+            if (!childNodes) return null;
+            if(childNodes.code==1){
+                var data = childNodes.data;
+                for (var i=0, l=data.length; i<l; i++) {
+                    data[i].isParent = data[i].countNum>0;
+                    if(data[i].isParent){
+                        data[i].icon="img/dept.png";
+                    }
+                }
+                return data;
+            }
+            return childNodes;
+        }
+        function beforeClick(treeId, treeNode) {
+            //if (!treeNode.isParent) {
+                var zTree = $.fn.zTree.getZTreeObj("billAnalyzeNodeTree"),
+                nodes = zTree.getSelectedNodes();
+                if(nodes.length>0&&treeNode.nodeId==nodes[0].nodeId){
+                    zTree.cancelSelectedNode();
+                    $("#billAnalzeListTableName").text("清单");
+                    table.reload("billAnalzeListTable", {
+                        where:{
+                            nodeId:0
+                        }
+                    })
+                    return false;
+                }else{
+                    $("#billAnalzeListTableName").text(treeNode.nodeName+"清单");
+                    table.reload("billAnalzeListTable", {
+                        where:{
+                            nodeId:treeNode.nodeId
+                        }
+                    })
+                }
+            //}
+            return true;
+        }
+        function beforeAsync(treeId, treeNode) {
+            return true;
+        }
+        function onAsyncError(event, treeId, treeNode, XMLHttpRequest, textStatus, errorThrown) {
+        }
+        function onAsyncSuccess(event, treeId, treeNode, msg) {
+        }
+
+            /*重新加载方法
+            * type:refresh 刷新 add 新增
+            * silent： true 悄悄刷新 false 正常刷新
+            * */
+        function refreshNode(type,silent) {
+            var zTree = $.fn.zTree.getZTreeObj("billAnalyzeNodeTree"),
+                nodes = zTree.getSelectedNodes();
+            if (nodes.length == 0) {
+                Ewin.msg({type : "danger",content : "请先选择一个父节点！"})
+                return;
+            }
+            for (var i=0, l=nodes.length; i<l; i++) {
+                zTree.reAsyncChildNodes(nodes[i], type, silent);
+                if (!silent) zTree.selectNode(nodes[i]);
+            }
+        }
+       $.fn.zTree.init($("#billAnalyzeNodeTree"), setting);
+        /**加载左侧树节点**/
+        var headCols=[
+            [
+                {"fixed":"left","align":"center","title":"清单编号",rowspan:2,"width": 100,"templet":function(d){
+                        return d.billNo;
+                    }},
+                {"fixed":"left","align":"left","title":"清单名称",rowspan:2,"templet":function(d){
+                        return d.billName;
+                    }},
+                {"align":"center","title":"计量单位",rowspan:2,"width": 80,"templet":function(d){
+                        return d.measureUnit;
+                    }},
+                {"align":"center","title":"清单数量",rowspan:2,"width": 80,"templet":function(d){
+                        return appInit.retainDecimalPlaces(d.amount,amountNum);
+                    }},
+                {"align":"center","title":"清单单价",rowspan:2,"width": 80,"templet":function(d){
+                        return appInit.retainDecimalPlaces(d.unitPrice,priceNum);
+                    }},
+                {"align":"center","title":"施工图",colspan:2},
+                {"align":"center","title":"修正",colspan:2},
+                {"align":"center","title":"最终",colspan:2},
+                // {"align":"center","title":"已计量数量(占比)",rowspan:2,"width": 80,"templet":function(d){
+                //     if(d.cumulativeAmount==null){
+                //         return "";
+                //     }
+                //     var p = (d.cumulativeAmount/d.amount)*100
+                //     return d.cumulativeAmount+"("+p+"%)";
+                // }},
+                {"title":"操作","width": 120,rowspan:2,"fixed":"right","align":"center","templet":function(d){
+                	    var analyzeId = d.analyzeId;
+                	    if(analyzeId!=0){
+	                        var btns ='<div class="btn-group" >';
+	                        btns += '<button type="button"lay-event="edit" class="btn btn-primary btn-xs">编辑</button>';
+	                        btns += '<button type="button" lay-event="deletes" class="btn btn-danger btn-xs">删除</button>';
+	                        btns += "</div>";
+	                        return btns;
+                	    }else{
+                	    	return "";
+                	    }
+                    }}
+            ],
+            [
+                {"width": 85,"align":"center","title":"数量","templet":function(d){
+                        return appInit.retainDecimalPlaces(d.workDrawAmount,amountNum);
+                    }},
+                {"width": 85,"align":"center","title":"金额","templet":function(d){
+                        return appInit.retainDecimalPlaces(d.workDrawMoney,moneyNum);
+                    }},
+                {"width": 85,"align":"center","title":"数量","templet":function(d){
+                        return appInit.retainDecimalPlaces(d.modifyAmount,amountNum);
+                    }},
+                {"width": 85,"align":"center","title":"金额","templet":function(d){
+                        return appInit.retainDecimalPlaces(d.modifyMoney,moneyNum);
+                    }},
+                {"width": 85,"align":"center","title":"数量","templet":function(d){
+                        return appInit.retainDecimalPlaces(d.finalAmount,amountNum);
+                    }},
+                {"width": 85,"align":"center","title":"金额","templet":function(d){
+                        return appInit.retainDecimalPlaces(d.finalMoney,moneyNum);
+                    }}
+            ]
+        ];
+
+            table.render({
+                elem: '#billAnalzeListTable'
+                ,url:"billAnalyze/get_bill_analyze_by_node_id"
+                ,where:{nodeId : 0}
+                ,size: 'sm'
+                ,page:true
+                ,cols: headCols
+                ,defaultToolbar:[]
+                ,even:true
+                ,limit:20
+                ,limits: [20,30,40]
+                ,height:'full-170'
+                ,cellMinWidth: 80
+                ,done : function() {
+//	 				layer.closeAll('loading');
+                }
+            });
+            table.on('row(billAnalzeListTable)', function(obj){
+                obj.tr.addClass('layui-table-click').siblings().removeClass('layui-table-click');
+            })
+            table.on('tool(billAnalzeListTable)', function(obj){
+                billAnalyzeLineClick[obj.event](obj.data.analyzeId);
+            });
+            var billAnalyzeLineClick = {
+                edit : function(analyzeId) {
+                    layer.open({
+                        type: 1,
+                        title : "编辑",
+                        area: ['400px','70%'],
+                        content: '<div id="editAnalyzeDiv"></div>',
+                        success:function(layero, index){
+                            $.ajax({
+                                url : "billAnalyze/edit_analyze",
+                                data : {
+                                    "analyzeId" : analyzeId
+                                },
+                                success : function(result) {
+                                    $("#editAnalyzeDiv").html(result);
+                                }
+                            });
+                        }
+                    });
+                },
+                deletes : function(analyzeId) {
+                    Ewin.confirm({message : "确认要删除本条吗？"}).on(function(e) {
+                        if (e) {
+                            $.ajax({
+                                url : "billAnalyze/del_analyze",
+                                type : "get",
+                                data : {analyzeId : analyzeId},
+                                success : function(result) {
+                                    if (result.code == 1) {
+                                        Ewin.msg({type : "success",content : "删除成功！"})
+                                        table.reload("billAnalzeListTable");
+                                    } else {
+                                        Ewin.msg({type : "danger",content : "删除失败！"})
+                                    }
+                                }
+                            });
+                        }
+                    })
+                }
+            };
+            function showModel(url, text, type,nodeId) {
+                Ewin.modal({
+                    width : 400,
+                    modalId : "analyzeNodeEdit",
+                    async : false,
+                    title : text,
+                    url : "billAnalyzeNode/" + url,
+                    data : {
+                        type : type,
+                        nodeId : nodeId
+                    },
+                    drag : true
+                });
+            }
+            var leftBtnFuns = {
+                delete:function(){//删除单个节点
+                    var zTree = $.fn.zTree.getZTreeObj("billAnalyzeNodeTree"),
+                        nodes = zTree.getSelectedNodes();
+                    if (nodes.length == 0) {
+                        Ewin.msg({type : "danger",content : "请先选择一个父节点！"})
+                        return;
+                    }
+                    Ewin.confirm({message : "确认要删除选择的数据吗？"}).on(function(e) {
+                        if (e) {
+                            $.ajax({
+                                url : "billAnalyzeNode/delete_node",
+                                type : "get",
+                                async : false,
+                                data : {
+                                    nodeId : nodes[0].nodeId
+                                },
+                                dataType : "json",
+                                success : function(result) {
+                                    if (result.code == 1) {
+                                        Ewin.msg({
+                                            type : "success",
+                                            content : "删除成功！"
+                                        });
+                                        for (var i=0, l=nodes.length; i < l; i++) {
+                                            zTree.removeNode(nodes[i]);
+                                        }
+                                        $("#billAnalzeListTableName").text("清单");
+                                    }
+                                }
+                            });
+                        }
+                    })
+                },
+                init:function(){//初始化节点和范本数据
+                    Ewin.confirm({message : "确认要初始化数据吗？"}).on(function(e) {
+                        if (e) {
+                            $.ajax({
+                                url : "billAnalyzeNode/init_analyze",
+                                type : "get",
+                                async : false,
+                                data : {},
+                                dataType : "json",
+                                success : function(result) {
+                                    if (result.code == 1) {
+                                        Ewin.msg({
+                                            type : "success",
+                                            content : "范本初始化成功！"
+                                        });
+                                        Ewin.modalClose("analyzeNodeEdit");
+                                        // 重新构造
+                                        var zTree = $.fn.zTree.getZTreeObj("billAnalyzeNodeTree");
+                                            zTree.reAsyncChildNodes(null, "refresh", false);
+                                    }
+                                }
+                            });
+                        }
+                    })
+                },
+                hang:function(){//挂接清单
+                    var zTree = $.fn.zTree.getZTreeObj("billAnalyzeNodeTree"),
+                        nodes = zTree.getSelectedNodes();
+                    if (nodes.length == 0) {
+                        Ewin.msg({type : "danger",content : "请先选择一个父节点！"})
+                        return;
+                    }
+                    var nodeId = nodes[0].nodeId;
+                    var isParent = nodes[0].isParent;
+                    if (nodeId == 0 ||nodeId==null) {
+                        Ewin.msg({
+                            type : "warning",
+                            content : "请选择节点"
+                        });
+                        return;
+                    }else if(isParent){//判断不包含子结点
+                        Ewin.msg({
+                            type : "warning",
+                            content : "父节点下不能挂接清单"
+                        });
+                        return;
+                    }else{
+                        layer.open({
+                            type: 1,
+                            title: '可挂接清单列表',
+                            area: ['70%', '90%'],
+                            content: '<div id="secBillDiv"></div>',
+                            success:function(layero, index){
+                                $.ajax({
+                                    url : "billAnalyze/sec_bill_list",
+                                    data:{nodeId:nodeId},
+                                    success : function(result) {
+                                        $("#secBillDiv").html(result);
+                                    }
+                                });
+                            }
+                        });
+
+                    }
+                },
+                import:function(){
+                    var zTree = $.fn.zTree.getZTreeObj("billAnalyzeNodeTree"),
+                        nodes = zTree.getSelectedNodes();
+                    /*if (nodes.length == 0) {
+                        Ewin.msg({type : "danger",content : "请先选择一个父节点！"})
+                        return;
+                    }*/
+                   // var nodeId = nodes[0].nodeId;
+                    Ewin.modal({
+                        width : 400,
+                        modalId : "analyzeImprot",
+                        data:{nodeId:0},
+                        async : false,
+                        title : "分部分项导入",
+                        url : "billAnalyze/import_analyze",
+                        drag : true
+                    });
+                },
+                addNext:function(){
+                    var zTree = $.fn.zTree.getZTreeObj("billAnalyzeNodeTree"),
+                        nodes = zTree.getSelectedNodes();
+                    var nodeId = -1;
+                    if (nodes.length != 0) {
+                        nodeId = nodes[0].nodeId;
+                    }
+                    $.ajax({
+                        url : "billAnalyze/isCanHang",
+                        type : "get",
+                        async : false,
+                        data : {nodeId : nodeId},
+                        dataType : "json",
+                        success : function(result) {
+                            if (result.code == 1 && result.data==true) {
+                                Ewin.msg({
+                                    type : "warning",
+                                    content : "该节点下已有数据，不能添加下级节点！"
+                                });
+                            }else{
+                                var t = "添加子节点";
+                                if(nodeId==-1){
+                                    t = "添加根节点";
+                                }
+                                showModel("edit_node", t, "addNext",nodeId);
+                            }
+                        }
+                    });
+                },
+                showOwn:function(){
+                    var zTree = $.fn.zTree.getZTreeObj("billAnalyzeNodeTree"),
+                        nodes = zTree.getSelectedNodes();
+                    if (nodes.length == 0) {
+                        Ewin.msg({type : "danger",content : "请先选择一个父节点！"})
+                        return;
+                    }
+                    var nodeId = nodes[0].nodeId;
+                    if (nodeId == 0 ||nodeId==null) {
+                        Ewin.msg({type : "warning",content : "请选择节点"});
+                        return;
+                    }
+                    showModel("edit_node","编辑节点","showOwn",nodeId);
+                }
+            }
+            //按钮组单击监听 data-type！=button 的按钮
+            $(".app-tree-btns button[data-type]").on("click", function() {
+                var dataType=$(this).attr("data-type");
+                $.ajax({
+                    url : "main_controller/mainReturnSectionFlag",
+                    data : "",
+                    success : function(result) {
+                        if (result.code == 1) {
+                            leftBtnFuns[dataType]();
+                        }else{
+                            Ewin.msg({type : "danger",content : result.msg})
+                        }
+                    }
+                })
+            });
+        });
+</script>
+</body>
+</html>

@@ -1,0 +1,566 @@
+[
+  {
+    "file": "page_content_29.html",
+    "title": "清单范本页面",
+    "urls": [
+      "billModel/",
+      "billModel/bill_model_delete",
+      "billModel/bill_page_list",
+      "billModel/edit_model_page",
+      "billModel/get_bill_model_list",
+      "edit_model_page",
+      "import_model"
+    ],
+    "fields": [],
+    "labels": []
+  },
+  {
+    "file": "page_content_31.html",
+    "title": "材料列表信息",
+    "urls": [
+      "manual_model/del_MaterialModel",
+      "manual_model/edit_manual_model_add_page",
+      "manual_model/find_manual_model_page"
+    ],
+    "fields": [],
+    "labels": []
+  },
+  {
+    "file": "page_content_355.html",
+    "title": "工期管理页面",
+    "urls": [
+      "dataGather/data_collect_gather",
+      "extend_gather",
+      "main_controller/mainReturnSectionFlag",
+      "sysGather/del_gather",
+      "sysGather/edit_gatherData_page",
+      "sysGather/get_gather_data_list",
+      "sysGather/updateGatherNo",
+      "sysGather/updateGatherShow",
+      "sysGather/update_gather_state"
+    ],
+    "fields": [
+      "periodDesc"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_359.html",
+    "title": "材料管理",
+    "urls": [
+      "main_controller/mainReturnSectionFlag",
+      "secMateria/del_sec_materia",
+      "secMateria/find_sec_materia_list",
+      "secMateria/sec_materia_add_page"
+    ],
+    "fields": [],
+    "labels": []
+  },
+  {
+    "file": "page_content_370.html",
+    "title": "多项目查询（领导查询）",
+    "urls": [
+      "busineInfo/busine_info_page",
+      "mtilProjectQuer/get_mutil_detail",
+      "mtilProjectQuer/get_project_list_by_user",
+      "mtilProjectQuer/get_section_data_by_project",
+      "mtilProjectQuer/query_section_list",
+      "sys_project/get_section_contract"
+    ],
+    "fields": [
+      "mutilClientId",
+      "sysProjectTableSelectId"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_371.html",
+    "title": "重大变更查询",
+    "urls": [
+      "bigVaryQuery/detail_titles",
+      "bigVaryQuery/getBigVarQueryData",
+      "bigVaryQuery/get_vary_data_by_project",
+      "bigVaryQuery/varyQueryDetial"
+    ],
+    "fields": [
+      "bigVaryClientId"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_376.html",
+    "title": "分项台账",
+    "urls": [
+      "billAnalyzeNode/tree",
+      "leaderquery/find_sub_item_page"
+    ],
+    "fields": [],
+    "labels": []
+  },
+  {
+    "file": "page_content_377.html",
+    "title": "分项台账",
+    "urls": [
+      "main_controller/mainReturnSectionFlag",
+      "reportManager/export_project_measure_pay",
+      "reportManager/findReportBillPayAllGather",
+      "reportManager/findReportBillPayLastGather"
+    ],
+    "fields": [],
+    "labels": []
+  },
+  {
+    "file": "page_content_378.html",
+    "title": "变更工程计量支付台账",
+    "urls": [
+      "main_controller/mainReturnSectionFlag",
+      "varyMeasurePay/export_vary_measure_pay",
+      "varyMeasurePay/get_gather_data",
+      "varyMeasurePay/get_vary_measure_list"
+    ],
+    "fields": [
+      "billNo"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_40.html",
+    "title": "合同概况页面",
+    "urls": [
+      "contract_survey/find_other_mation"
+    ],
+    "fields": [],
+    "labels": []
+  },
+  {
+    "file": "page_content_41.html",
+    "title": "工程计划列表页面",
+    "urls": [
+      "secProjectPlan/create_project_plan",
+      "secProjectPlan/delete_plan",
+      "secProjectPlan/get_plan_list",
+      "secProjectPlan/plan_edit_page",
+      "secProjectPlan/update_plan"
+    ],
+    "fields": [
+      "amount",
+      "contractSumMoney",
+      "endDate",
+      "startDate"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_411.html",
+    "title": "项目资料管理",
+    "urls": [
+      "oaDataNode/add_data_node_page",
+      "oaDataNode/delete_data_node",
+      "oaDataNode/edit_data_detail_page",
+      "oaDataNode/edit_data_node_page",
+      "oaDataNode/get_data_detail_page",
+      "oaDataNode/get_data_node_by_clientId",
+      "oaDataNode/get_is_hase_data_detail",
+      "oaDataNode/get_node_user_power_page",
+      "oaDataNode/get_user_is_can_oper",
+      "oaDataNode/move_node"
+    ],
+    "fields": [
+      "clientId",
+      "type",
+      "xmzlglType"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_42.html",
+    "title": "清单管理主页面",
+    "urls": [
+      "bill_collect",
+      "import_sec_bill",
+      "main_controller/mainReturnSectionFlag",
+      "save_sec_bill_page",
+      "secBill/",
+      "secBill/bill_page_list",
+      "secBill/sec_bill_collect_list_page",
+      "secBill/sec_bill_detail_list_page"
+    ],
+    "fields": [],
+    "labels": []
+  },
+  {
+    "file": "page_content_44.html",
+    "title": "分布分项管理",
+    "urls": [
+      "billAnalyze/del_analyze",
+      "billAnalyze/edit_analyze",
+      "billAnalyze/get_bill_analyze_by_node_id",
+      "billAnalyze/import_analyze",
+      "billAnalyze/isCanHang",
+      "billAnalyze/sec_bill_list",
+      "billAnalyzeNode/",
+      "billAnalyzeNode/delete_node",
+      "billAnalyzeNode/init_analyze",
+      "billAnalyzeNode/tree",
+      "edit_node",
+      "main_controller/mainReturnSectionFlag"
+    ],
+    "fields": [],
+    "labels": []
+  },
+  {
+    "file": "page_content_47.html",
+    "title": "清单计量",
+    "urls": [
+      "bill_measure/add_measure_page",
+      "bill_measure/add_page",
+      "bill_measure/adjust_page",
+      "bill_measure/agree_all_order",
+      "bill_measure/agree_order",
+      "bill_measure/archive_measure",
+      "bill_measure/check_detail_count",
+      "bill_measure/copy_page",
+      "bill_measure/delete/",
+      "bill_measure/edit_page",
+      "bill_measure/list?typeCode=",
+      "bill_measure/next_task_list",
+      "bill_measure/order_measure_no",
+      "bill_measure/return_all_order_page",
+      "bill_measure/return_order_page",
+      "bill_measure/track_bill_measure_page",
+      "bill_measure/up_order",
+      "import_measure/delete",
+      "import_measure/delete_data",
+      "import_measure/get_attachment_list",
+      "import_measure/get_measure_by_att",
+      "import_measure/import_excel",
+      "import_measure/reload_import",
+      "import_measure/upload_excel",
+      "reportManager/reportPreviewSecond",
+      "workflow/isSendSMSpage",
+      "workflow/withdraw_order"
+    ],
+    "fields": [
+      "search",
+      "select"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_48.html",
+    "title": "材料补差计量页面",
+    "urls": [
+      "meterialdiasmeasure/adjust_page",
+      "meterialdiasmeasure/agree_order",
+      "meterialdiasmeasure/archive",
+      "meterialdiasmeasure/del_meterial_dias_measure",
+      "meterialdiasmeasure/edit_meterial_dias_measure_page",
+      "meterialdiasmeasure/meterial_dias_measure_list?typeCode=",
+      "meterialdiasmeasure/return_order_page",
+      "meterialdiasmeasure/track_meterial_dias_reasoure_page",
+      "meterialdiasmeasure/up_order",
+      "workflow/isSendSMSpage",
+      "workflow/withdraw_order"
+    ],
+    "fields": [
+      "select"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_49.html",
+    "title": "材料到场计量页面",
+    "urls": [
+      "meterialInMeasure/add_page",
+      "meterialInMeasure/adjust_page",
+      "meterialInMeasure/archive",
+      "meterialInMeasure/delete/",
+      "meterialInMeasure/form_page",
+      "meterialInMeasure/meterial_in_measure_list?typeCode=",
+      "meterialInMeasure/record_page",
+      "meterialInMeasure/return_order_page",
+      "meterialInMeasure/up_order",
+      "meterialInMeasure/update_measure_state",
+      "workflow/isSendSMSpage"
+    ],
+    "fields": [
+      "select"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_50.html",
+    "title": "手动计量列表",
+    "urls": [
+      "manualMeasure/adjust_page",
+      "manualMeasure/archive",
+      "manualMeasure/delete/",
+      "manualMeasure/detail_columns",
+      "manualMeasure/detail_list?typeCode=",
+      "manualMeasure/manualMeasure_edit_page",
+      "manualMeasure/record_page",
+      "manualMeasure/return_order_page",
+      "manualMeasure/up_order",
+      "manualMeasure/update_measure_state",
+      "workflow/isSendSMSpage",
+      "workflow/withdraw_order"
+    ],
+    "fields": [
+      "billMeasureTableSelectId",
+      "isFirstLevel",
+      "isSuperSection",
+      "roleTypeCode",
+      "sectionType",
+      "select"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_568.html",
+    "title": "page_content_568.html",
+    "urls": [
+      "syzl/del",
+      "syzl/edit_page",
+      "syzl/h_page",
+      "syzl/list",
+      "syzl/see_page"
+    ],
+    "fields": [
+      "search"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_600.html",
+    "title": "工程变更会议🐖页面",
+    "urls": [
+      "vary_meeting/delete_vary_meeting",
+      "vary_meeting/get_vary_meeting_data",
+      "vary_meeting/vary_meeting_edit_page",
+      "vary_meeting/vary_meeting_user_page"
+    ],
+    "fields": [],
+    "labels": []
+  },
+  {
+    "file": "page_content_63.html",
+    "title": "计量报表显示页面",
+    "urls": [
+      "/reportManager/reoirtMangerDetail",
+      "dataGather/data_check_gather",
+      "dataGather/data_collect",
+      "dataGather/data_refresh_gather",
+      "reportManager/report_project_list",
+      "u"
+    ],
+    "fields": [
+      "chapterSel",
+      "gatherStateId",
+      "measureSel",
+      "varyConSel"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_64.html",
+    "title": "计量报表导出页面",
+    "urls": [
+      "dataGather/data_check_gather",
+      "reportManager/exportReport",
+      "reportManager/report_project_list"
+    ],
+    "fields": [
+      "file_dir",
+      "file_name"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_640.html",
+    "title": "资料管理",
+    "urls": [
+      "delete_node",
+      "edit_page",
+      "projectInformationNode/delete_hang_param",
+      "projectInformationNode/delete_node",
+      "projectInformationNode/find_hang_param",
+      "projectInformationNode/get_node_tree",
+      "projectInformationNode/init_node"
+    ],
+    "fields": [
+      "file"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_641.html",
+    "title": "资料管理",
+    "urls": [
+      "delete_node",
+      "edit_page",
+      "projectInformationNode/delete_hang_param",
+      "projectInformationNode/delete_node",
+      "projectInformationNode/find_hang_param",
+      "projectInformationNode/get_node_tree",
+      "projectInformationNode/init_node"
+    ],
+    "fields": [
+      "file"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_642.html",
+    "title": "资料综合管理",
+    "urls": [
+      "projectInformationNode/find_hang_by_param",
+      "projectInformationParam/get_node_tree"
+    ],
+    "fields": [
+      "file"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_670.html",
+    "title": "项目资料管理",
+    "urls": [
+      "oaDataNode/add_data_node_page",
+      "oaDataNode/delete_data_node",
+      "oaDataNode/edit_data_detail_page",
+      "oaDataNode/edit_data_node_page",
+      "oaDataNode/get_data_detail_page",
+      "oaDataNode/get_data_node_by_clientId",
+      "oaDataNode/get_is_hase_data_detail",
+      "oaDataNode/get_node_user_power_page",
+      "oaDataNode/get_user_is_can_oper",
+      "oaDataNode/move_node"
+    ],
+    "fields": [
+      "clientId",
+      "type",
+      "xmzlglType"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_671.html",
+    "title": "项目资料管理",
+    "urls": [
+      "oaDataNode/add_data_node_page",
+      "oaDataNode/delete_data_node",
+      "oaDataNode/edit_data_detail_page",
+      "oaDataNode/edit_data_node_page",
+      "oaDataNode/get_data_detail_page",
+      "oaDataNode/get_data_node_by_clientId",
+      "oaDataNode/get_is_hase_data_detail",
+      "oaDataNode/get_node_user_power_page",
+      "oaDataNode/get_user_is_can_oper",
+      "oaDataNode/move_node"
+    ],
+    "fields": [
+      "clientId",
+      "type",
+      "xmzlglType"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_672.html",
+    "title": "项目资料管理",
+    "urls": [
+      "oaDataNode/add_data_node_page",
+      "oaDataNode/delete_data_node",
+      "oaDataNode/edit_data_detail_page",
+      "oaDataNode/edit_data_node_page",
+      "oaDataNode/get_data_detail_page",
+      "oaDataNode/get_data_node_by_clientId",
+      "oaDataNode/get_is_hase_data_detail",
+      "oaDataNode/get_node_user_power_page",
+      "oaDataNode/get_user_is_can_oper",
+      "oaDataNode/move_node"
+    ],
+    "fields": [
+      "clientId",
+      "type",
+      "xmzlglType"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_673.html",
+    "title": "项目资料管理",
+    "urls": [
+      "oaDataNode/add_data_node_page",
+      "oaDataNode/delete_data_node",
+      "oaDataNode/edit_data_detail_page",
+      "oaDataNode/edit_data_node_page",
+      "oaDataNode/get_data_detail_page",
+      "oaDataNode/get_data_node_by_clientId",
+      "oaDataNode/get_is_hase_data_detail",
+      "oaDataNode/get_node_user_power_page",
+      "oaDataNode/get_user_is_can_oper",
+      "oaDataNode/move_node"
+    ],
+    "fields": [
+      "clientId",
+      "type",
+      "xmzlglType"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_68.html",
+    "title": "清单计量",
+    "urls": [
+      "vary_detail/delete/",
+      "vary_detail/list",
+      "vary_measure/add_page",
+      "vary_measure/adjust_page",
+      "vary_measure/agree_all_order",
+      "vary_measure/agree_order",
+      "vary_measure/archive_measure",
+      "vary_measure/archive_upload_pic_page",
+      "vary_measure/delete/",
+      "vary_measure/editVaryMeasureDetailPage",
+      "vary_measure/edit_detail_page",
+      "vary_measure/edit_page",
+      "vary_measure/list?typeCode=",
+      "vary_measure/next_task_list",
+      "vary_measure/render_order_page",
+      "vary_measure/return_order_page",
+      "vary_measure/track_page",
+      "vary_measure/up_order",
+      "workflow/isSendSMSpage",
+      "workflow/withdraw_order"
+    ],
+    "fields": [
+      "roleTypeCode"
+    ],
+    "labels": []
+  },
+  {
+    "file": "page_content_688.html",
+    "title": "各级审核金额",
+    "urls": [
+      "measure_data/audit_money_list"
+    ],
+    "fields": [],
+    "labels": []
+  },
+  {
+    "file": "page_content_69.html",
+    "title": "工程技术联系单",
+    "urls": [
+      "engineering_contact_bill/agree_order",
+      "engineering_contact_bill/del",
+      "engineering_contact_bill/edit_page",
+      "engineering_contact_bill/list?typeCode=",
+      "engineering_contact_bill/return_order_page",
+      "engineering_contact_bill/track_engineering_contact_bill_page",
+      "engineering_contact_bill/up_order"
+    ],
+    "fields": [],
+    "labels": []
+  }
+]

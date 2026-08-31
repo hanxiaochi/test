@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style type="text/css">
+	.hiden{
+		display: none;
+	}
+</style>
+<meta charset="UTF-8">
+<title>项目资料管理</title>
+</head>
+<body>
+	<div class="box">
+		<!-- 当前鼠标的位置 -->
+		<input type="hidden" value="2" id="type">
+		<input type="hidden" value="2" id="xmzlglType">
+		<input type="hidden" value="1" id="clientId">
+		<a data-type="button" href="oaDataNode/downLoadZipFile" style="display: none;" id="downZip" class="btn btn-default">下载</a>
+<!-- 		<table style="margin: 5px;"> -->
+<!-- 			<tr> -->
+<!-- 				<td class="form-inline" colspan="2"> -->
+<!-- 					<select  th:classappend="${clientList.size() gt 1} ? 'form-control input-sm' : 'hidden'" id="clientId"> -->
+<!-- 						其中m是个临时变量，像for(User u : userList)那样中的u -->
+<!-- 						<option th:each="m : ${clientList}" th:value="${m.clientId}" th:text="${m.clientName}" /> -->
+<!-- 					</select> -->
+<!-- 				</td> -->
+<!-- 			</tr> -->
+<!-- 			<tr> -->
+			<div class="layui-row">
+				<div class="layui-col-md3">
+<!-- 					<select  th:classappend="${clientList.size() gt 1} ? 'form-control input-sm' : 'hidden'" id="clientId"> -->
+						<!-- 其中m是个临时变量，像for(User u : userList)那样中的u-->
+<!-- 						<option th:each="m : ${clientList}" th:value="${m.clientId}" th:text="${m.clientName}" /> -->
+<!-- 					</select> -->
+					<td valign="top" style="width: 100%;">
+						<!-- 身份结构部分 -->
+						<div style="padding-left:20px;color:#FFB90F"><i class="fa fa-info-circle"></i>鼠标右击节点操作</div>
+						<div id="dataNode_tree"></div>
+					</td>
+				</div>
+				<div class="layui-col-md9">
+					<td valign="top">
+						<!-- 所有可操作功能列 -->
+						<div id="dataDetailDIV"></div>
+					</td>
+				</div>
+			</div>
+
+
+<!-- 			</tr> -->
+<!-- 		</table> -->
+	</div>
+	<script type="text/javascript">
+		$("#xmzlglType").val("2");
+		$(document).ready(function() {
+			getNodeData();
+		});
+		$("#dataNode_tree").css("height",divHeight+60+"px");
+		function getNodeData() {
+			var type = $("#type").val();
+			$.ajax({
+				url : "oaDataNode/get_data_node_by_clientId",
+				data : {
+					type:type
+// 					clientId : $("#clientId").val(),
+				},
+				dataType : "json",
+				success : function(result) {
+					if (result.code == 1) {
+						var json = '';
+						json = result.data.json;
+						myContextMenu = new dhtmlXMenuObject();
+						myContextMenu.setIconsPath("img/dhx/dhx_menu/");
+						myContextMenu.renderAsContextMenu();
+						//myContextMenu.loadStruct("xml/dhtmlxmenu.xml");
+						myContextMenu.attachEvent("onClick", onMenuClick);
+						myContextMenu.loadStruct(json, function() {
+
+						});
+
+						$("#dataNode_tree").html("");
+						dataTree = new dhtmlXTreeObject("dataNode_tree", "100%",
+								"100%", 0);
+						dataTree.setImagePath("img/dhx/dhxtree_web/");
+						dataTree.enableTreeLines(true);
+						dataTree.attachEvent("onClick", onNodeSelect);
+						//dataTree.setOnClickHandler(onClick);
+						dataTree.enableDragAndDrop(true);
+						dataTree.enableContextMenu(myContextMenu);
+						dataTree.insertNewItem(0, "-1", "\u6D59\u6C5F\u901A\u7528\u516C\u8DEF\u6F14\u793A\u5DE5\u7A0B", 0,
+								"部门.png", "部门.png", "部门.png", "CHILD");
+						getNodeTree(result.data.nodeList);
+						if (result.data.nodeList && result.data.nodeList.length > 0) {
+							onNodeSelect(result.data.nodeList[0].oaNodeId);
+						}
+					}
+				}
+			});
+		}
+
+		function getNodeTree(list) {
+			for (var i = 0; i < list.length; i++) {
+				dataTree.insertNewItem(list[i].parentId == 0 ? "-1"
+						: list[i].parentId, list[i].oaNodeId,
+						list[i].oaDataName, 0, "部门.png", "部门.png", "部门.png",
+						"CHILD");
+				dataTree.setCheck(list[i].deptId, 0);
+				dataTree.enableCheckBoxes(0);
+				getNodeTree(list[i].oaDataNodeList);
+			}
+		}
+		$("#clientId").change(function() {
+			getNodeData();
+		});
+		var nodeId = -1;
+		function onNodeSelect(sID) {
+			var haschild = dataTree.hasChildren(sID);
+			nodeId = sID
+			if (sID != -1) {
+				$.ajax({
+					url : "oaDataNode/get_data_detail_page",
+					data : {
+						nodeId : sID,
+// 						clientId : $("#clientId").val()
+					},
+					dataType : "html",
+					success : function(result) {
+						$("#dataDetailDIV").empty();// 清空内容
+						$("#dataDetailDIV").html(result);
+					}
+				});
+			}
+		}
+		//上传文件
+		function addDataManage() {
+			var haschild = dataTree.hasChildren(nodeId);
+			if (haschild == 0 && nodeId != -1) {
+				//判断当前用户有没有上传文件的权限
+				$.ajax({
+					url : "oaDataNode/get_user_is_can_oper",
+					data : {
+						nodeId : nodeId,
+// 						clientId : $("#clientId").val(),
+						bdCode : "SCZL",
+						bdTypeCode : "DATABUTTON"
+					},
+					async : false,
+					dataType : "JSON",
+					success : function(result) {
+						if (result.code == 0) {
+							Ewin.msg({
+								type : "warning",
+								content : "当前用户无此操作权限"
+							})
+						} else {
+							Ewin.modal({
+								width : 600,
+								modalId : "datailEdit",
+								title : "添加资料",
+								url : "oaDataNode/edit_data_detail_page",
+								data : {
+									"nodeId" : nodeId
+								}
+							});
+						}
+					}
+				});
+
+			} else {
+				Ewin.msg({
+					type : "warning",
+					content : "父节点不能添加数据"
+				})
+			}
+		}
+
+		//编辑节点
+		function modifyNode() {
+			Ewin.modal({
+				width : 400,
+				modalId : "nodeEdit",
+				title : "修改节点",
+				url : "oaDataNode/edit_data_node_page",
+				data : {
+					"nodeId" : nodeId
+				}
+			});
+		}
+
+		//添加节点
+		function addSubNode() {
+			var haschild = dataTree.hasChildren(nodeId);
+			var flag = false;
+			if (haschild == 0 && nodeId != -1) {
+				$.ajax({
+					url : "oaDataNode/get_is_hase_data_detail",
+					data : {
+						nodeId : nodeId
+					},
+					async : false,
+					dataType : "JSON",
+					success : function(result) {
+						if (result.code == 0) {
+							Ewin.msg({
+								type : "warning",
+								content : result.msg
+							})
+						} else {
+							flag = true;
+						}
+					}
+				});
+			} else {
+				flag = true;
+			}
+			if (flag) {
+				Ewin.modal({
+					width : 400,
+					modalId : "nodeEdit",
+					title : "添加节点",
+					url : "oaDataNode/add_data_node_page",
+					data : {
+						"nodeId" : nodeId,
+// 						"clientId" : $("#clientId").val()
+					}
+				});
+			}
+
+		}
+
+		//删除节点
+		function delNode() {
+			$.ajax({
+				url : "oaDataNode/get_is_hase_data_detail",
+				data : {
+					nodeId : nodeId
+				},
+				async : false,
+				dataType : "JSON",
+				success : function(result) {
+					if (result.code == 0) {
+						Ewin.msg({
+							type : "warning",
+							content : result.msg
+						})
+					} else {
+						Ewin.confirm({
+							message : "确认要删除本条数据吗？"
+						}).on(function(e) {
+							if (e) {
+								$.ajax({
+									url : "oaDataNode/delete_data_node",
+									data : {
+										nodeId : nodeId
+									},
+									dataType : "JSON",
+									success : function(result) {
+										if (result.code == 1) {
+											Ewin.msg({
+												type : "success",
+												content : "删除成功"
+											})
+											dataTree.deleteItem(nodeId, false);
+										}
+									}
+								});
+							}
+						});
+
+					}
+				}
+			});
+		}
+
+		//向上移动节点
+		function removeUp() {
+			$.ajax({
+				url : "oaDataNode/move_node",
+				data : {
+					nodeId : nodeId,
+// 					clientId : $("#clientId").val(),
+					type : 1
+				},
+				dataType : "JSON",
+				success : function(result) {
+					if (result.code == 1) {
+						Ewin.msg({
+							type : "success",
+							content : "操作成功"
+						})
+						//节点向上移动
+						dataTree.moveItem(nodeId, "up_strict");
+					}
+				}
+			});
+		}
+
+		//向下移动节点
+		function removeDown() {
+			$.ajax({
+				url : "oaDataNode/move_node",
+				data : {
+					nodeId : nodeId,
+// 					clientId : $("#clientId").val(),
+					type : 0
+				},
+				dataType : "JSON",
+				success : function(result) {
+					if (result.code == 1) {
+						Ewin.msg({
+							type : "success",
+							content : "操作成功"
+						})
+						//节点向下移动
+						dataTree.moveItem(nodeId, "down_strict");
+					}
+				}
+			});
+		}
+
+		//节点用户按钮权限划分 
+		function addRight() {
+			var haschild = dataTree.hasChildren(nodeId);
+			if ( nodeId != null && nodeId != -1 ) {
+				Ewin.modal({
+					width : 700,
+					modalId : "powerSetting",
+					title : "权限设置",
+					url : "oaDataNode/get_node_user_power_page",
+					data : {
+						"nodeId" : nodeId,
+// 						"clientId" : $("#clientId").val()
+					}
+				});
+			}
+		}
+		function downDataManage() {
+			var haschild = dataTree.hasChildren(nodeId);
+			if (haschild == 0 && nodeId != -1) {
+				$.ajax({
+					url : "oaDataNode/get_user_is_can_oper",
+					data : {
+						nodeId : nodeId,
+						clientId : $("#clientId").val(),
+						bdCode : "XZ",
+						bdTypeCode : "DATABUTTON"
+					},
+					async : false,
+					dataType : "JSON",
+					success : function(result) {
+						if (result.code == 0) {
+							Ewin.msg({
+								type : "warning",
+								content : "当前用户无此操作权限"
+							})
+						} else {
+							$("#downZip").attr(
+									"href",
+									"oaDataNode/downLoadZipFile?nodeId="
+											+ nodeId);
+							document.getElementById("downZip").click();
+						}
+					}
+				});
+
+			}
+
+		}
+		//右键菜单点击操作
+		function onMenuClick(menuitemId, type) {
+			if (menuitemId == 'add_sub') {//添加下级
+				addSubNode();
+			} else if (menuitemId == 'add_next') {//添加同级
+				addNextNode();
+			} else if (menuitemId == 'del_node') {//删除类型
+				delNode();
+			} else if (menuitemId == 'modify_node') {//修改类型
+				modifyNode();
+			} else if (menuitemId == 'down_data') {//全部下载
+				downDataManage();
+			} else if (menuitemId == 'add_data') {//添加资料
+				addDataManage();
+			} else if (menuitemId == 'remove_up') {//上移
+				removeUp();
+			} else if (menuitemId == 'remove_down') {//下移
+				removeDown();
+			} else if (menuitemId == 'add_right') {//权限设置
+				addRight();
+			}
+
+		}
+	</script>
+</body>
+</html>

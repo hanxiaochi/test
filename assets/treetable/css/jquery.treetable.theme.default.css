@@ -1,0 +1,20 @@
+table.treetable thead tr {
+  background: #f5f7fa;
+}
+
+table.treetable tbody tr {
+  border-bottom: 1px solid #e7eaef;
+}
+
+table.treetable tbody tr.selected {
+  background: #e8f3ff;
+}
+
+table.treetable tbody tr:hover {
+  background: #f7fbff;
+}
+
+table.treetable td,
+table.treetable th {
+  padding: 6px 8px;
+}
